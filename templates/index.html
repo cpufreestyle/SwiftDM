@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwiftDM - 下载管理器</title>
+<style>
+:root {
+  --bg: #0f0f14;
+  --surface: #1a1a23;
+  --surface2: #22222e;
+  --border: #2a2a3a;
+  --text: #e0e0e8;
+  --text2: #8888a0;
+  --accent: #6c5ce7;
+  --accent2: #a29bfe;
+  --green: #00d2a0;
+  --red: #ff5e7a;
+  --orange: #ffa502;
+  --blue: #4da6ff;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+
+.app {
+  width: 100%;
+  max-width: 900px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ===== 头部 ===== */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, var(--accent), #a29bfe);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #fff;
+}
+
+.header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+
+.header .sub {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+/* ===== 状态栏 ===== */
+.stats-bar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.stat-item .icon { font-size: 16px; }
+.stat-item .value { font-weight: 700; color: #fff; }
+.stat-item .label { color: var(--text2); }
+.stat-item.speed .value { color: var(--accent2); }
+.stat-item.active .value { color: var(--blue); }
+
+/* ===== 添加区域 ===== */
+.add-bar {
+  display: flex;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+  box-shadow: var(--shadow);
+}
+
+.add-bar input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.add-bar input::placeholder { color: var(--text2); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: #7d6ff0; transform: translateY(-1px); }
+
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: #2a2a3a; }
+
+.btn-success { background: #00a67d; color: #fff; }
+.btn-success:hover { background: #00b88d; }
+
+.btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+.btn-danger:hover { background: rgba(255,94,122,0.1); }
+
+.btn-icon {
+  width: 32px; height: 32px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 16px;
+}
+
+.btn-sm { padding: 5px 12px; font-size: 12px; }
+
+/* ===== 批量操作 ===== */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.batch-actions { display: flex; gap: 6px; }
+
+/* ===== 下载列表 ===== */
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  transition: all 0.2s;
+  box-shadow: var(--shadow);
+}
+
+.task-card:hover { border-color: #3a3a52; }
+
+.task-card.completed { border-color: rgba(0,210,160,0.3); }
+.task-card.failed { border-color: rgba(255,94,122,0.3); }
+.task-card.downloading { border-color: rgba(108,92,231,0.3); }
+
+.task-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-info { flex: 1; min-width: 0; }
+
+.task-filename {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.task-url {
+  font-size: 11px;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.task-meta span { display: flex; align-items: center; gap: 4px; }
+
+.task-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.downloading { background: rgba(108,92,231,0.2); color: var(--accent2); }
+.status-badge.paused { background: rgba(255,165,2,0.2); color: var(--orange); }
+.status-badge.completed { background: rgba(0,210,160,0.2); color: var(--green); }
+.status-badge.failed { background: rgba(255,94,122,0.2); color: var(--red); }
+.status-badge.pending { background: rgba(136,136,160,0.2); color: var(--text2); }
+.status-badge.cancelled { background: rgba(136,136,160,0.2); color: var(--text2); }
+
+/* ===== 进度条 ===== */
+.task-progress {
+  margin-top: 10px;
+}
+
+.progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.progress-fill.downloading { background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.progress-fill.completed { background: var(--green); }
+.progress-fill.paused { background: var(--orange); }
+.progress-fill.failed { background: var(--red); }
+
+.progress-text {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* ===== 按钮组 ===== */
+.task-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.task-actions .btn { font-size: 11px; padding: 4px 10px; }
+
+/* ===== 空状态 ===== */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text2);
+}
+
+.empty-state .big-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.4;
+}
+
+.empty-state h3 {
+  font-size: 18px;
+  color: #ccc;
+  margin-bottom: 6px;
+}
+
+.empty-state p { font-size: 13px; }
+
+/* ===== 弹窗 ===== */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay.show { display: flex; }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 90%;
+  max-width: 440px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+
+.modal h3 { font-size: 16px; margin-bottom: 16px; color: #fff; }
+
+.modal .form-group { margin-bottom: 14px; }
+
+.modal label {
+  display: block;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.modal input, .modal select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.modal input:focus, .modal select:focus { border-color: var(--accent); }
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* ===== Toast ===== */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 200;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.3s;
+  pointer-events: none;
+}
+
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+
+/* ===== 动画 ===== */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse { animation: pulse 1.5s infinite; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 600px) {
+  .app { padding: 12px; gap: 12px; }
+  .task-top { flex-direction: column; }
+  .task-status { align-self: flex-end; margin-top: -28px; }
+  .add-bar { flex-wrap: wrap; }
+  .add-bar input { min-width: 100%; }
+  .batch-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 头部 -->
+  <div class="header">
+    <div class="logo">&#11015;</div>
+    <div>
+      <h1>SwiftDM</h1>
+      <div class="sub">高速多线程下载管理器</div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span></div>
+    <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
+    <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
+    <div class="stat-item"><span class="icon">&#9776;</span><span class="label">总计</span><span class="value" id="totalCount">0</span></div>
+  </div>
+
+  <!-- 添加下载 -->
+  <div class="add-bar">
+    <input type="text" id="urlInput" placeholder="粘贴下载链接 (支持 HTTP/HTTPS) ..." autocomplete="off">
+    <button class="btn btn-secondary btn-icon" onclick="addFromClipboard()" title="粘贴剪贴板">&#128203;</button>
+    <button class="btn btn-primary" onclick="addTask()">&#11015; 开始下载</button>
+  </div>
+
+  <!-- 批量操作 -->
+  <div class="batch-bar">
+    <span style="font-size:13px;color:var(--text2)" id="taskCountLabel">暂无下载任务</span>
+    <div class="batch-actions">
+      <button class="btn btn-secondary btn-sm" onclick="pauseAll()">&#10074;&#10074; 全部暂停</button>
+      <button class="btn btn-secondary btn-sm" onclick="resumeAll()">&#9654; 全部恢复</button>
+      <button class="btn btn-danger btn-sm" onclick="clearCompleted()">&#128465; 清除已完成</button>
+    </div>
+  </div>
+
+  <!-- 下载列表 -->
+  <div class="task-list" id="taskList">
+    <div class="empty-state" id="emptyState">
+      <div class="big-icon">&#11015;</div>
+      <h3>准备下载</h3>
+      <p>在上方粘贴文件链接，点击"开始下载"即可开始</p>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 工具函数 =====
+function formatSize(bytes) {
+  if (bytes <= 0) return "未知";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let sz = bytes;
+  while (sz >= 1024 && i < units.length - 1) { sz /= 1024; i++; }
+  return sz.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+}
+
+function formatSpeed(bps) {
+  return formatSize(bps) + "/s";
+}
+
+function showToast(msg, type = "success") {
+  const toast = document.getElementById("toast");
+  toast.textContent = msg;
+  toast.className = `toast ${type} show`;
+  setTimeout(() => toast.className = "toast", 2500);
+}
+
+// ===== API 调用 =====
+async function api(path, options = {}) {
+  try {
+    const resp = await fetch(path, { headers: {"Content-Type": "application/json"}, ...options });
+    return await resp.json();
+  } catch(e) {
+    console.error("API error:", e);
+    return { success: false, error: "网络错误" };
+  }
+}
+
+// ===== 添加任务 =====
+async function addTask() {
+  const input = document.getElementById("urlInput");
+  const url = input.value.trim();
+  if (!url) { showToast("请输入下载链接", "error"); return; }
+
+  const res = await api("/api/add", {
+    method: "POST",
+    body: JSON.stringify({ url, segments: 8 }),
+  });
+
+  if (res.success) {
+    input.value = "";
+    showToast("已添加下载任务");
+  } else {
+    showToast(res.error || "添加失败", "error");
+  }
+}
+
+async function addFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      document.getElementById("urlInput").value = text.trim();
+      showToast("已从剪贴板粘贴");
+    }
+  } catch(e) {
+    showToast("无法访问剪贴板", "error");
+  }
+}
+
+// 回车添加
+document.getElementById("urlInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addTask();
+});
+
+// 支持拖拽 URL 到输入框
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  const text = e.dataTransfer.getData("text/plain");
+  if (text && text.startsWith("http")) {
+    document.getElementById("urlInput").value = text;
+    addTask();
+  }
+});
+
+// ===== 操作按钮 =====
+async function pauseTask(id) {
+  await api(`/api/pause/${id}`, { method: "POST" });
+}
+
+async function resumeTask(id) {
+  await api(`/api/resume/${id}`, { method: "POST" });
+}
+
+async function cancelTask(id) {
+  await api(`/api/cancel/${id}`, { method: "POST" });
+}
+
+async function removeTask(id) {
+  await api(`/api/remove/${id}`, { method: "DELETE" });
+}
+
+async function pauseAll() {
+  await api("/api/pause_all", { method: "POST" });
+  showToast("已暂停全部下载");
+}
+
+async function resumeAll() {
+  await api("/api/resume_all", { method: "POST" });
+  showToast("已恢复全部下载");
+}
+
+async function clearCompleted() {
+  await api("/api/clear_completed", { method: "POST" });
+  showToast("已清除已完成任务");
+}
+
+// ===== 渲染 =====
+function renderTasks(tasks) {
+  const container = document.getElementById("taskList");
+  const empty = document.getElementById("emptyState");
+
+  if (tasks.length === 0) {
+    container.innerHTML = "";
+    container.appendChild(createEmptyState());
+    document.getElementById("taskCountLabel").textContent = "暂无下载任务";
+    return;
+  }
+
+  document.getElementById("taskCountLabel").textContent = `共 ${tasks.length} 个任务`;
+
+  const active = tasks.filter(t => t.status === "downloading");
+  const completed = tasks.filter(t => t.status === "completed");
+  const other = tasks.filter(t => t.status !== "downloading" && t.status !== "completed");
+
+  container.innerHTML = "";
+
+  [...active, ...other, ...completed].forEach(task => {
+    container.appendChild(createTaskCard(task));
+  });
+}
+
+function createEmptyState() {
+  const div = document.createElement("div");
+  div.className = "empty-state";
+  div.id = "emptyState";
+  div.innerHTML = `<div class="big-icon">&#11015;</div><h3>准备下载</h3><p>在上方粘贴文件链接，点击"开始下载"即可开始</p>`;
+  return div;
+}
+
+function createTaskCard(task) {
+  const card = document.createElement("div");
+  card.className = `task-card ${task.status}`;
+  card.id = `task-${task.task_id}`;
+
+  const progressPercent = task.progress || 0;
+
+  let statusLabel = "";
+  let statusClass = "";
+  switch (task.status) {
+    case "downloading":
+      statusLabel = `<span class="pulse">&#9679;</span> 下载中`; statusClass = "downloading"; break;
+    case "paused": statusLabel = "&#10074;&#10074; 已暂停"; statusClass = "paused"; break;
+    case "completed": statusLabel = "&#10004; 完成"; statusClass = "completed"; break;
+    case "failed": statusLabel = "&#10006; 失败"; statusClass = "failed"; break;
+    case "pending": statusLabel = "&#8987; 等待中"; statusClass = "pending"; break;
+    case "cancelled": statusLabel = "&#10006; 已取消"; statusClass = "cancelled"; break;
+  }
+
+  let metaHtml = "";
+  if (task.total_size > 0) {
+    metaHtml += `<span>&#128451; ${formatSize(task.downloaded)} / ${formatSize(task.total_size)}</span>`;
+  } else {
+    metaHtml += `<span>&#128451; ${formatSize(task.downloaded)}</span>`;
+  }
+  if (task.status === "downloading" && task.speed > 0) {
+    metaHtml += `<span>&#9889; ${formatSpeed(task.speed)}</span>`;
+  }
+  if (task.eta) {
+    metaHtml += `<span>&#9200; ${task.eta}</span>`;
+  }
+
+  let actionsHtml = "";
+  if (task.status === "downloading") {
+    actionsHtml = `
+      <button class="btn btn-secondary btn-sm" onclick="pauseTask('${task.task_id}')">&#10074;&#10074; 暂停</button>
+      <button class="btn btn-danger btn-sm" onclick="cancelTask('${task.task_id}')">&#10006; 取消</button>
+    `;
+  } else if (task.status === "paused") {
+    actionsHtml = `
+      <button class="btn btn-success btn-sm" onclick="resumeTask('${task.task_id}')">&#9654; 继续</button>
+      <button class="btn btn-danger btn-sm" onclick="cancelTask('${task.task_id}')">&#10006; 取消</button>
+    `;
+  } else if (task.status === "failed" || task.status === "cancelled") {
+    actionsHtml = `
+      <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
+    `;
+  } else if (task.status === "completed") {
+    actionsHtml = `
+      <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
+    `;
+  }
+
+  card.innerHTML = `
+    <div class="task-top">
+      <div class="task-info">
+        <div class="task-filename" title="${task.filename}">${task.filename}</div>
+        <div class="task-meta">${metaHtml}</div>
+        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${task.error}</div>` : ""}
+      </div>
+      <div class="task-status">
+        <span class="status-badge ${statusClass}">${statusLabel}</span>
+      </div>
+    </div>
+    <div class="task-progress">
+      <div class="progress-wrapper">
+        <div class="progress-bar">
+          <div class="progress-fill ${task.status}" style="width:${progressPercent}%"></div>
+        </div>
+        <span class="progress-text">${progressPercent.toFixed(1)}%</span>
+      </div>
+    </div>
+    <div class="task-actions">${actionsHtml}</div>
+  `;
+
+  return card;
+}
+
+function renderStats(stats) {
+  document.getElementById("totalSpeed").textContent = formatSpeed(stats.total_speed);
+  document.getElementById("activeCount").textContent = stats.active;
+  document.getElementById("doneCount").textContent = stats.completed;
+  document.getElementById("totalCount").textContent = stats.total;
+}
+
+// ===== SSE 实时更新 =====
+function connectSSE() {
+  const evtSource = new EventSource("/api/stream");
+
+  evtSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      renderTasks(data.tasks);
+      renderStats(data.stats);
+    } catch(e) {
+      console.error("Parse error:", e);
+    }
+  };
+
+  evtSource.onerror = () => {
+    console.log("SSE disconnected, reconnecting in 3s...");
+    evtSource.close();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// ===== 初始化 =====
+connectSSE();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "SwiftDM 浏览器监控",
+  "version": "1.0",
+  "description": "自动捕获浏览器下载并发送到 SwiftDM 下载管理器",
+  "permissions": [
+    "downloads",
+    "webRequest",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SwiftDM"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

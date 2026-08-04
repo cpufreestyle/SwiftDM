@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 260px;
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: #1a1a23;
+  color: #e0e0e8;
+  padding: 14px;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.logo {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #fff;
+}
+h2 { font-size: 15px; color: #fff; }
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #22222e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+.status-dot.active { background: #00d2a0; }
+.status-dot.inactive { background: #ff5e7a; }
+.btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-toggle {
+  background: #6c5ce7;
+  color: #fff;
+}
+.btn-toggle:hover { background: #7d6ff0; }
+.stats {
+  font-size: 11px;
+  color: #8888a0;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+.footer {
+  font-size: 10px;
+  color: #555;
+  text-align: center;
+  border-top: 1px solid #2a2a3a;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.btn-reset {
+  background: transparent;
+  color: #ff5e7a;
+  border: 1px solid #ff5e7a;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.btn-reset:hover { background: #ff5e7a22; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">&#11015;</div>
+  <h2>SwiftDM 监控</h2>
+</div>
+
+<div class="status-row">
+  <span>
+    <span class="status-dot active" id="statusDot"></span>
+    <span style="font-size:12px" id="statusText">已启用</span>
+  </span>
+  <button class="btn btn-toggle" id="toggleBtn">暂停</button>
+</div>
+
+<div class="stats">
+  <div>已捕获下载: <strong style="color:#a29bfe" id="sentCount">0</strong> 次</div>
+  <div>服务器: <span style="color:#888">127.0.0.1:5001</span></div>
+  <div style="margin-top:6px">
+    <button class="btn-reset" id="resetBtn">清零计数</button>
+  </div>
+</div>
+
+<div class="footer">
+  确保 SwiftDM 桌面应用已启动
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
