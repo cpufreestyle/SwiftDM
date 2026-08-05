@@ -6,7 +6,22 @@ import json
 import time
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
-from downloader import manager, DownloadManager
+from downloader import manager, DownloadManager, get_proxy_mode, set_proxy_mode
+
+# 让本地回环地址绕过系统代理，避免浏览器经代理访问 127.0.0.1 出现 502
+for _k in ("no_proxy", "NO_PROXY"):
+    _existing = os.environ.get(_k, "")
+    _cur = {a.strip() for a in _existing.split(",") if a.strip()}
+    _cur |= {"127.0.0.1", "localhost", "[::1]"}
+    os.environ[_k] = ",".join(sorted(_cur))
+
+# 日志：文件 + 控制台（UI 不可用时也能留存错误）
+from log_helper import setup_logging
+setup_logging()
+
+# 监听配置（可被环境变量覆盖，便于预览代理 / 局域网访问）
+SWIFTDM_HOST = os.environ.get("SWIFTDM_HOST", "0.0.0.0")
+SWIFTDM_PORT = int(os.environ.get("SWIFTDM_PORT", "5000"))
 
 app = Flask(__name__)
 CORS(app)
@@ -113,12 +128,80 @@ def resume_all():
 @app.route("/api/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "POST":
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
+        # 代理模式: env(系统代理) / direct(直连) / 自定义地址
+        if "proxy_mode" in data:
+            set_proxy_mode(data["proxy_mode"])
         # 可扩展: 保存设置
-        return jsonify({"success": True})
+        return jsonify({"success": True, "proxy_mode": get_proxy_mode()})
     return jsonify({
         "download_dir": DEFAULT_DOWNLOAD_DIR,
         "default_segments": 8,
+        "proxy_mode": get_proxy_mode(),
+        "proxy_modes": ["env", "direct"],
+    })
+
+
+@app.route("/api/local-test-file")
+def local_test_file():
+    """返回一个本地生成的多分段测试文件（用于无外网时验证下载链路）。
+
+    文件内容可校验：由 'SwiftDM-test-' 重复填充，大小为 ~5MB，便于分 8 段下载。
+    """
+    import io
+    size = 5 * 1024 * 1024
+    chunk = b"SwiftDM-test-payload-line\n"
+    data = (chunk * (size // len(chunk) + 1))[:size]
+    bio = io.BytesIO(data)
+    resp = Response(
+        bio.getvalue(),
+        mimetype="application/octet-stream",
+        headers={
+            "Content-Disposition": 'attachment; filename="swiftdm_local_test.bin"',
+            "Content-Length": str(len(data)),
+            "Accept-Ranges": "bytes",
+        },
+    )
+    return resp
+
+
+@app.route("/api/self-test")
+def self_test():
+    """本机回环下载自测：用下载引擎下载 /api/local-test-file，验证全链路。"""
+    import threading
+    import time as _time
+    from downloader import manager
+
+    save_dir = os.path.join(DEFAULT_DOWNLOAD_DIR, "_selftest")
+    os.makedirs(save_dir, exist_ok=True)
+    url = request.host_url.rstrip("/") + "/api/local-test-file"
+
+    task = manager.create_task(url, save_dir, "swiftdm_local_test.bin", segments=8)
+    task.start()
+
+    # 等待完成或失败（最多 30s）
+    for _ in range(60):
+        _time.sleep(0.5)
+        if task.status in ("completed", "failed"):
+            break
+
+    ok = task.status == "completed"
+    # 清理临时文件与已下载文件
+    try:
+        if os.path.exists(task.filepath):
+            os.remove(task.filepath)
+        if os.path.exists(task._tmp_dir):
+            import shutil as _sh
+            _sh.rmtree(task._tmp_dir, ignore_errors=True)
+    except Exception:
+        pass
+    manager.remove_task(task.task_id)
+
+    return jsonify({
+        "success": ok,
+        "status": task.status,
+        "error": task.error,
+        "proxy_mode": get_proxy_mode(),
     })
 
 
@@ -187,6 +270,6 @@ if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  IDM 风格下载管理器已启动")
     print(f"  下载目录: {DEFAULT_DOWNLOAD_DIR}")
-    print("  打开浏览器访问: http://127.0.0.1:5000")
+    print(f"  打开浏览器访问: http://127.0.0.1:{SWIFTDM_PORT}")
     print("=" * 50 + "\n")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    app.run(host=SWIFTDM_HOST, port=SWIFTDM_PORT, debug=False, threaded=True)

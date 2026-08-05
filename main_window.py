@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QSystemTrayIcon, QMenu, QApplication,
     QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
-    QSizePolicy, QSplitter, QHeaderView
+    QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread
 from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush
+from log_helper import setup_logging, QtLogHandler
 
 
 def format_size(bytes_val):
@@ -190,7 +191,8 @@ class TaskCard(QFrame):
             }
         """)
         self.setMinimumHeight(120)
-        self.setMaximumHeight(140)
+        self._base_max_height = 140
+        self.setMaximumHeight(self._base_max_height)
         self._build_ui(task_data)
 
     def _build_ui(self, task_data):
@@ -325,12 +327,32 @@ class TaskCard(QFrame):
 
         layout.addLayout(bottom)
 
+        # 失败原因（默认隐藏，失败且有错误信息时显示）
+        self.error_label = QLabel()
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet(
+            "font-size: 11px; color: #ffb3c0; background-color: #2a1620; "
+            "border: 1px solid #ff5e7a55; border-radius: 6px; padding: 6px 8px; margin-top: 2px;"
+        )
+        layout.addWidget(self.error_label)
+        self._apply_error_visibility(status, task_data.get("error", ""))
+
     def _btn_style(self, color):
         return (
             f"QPushButton{{background:transparent;border:1px solid {color};"
             f"border-radius:4px;padding:3px 10px;color:{color};font-size:11px;font-weight:600;}}"
             f"QPushButton:hover{{background:{color}22;}}"
         )
+
+    def _apply_error_visibility(self, status, err):
+        """失败且有错误信息时显示原因，并解除高度限制以保证完整可见。"""
+        if status == "failed" and err:
+            self.error_label.setText(f"⚠ 失败原因: {err}")
+            self.error_label.show()
+            self.setMaximumHeight(16777215)  # 解除上限，完整显示多行错误
+        else:
+            self.error_label.hide()
+            self.setMaximumHeight(self._base_max_height)
 
     def update_data(self, task_data):
         """更新卡片显示"""
@@ -384,6 +406,9 @@ class TaskCard(QFrame):
         self.speed_label.setText(f"⚡ {format_speed(speed)}" if speed > 0 and status == "downloading" else "")
         self.eta_label.setText(f"⏱ {eta}" if eta and status == "downloading" else "")
 
+        # 失败原因显示
+        self._apply_error_visibility(status, task_data.get("error", ""))
+
 
 class SettingsDialog(QDialog):
     """设置对话框"""
@@ -419,6 +444,25 @@ class SettingsDialog(QDialog):
         self.monitor_check.addItems(["启用", "禁用"])
         layout.addRow("浏览器监控:", self.monitor_check)
 
+        # 代理模式：系统代理 / 直连 / 自定义
+        from downloader import get_proxy_mode
+        self.proxy_combo = QComboBox()
+        self.proxy_combo.addItems(["系统代理 (env)", "直连 (direct)"])
+        self.proxy_combo.setToolTip(
+            "系统代理: 继承 HTTP_PROXY/HTTPS_PROXY，GitHub 等资源必须走代理\n"
+            "直连: 忽略代理，仅适合代理宕机时\n"
+            "自定义: 在下方填写代理地址（如 http://127.0.0.1:7890 或 socks5://...）")
+        cur = get_proxy_mode()
+        self.proxy_combo.setCurrentIndex(0 if cur in ("env", "system", "") else 1)
+        layout.addRow("下载代理:", self.proxy_combo)
+
+        self.proxy_custom = QLineEdit()
+        self.proxy_custom.setPlaceholderText("自定义代理地址（选「直连」时可填，留空=纯直连）")
+        if cur not in ("env", "system", "direct", ""):
+            self.proxy_combo.setCurrentIndex(1)
+            self.proxy_custom.setText(cur)
+        layout.addRow("自定义代理:", self.proxy_custom)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -431,10 +475,16 @@ class SettingsDialog(QDialog):
             self.dir_edit.setText(d)
 
     def get_settings(self):
+        if self.proxy_combo.currentIndex() == 0:
+            proxy_mode = "env"
+        else:
+            custom = self.proxy_custom.text().strip()
+            proxy_mode = custom or "direct"
         return {
             "dir": self.dir_edit.text(),
             "segments": self.segments_spin.value(),
             "monitor": self.monitor_check.currentIndex() == 0,
+            "proxy_mode": proxy_mode,
         }
 
 
@@ -496,10 +546,18 @@ class AddDialog(QDialog):
 
 class MainWindow(QMainWindow):
     """SwiftDM 主窗口"""
+    log_signal = pyqtSignal(str)
 
     def __init__(self, http_port=5000):
         super().__init__()
         self.http_port = http_port
+        # 日志：文件 + 控制台 + UI 面板
+        self.logger = setup_logging()
+        self._log_handler = QtLogHandler(self.log_signal)
+        self._log_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))
+        self.logger.addHandler(self._log_handler)
+        self.log_signal.connect(self._append_log)
         self._cards = {}  # task_id -> TaskCard
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
         self._prev_statuses = {}  # task_id -> status
@@ -511,6 +569,7 @@ class MainWindow(QMainWindow):
         # 暗色主题
         self.setStyleSheet(QSS)
 
+        self._setup_log_panel()
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
@@ -562,6 +621,11 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(btn_clear)
 
         toolbar.addSeparator()
+
+        self.btn_log = QPushButton("📜 日志")
+        self.btn_log.setCheckable(True)
+        self.btn_log.toggled.connect(self.log_dock.setVisible)
+        toolbar.addWidget(self.btn_log)
 
         btn_settings = QPushButton("⚙ 设置")
         btn_settings.clicked.connect(self._show_settings)
@@ -622,6 +686,33 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("就绪  |  下载目录: ~/Downloads/IDM_Downloads")
+
+    def _setup_log_panel(self):
+        """底部可展开的运行日志面板"""
+        self.log_dock = QDockWidget("运行日志", self)
+        self.log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea |
+                                      Qt.DockWidgetArea.RightDockWidgetArea)
+        self.log_dock.setStyleSheet(
+            "QDockWidget::title{background:#16161f;color:#8888a0;padding:4px 10px;}")
+        self.log_edit = QPlainTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setStyleSheet(
+            "QPlainTextEdit{background:#0a0a0f;color:#cfcfe0;"
+            "font-family:'Consolas','Courier New',monospace;font-size:12px;border:none;}"
+        )
+        self.log_dock.setWidget(self.log_edit)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+        self.log_dock.hide()
+
+    def _append_log(self, msg):
+        """把日志追加到 UI 面板并自动滚动；错误日志自动弹出面板"""
+        self.log_edit.appendPlainText(msg)
+        sb = self.log_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        if "[ERROR]" in msg or "[CRITICAL]" in msg:
+            if not self.log_dock.isVisible():
+                self.log_dock.show()
+                self.btn_log.setChecked(True)
 
     def _setup_tray(self):
         self.tray = QSystemTrayIcon(self)
@@ -706,6 +797,14 @@ class MainWindow(QMainWindow):
                     if d["task_id"] not in self._completed_tasks:
                         self._completed_tasks.add(d["task_id"])
                         self._notify_complete(d)
+                # 新失败的任务：状态栏直接提示失败原因
+                elif prev_status != "failed" and d["status"] == "failed":
+                    err = d.get("error", "")
+                    name = d.get("filename", "文件")
+                    if err:
+                        self.status_bar.showMessage(f"✗ 下载失败 [{name}]: {err}", 10000)
+                    else:
+                        self.status_bar.showMessage(f"✗ 下载失败: {name}", 10000)
 
             self._prev_statuses = {t.to_dict()["task_id"]: t.to_dict()["status"] for t in tasks}
 
@@ -728,7 +827,7 @@ class MainWindow(QMainWindow):
                     self.task_layout.insertWidget(self.task_layout.count() - 1, card)
 
         except Exception as e:
-            print(f"[Refresh Error] {e}")
+            self.logger.exception("刷新任务列表失败")
 
     def _notify_complete(self, task_data):
         """下载完成通知"""
@@ -760,6 +859,8 @@ class MainWindow(QMainWindow):
                 self.url_input.clear()
                 self.status_bar.showMessage(f"已添加: {task.filename}")
             except Exception as e:
+                self.logger.exception("添加下载失败")
+                self.status_bar.showMessage(f"添加失败: {e}", 8000)
                 QMessageBox.warning(self, "错误", f"添加失败: {e}")
 
     def _handle_action(self, action, task_id):
@@ -813,6 +914,12 @@ class MainWindow(QMainWindow):
             self.monitor_label.setStyleSheet(
                 f"font-size: 11px; color: {'#00d2a0' if settings['monitor'] else '#ff5e7a'}; font-weight: 600;"
             )
+            # 应用下载代理模式
+            from downloader import set_proxy_mode
+            set_proxy_mode(settings.get("proxy_mode", "env"))
+            self.logger.info("设置已保存，下载代理模式: %s", settings.get("proxy_mode", "env"))
+            self.status_bar.showMessage(
+                f"设置已保存 | 代理: {settings.get('proxy_mode', 'env')}", 5000)
 
     def _quit_app(self):
         # 确认退出

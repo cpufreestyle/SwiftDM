@@ -6,8 +6,84 @@ import re
 import time
 import shutil
 import threading
+import logging
 import requests
 from urllib.parse import urlparse, unquote
+
+logger = logging.getLogger("SwiftDM")
+
+# 代理模式（运行时可通过 set_proxy_mode() 切换）：
+#   "env"    —— 继承系统代理（HTTP_PROXY/HTTPS_PROXY），默认。GitHub 等资源必须走代理。
+#   "direct" —— 彻底忽略代理，强制直连（系统代理宕机时用）。
+#   其它值   —— 视为自定义代理地址（如 "http://127.0.0.1:7890" 或 "socks5://..."），
+#              同时作为 http/https 代理。
+# 环境变量 SWIFTDM_USE_PROXY 可预设初始模式。
+_PROXY_MODE = os.environ.get("SWIFTDM_USE_PROXY", "env").strip().lower()
+
+# 全局 Session（所有下载共用，便于连接复用）
+_SESSION = requests.Session()
+
+
+def _apply_proxy_mode(mode):
+    """根据模式配置全局 Session 的代理行为。"""
+    global _PROXY_MODE
+    _PROXY_MODE = mode.strip().lower() if isinstance(mode, str) else "env"
+    _SESSION.proxies.clear()
+    if _PROXY_MODE == "direct":
+        # 强制直连：忽略环境变量代理
+        _SESSION.trust_env = False
+        _SESSION.proxies.update({"http": None, "https": None})
+    elif _PROXY_MODE in ("env", "", "system"):
+        # 走系统代理（继承 HTTP_PROXY/HTTPS_PROXY）
+        _SESSION.trust_env = True
+    else:
+        # 自定义代理地址
+        _SESSION.trust_env = False
+        _SESSION.proxies.update({"http": _PROXY_MODE, "https": _PROXY_MODE})
+
+
+def set_proxy_mode(mode):
+    """运行时切换代理模式（供 UI / API 调用）。"""
+    _apply_proxy_mode(mode)
+    logger.info("下载代理模式已切换为: %s", _PROXY_MODE)
+
+
+def get_proxy_mode():
+    return _PROXY_MODE
+
+
+# 初始化
+_apply_proxy_mode(_PROXY_MODE)
+
+
+def _alt_proxy_mode():
+    """返回与当前模式互补的模式，用于连接失败时自动回退尝试。"""
+    if _PROXY_MODE == "direct":
+        return "env"
+    return "direct"
+
+
+def _is_proxy_down_error(exc):
+    """判断异常是否为「代理服务器未启动/不可达」（连接被拒绝）。"""
+    s = str(exc)
+    return ("ProxyError" in s and
+            ("10061" in s or "refused" in s or "Unable to connect to proxy" in s
+             or "errno 61" in s or "Connection refused" in s))
+
+
+def _friendly_error(exc):
+    """把底层异常转成用户可读的中文错误描述。"""
+    s = str(exc)
+    if _is_proxy_down_error(exc):
+        return ("代理服务器未启动或不可达（默认 127.0.0.1:7897）。"
+                "请开启 Clash，或在设置中把「下载代理」改为「直连(direct)」。")
+    if "403" in s or "401" in s:
+        return "链接已失效（签名过期/无权限）。请从下载源重新复制最新链接后再试。"
+    if ("ConnectionError" in s or "Timeout" in s or "ConnectTimeout" in s
+            or "远程主机" in s or "timed out" in s or "NameResolutionError" in s
+            or "getaddrinfo" in s):
+        return "无法连接下载服务器，请检查网络是否连通或代理设置是否正确。"
+    return s
 
 
 class DownloadTask:
@@ -58,28 +134,59 @@ class DownloadTask:
         return name
 
     def _fetch_info(self):
-        """获取文件大小和最终文件名"""
+        """获取文件大小和最终文件名。
+
+        主代理模式失败时的处理：
+          - 若失败原因是「代理服务器未启动/不可达」，本次会话直接切到直连(direct)，
+            避免后续每个分段都先浪费一次代理重试；若直连仍失败则给出清晰报错。
+          - 否则用互补模式再尝试一次。
+        """
         try:
-            resp = requests.head(self.url, timeout=15, allow_redirects=True,
-                                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-            content_length = resp.headers.get("Content-Length")
-            if content_length:
-                self.total_size = int(content_length)
-
-            # 尝试从 Content-Disposition 获取文件名
-            cd = resp.headers.get("Content-Disposition", "")
-            match = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
-            if match:
-                cd_name = unquote(match.group(1).strip())
-                if cd_name:
-                    self.filename = cd_name
-                    self.filepath = os.path.join(self.save_dir, self.filename)
-                    self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
-
-            return True
+            return self._do_fetch_info()
         except Exception as e:
-            self.error = str(e)
-            return False
+            if _is_proxy_down_error(e):
+                logger.warning("检测到代理不可用(%s)，本次会话自动切换为直连: %s", _PROXY_MODE, e)
+                set_proxy_mode("direct")
+                try:
+                    return self._do_fetch_info()
+                except Exception as e2:
+                    self.error = _friendly_error(e2)
+                    logger.error("获取文件信息失败(直连): %s | 错误: %s", self.url, e2)
+                    return False
+            alt = _alt_proxy_mode()
+            logger.warning("_fetch_info 主模式(%s)失败: %s，尝试互补模式 %s",
+                           _PROXY_MODE, e, alt)
+            try:
+                with _SwitchedProxy(alt):
+                    return self._do_fetch_info()
+            except Exception as e2:
+                self.error = _friendly_error(e2)
+                logger.error("获取文件信息失败(含回退): %s | 错误: %s", self.url, e2)
+                return False
+
+    def _do_fetch_info(self):
+        """用当前全局 Session 的代理模式做 HEAD 探测，提取大小/文件名。"""
+        resp = _SESSION.head(self.url, timeout=15, allow_redirects=True,
+                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        if resp.status_code in (401, 403):
+            raise Exception("HTTP 403")  # 链接签名过期/无权限，由 _friendly_error 转译
+        if resp.status_code not in (200, 206):
+            raise Exception(f"HTTP {resp.status_code}")
+        content_length = resp.headers.get("Content-Length")
+        if content_length:
+            self.total_size = int(content_length)
+
+        # 尝试从 Content-Disposition 获取文件名
+        cd = resp.headers.get("Content-Disposition", "")
+        match = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
+        if match:
+            cd_name = unquote(match.group(1).strip())
+            if cd_name:
+                self.filename = cd_name
+                self.filepath = os.path.join(self.save_dir, self.filename)
+                self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
+
+        return True
 
     def _calc_segments(self):
         """计算分段区间"""
@@ -116,31 +223,58 @@ class DownloadTask:
         if self.total_size > 0:
             headers["Range"] = f"bytes={restore_from}-{end}"
 
+        # 主模式先试；失败（状态码不可达 / 连接错误）再用互补模式重试一次
         try:
-            resp = requests.get(self.url, headers=headers, stream=True, timeout=30,
-                                allow_redirects=True)
-            if resp.status_code not in (200, 206):
-                raise Exception(f"HTTP {resp.status_code}")
-
-            mode = "ab" if existing > 0 else "wb"
-            with open(seg_file, mode) as f:
-                for chunk in resp.iter_content(chunk_size=256 * 1024):
-                    if not self._pause_event.is_set():
-                        # 暂停中，等待恢复或取消
-                        while not self._pause_event.is_set():
-                            time.sleep(0.2)
-                            if self.status in ("cancelled", "failed"):
-                                return
-
-                    if self.status in ("cancelled", "failed"):
-                        return
-
-                    f.write(chunk)
-                    with self._lock:
-                        self._segment_progress[idx] += len(chunk)
+            self._stream_segment(idx, headers, seg_file, existing, start, end)
         except Exception as e:
-            if self.status not in ("cancelled", "paused"):
-                raise e
+            if _is_proxy_down_error(e):
+                # 代理宕机：整个会话切到直连，后续分段不再重复代理重试
+                logger.warning("分段 %d 检测到代理不可用(%s)，切换为直连: %s",
+                               idx, _PROXY_MODE, e)
+                set_proxy_mode("direct")
+                try:
+                    self._stream_segment(idx, headers, seg_file, existing, start, end)
+                    logger.info("分段 %d 经直连下载成功", idx)
+                    return
+                except Exception as e2:
+                    logger.error("分段 %d 直连仍失败: %s", idx, e2)
+                    if self.status not in ("cancelled", "paused"):
+                        raise Exception(_friendly_error(e2))
+            alt = _alt_proxy_mode()
+            logger.warning("分段 %d 主模式(%s)失败: %s，尝试互补模式 %s",
+                           idx, _PROXY_MODE, e, alt)
+            try:
+                with _SwitchedProxy(alt):
+                    self._stream_segment(idx, headers, seg_file, existing, start, end)
+                logger.info("分段 %d 经互补模式 %s 下载成功", idx, alt)
+                return
+            except Exception as e2:
+                logger.error("分段 %d 互补模式 %s 仍失败: %s", idx, alt, e2)
+                if self.status not in ("cancelled", "paused"):
+                    raise Exception(_friendly_error(e2))
+
+    def _stream_segment(self, idx, headers, seg_file, existing, start, end):
+        """用当前全局 Session 的代理模式下载并写入一个分段（不含失败重试）。"""
+        resp = _SESSION.get(self.url, headers=headers, stream=True, timeout=30,
+                            allow_redirects=True)
+        if resp.status_code in (401, 403):
+            raise Exception("HTTP 403")  # 链接签名过期/无权限
+        if resp.status_code not in (200, 206):
+            raise Exception(f"HTTP {resp.status_code}")
+        mode = "ab" if existing > 0 else "wb"
+        with open(seg_file, mode) as f:
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
+                if not self._pause_event.is_set():
+                    # 暂停中，等待恢复或取消
+                    while not self._pause_event.is_set():
+                        time.sleep(0.2)
+                        if self.status in ("cancelled", "failed"):
+                            return
+                if self.status in ("cancelled", "failed"):
+                    return
+                f.write(chunk)
+                with self._lock:
+                    self._segment_progress[idx] += len(chunk)
 
     def _all_segments_done(self):
         """检查所有分段是否下载完成"""
@@ -221,6 +355,10 @@ class DownloadTask:
                 except Exception as e:
                     self.status = "failed"
                     self.error = f"合并文件失败: {e}"
+                    logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
+                else:
+                    logger.info("下载完成: %s (%.2f MB)", self.filename,
+                                (self.total_size if self.total_size > 0 else total_downloaded) / 1024 / 1024)
                 return
 
     def start(self):
@@ -228,12 +366,14 @@ class DownloadTask:
         if self.status in ("downloading", "completed"):
             return
 
+        logger.info("开始下载任务: %s  (%s)", self.filename, self.url)
         self.status = "downloading"
         self._pause_event.set()
 
         # 获取文件信息
         if not self._fetch_info():
             self.status = "failed"
+            logger.error("任务初始化失败，已停止: %s | 原因: %s", self.filename, self.error)
             return
 
         # 计算分段
@@ -276,6 +416,7 @@ class DownloadTask:
                 if self.status not in ("paused", "cancelled", "completed"):
                     self.status = "failed"
                     self.error = str(e)
+                    logger.error("任务失败: %s | 分段%d 错误: %s", self.filename, idx, e)
 
     def pause(self):
         """暂停下载"""
@@ -376,6 +517,22 @@ class DownloadManager:
             "paused": paused,
             "total": len(tasks),
         }
+
+
+class _SwitchedProxy:
+    """上下文管理器：临时把全局 Session 切到指定代理模式，退出时恢复原模式。"""
+
+    def __init__(self, temp_mode):
+        self.temp_mode = temp_mode
+        self._prev = _PROXY_MODE
+
+    def __enter__(self):
+        _apply_proxy_mode(self.temp_mode)
+        return self
+
+    def __exit__(self, *exc):
+        _apply_proxy_mode(self._prev)
+        return False
 
 
 # 全局实例
