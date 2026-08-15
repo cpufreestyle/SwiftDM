@@ -142,27 +142,58 @@ def settings():
     })
 
 
+# 本地测试文件内容（构建一次后缓存，多分段并发请求时避免重复生成 5MB 数据）
+_LOCAL_TEST_DATA = None
+
+
+def _local_test_bytes():
+    global _LOCAL_TEST_DATA
+    if _LOCAL_TEST_DATA is None:
+        chunk = b"SwiftDM-test-payload-line\n"
+        size = 5 * 1024 * 1024
+        _LOCAL_TEST_DATA = (chunk * (size // len(chunk) + 1))[:size]
+    return _LOCAL_TEST_DATA
+
+
 @app.route("/api/local-test-file")
 def local_test_file():
-    """返回一个本地生成的多分段测试文件（用于无外网时验证下载链路）。
+    """返回一个支持 HTTP Range 的本地测试文件（用于无外网时验证多分段下载链路）。
 
-    文件内容可校验：由 'SwiftDM-test-' 重复填充，大小为 ~5MB，便于分 8 段下载。
+    支持 Range 请求（206 + Content-Range），与真实 CDN 行为一致，
+    使 /api/self-test 能真正走多线程分段路径。
     """
-    import io
-    size = 5 * 1024 * 1024
-    chunk = b"SwiftDM-test-payload-line\n"
-    data = (chunk * (size // len(chunk) + 1))[:size]
-    bio = io.BytesIO(data)
-    resp = Response(
-        bio.getvalue(),
+    import re as _re
+    data = _local_test_bytes()
+    size = len(data)
+
+    range_header = request.headers.get("Range", "")
+    m = _re.match(r"^bytes=(\d*)-(\d*)$", range_header.strip())
+    if m:
+        start = int(m.group(1)) if m.group(1) else 0
+        end = int(m.group(2)) if m.group(2) else size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            return Response(status=416, headers={"Content-Range": f"bytes */{size}"})
+        piece = data[start:end + 1]
+        return Response(
+            piece, status=206,
+            headers={
+                "Content-Disposition": 'attachment; filename="swiftdm_local_test.bin"',
+                "Content-Length": str(len(piece)),
+                "Content-Range": f"bytes {start}-{end}/{size}",
+                "Accept-Ranges": "bytes",
+            },
+        )
+
+    return Response(
+        data,
         mimetype="application/octet-stream",
         headers={
             "Content-Disposition": 'attachment; filename="swiftdm_local_test.bin"',
-            "Content-Length": str(len(data)),
+            "Content-Length": str(size),
             "Accept-Ranges": "bytes",
         },
     )
-    return resp
 
 
 @app.route("/api/self-test")

@@ -5,7 +5,7 @@ import re
 import time
 import threading
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 
@@ -125,7 +125,8 @@ class BrowserMonitor:
 
     def _run_server(self):
         try:
-            self._server = HTTPServer(("127.0.0.1", self.port), BrowserCaptureHandler)
+            # ThreadingHTTPServer：并发处理多个扩展请求，避免单请求阻塞监控端点
+            self._server = ThreadingHTTPServer(("127.0.0.1", self.port), BrowserCaptureHandler)
             self._server.serve_forever()
         except OSError as e:
             print(f"[Monitor] 端口 {self.port} 被占用: {e}")

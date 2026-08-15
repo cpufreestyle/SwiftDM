@@ -8,9 +8,13 @@ import shutil
 import threading
 import logging
 import requests
+from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse, unquote
 
 logger = logging.getLogger("SwiftDM")
+
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 # 代理模式（运行时可通过 set_proxy_mode() 切换）：
 #   "env"    —— 继承系统代理（HTTP_PROXY/HTTPS_PROXY），默认。GitHub 等资源必须走代理。
@@ -20,8 +24,11 @@ logger = logging.getLogger("SwiftDM")
 # 环境变量 SWIFTDM_USE_PROXY 可预设初始模式。
 _PROXY_MODE = os.environ.get("SWIFTDM_USE_PROXY", "env").strip().lower()
 
-# 全局 Session（所有下载共用，便于连接复用）
+# 全局 Session（所有下载共用，便于连接复用；连接池加大以支持多线程分段并发）
 _SESSION = requests.Session()
+_POOL = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+_SESSION.mount("http://", _POOL)
+_SESSION.mount("https://", _POOL)
 
 
 def _apply_proxy_mode(mode):
@@ -114,11 +121,13 @@ class DownloadTask:
 
         # 内部控制
         self._lock = threading.Lock()
-        self._pause_event = threading.Event()
-        self._pause_event.set()  # 初始不暂停
         self._threads = []
         self._segment_progress = []   # 每段的已下载字节
         self._segment_offsets = []    # 每段的 [(start, end), ...]
+        self._seg_done = []           # 每段是否真正下载完成（由分段线程置位）
+        self._gen = 0                 # 代数计数器：暂停/取消时 +1，旧线程据此退出，避免新旧线程同时写同一文件
+        self._range_supported = False  # 服务器是否支持 Range 分段/续传
+        self._completion_handled = False  # 防止监控线程重复合并文件
         self._start_time = 0
         self._last_check_bytes = 0
         self._last_check_time = 0
@@ -165,35 +174,63 @@ class DownloadTask:
                 return False
 
     def _do_fetch_info(self):
-        """用当前全局 Session 的代理模式做 HEAD 探测，提取大小/文件名。"""
-        resp = _SESSION.head(self.url, timeout=15, allow_redirects=True,
-                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        if resp.status_code in (401, 403):
-            raise Exception("HTTP 403")  # 链接签名过期/无权限，由 _friendly_error 转译
-        if resp.status_code not in (200, 206):
-            raise Exception(f"HTTP {resp.status_code}")
-        content_length = resp.headers.get("Content-Length")
-        if content_length:
-            self.total_size = int(content_length)
+        """探测文件信息：大小、最终文件名、是否支持 Range 分段。
 
-        # 尝试从 Content-Disposition 获取文件名
-        cd = resp.headers.get("Content-Disposition", "")
-        match = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
-        if match:
-            cd_name = unquote(match.group(1).strip())
-            if cd_name:
-                self.filename = cd_name
-                self.filepath = os.path.join(self.save_dir, self.filename)
-                self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
+        用 GET + Range: bytes=0-0 代替 HEAD（部分服务器不支持 HEAD 或谎报大小）：
+          - 206 + Content-Range  → 支持 Range，可精确拿到总大小
+          - 200                 → 不支持 Range，只能单线程整文件下载（此时若仍多段并发，
+                                  每段都会拿到整个文件，合并后文件损坏/体积翻倍）
+        """
+        resp = _SESSION.get(self.url, headers={"User-Agent": _UA, "Range": "bytes=0-0"},
+                            stream=True, timeout=15, allow_redirects=True)
+        try:
+            if resp.status_code == 416:
+                # 个别服务器对 Range 探测返回 416：退回普通 GET 探测
+                resp.close()
+                resp = _SESSION.get(self.url, headers={"User-Agent": _UA},
+                                    stream=True, timeout=15, allow_redirects=True)
+
+            if resp.status_code in (401, 403):
+                raise Exception("HTTP 403")  # 链接签名过期/无权限，由 _friendly_error 转译
+            if resp.status_code not in (200, 206):
+                raise Exception(f"HTTP {resp.status_code}")
+
+            if resp.status_code == 206:
+                self._range_supported = True
+                # Content-Range: bytes 0-0/12345 → 最后一段是总大小
+                m = re.match(r"bytes\s+\d+-\d+/(\d+)", resp.headers.get("Content-Range", ""))
+                if m:
+                    self.total_size = int(m.group(1))
+            else:
+                self._range_supported = False
+                content_length = resp.headers.get("Content-Length")
+                if content_length:
+                    self.total_size = int(content_length)
+
+            # 尝试从 Content-Disposition 获取文件名
+            cd = resp.headers.get("Content-Disposition", "")
+            match = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
+            if match:
+                cd_name = unquote(match.group(1).strip())
+                if cd_name:
+                    self.filename = cd_name
+                    self.filepath = os.path.join(self.save_dir, self.filename)
+                    self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
+        finally:
+            resp.close()
 
         return True
 
     def _calc_segments(self):
-        """计算分段区间"""
-        if self.total_size <= 0:
-            # 未知大小，单段下载
+        """计算分段区间。
+
+        未知大小或服务器不支持 Range 时强制单段：
+          - 未知大小：无法分段；
+          - 不支持 Range：多段请求都会返回整个文件，必须单段下载。
+        """
+        if self.total_size <= 0 or not self._range_supported:
             self.segments = 1
-            self._segment_offsets = [(0, 0)]
+            self._segment_offsets = [(0, max(self.total_size - 1, 0))]
             self._segment_progress = [0]
             return
 
@@ -205,27 +242,43 @@ class DownloadTask:
             self._segment_offsets.append((start, end))
         self._segment_progress = [0] * self.segments
 
-    def _download_segment(self, idx):
-        """下载单个分段"""
+    def _segment_complete(self, idx):
+        """检查某个分段文件是否已下载完整（未知大小时无法判断，返回 False，靠流正常结束判定）。"""
+        if self.total_size <= 0:
+            return False
+        start, end = self._segment_offsets[idx]
+        seg_file = os.path.join(self._tmp_dir, f"part_{idx:04d}")
+        expected = end - start + 1
+        return os.path.exists(seg_file) and os.path.getsize(seg_file) >= expected
+
+    def _download_segment(self, idx, gen):
+        """下载单个分段。返回 True=流正常结束，False=被暂停/取消/重启而中止。"""
         start, end = self._segment_offsets[idx]
         seg_file = os.path.join(self._tmp_dir, f"part_{idx:04d}")
 
-        # 恢复：从已有部分继续
-        existing = 0
-        restore_from = start
-        if os.path.exists(seg_file):
-            existing = os.path.getsize(seg_file)
-            restore_from = start + existing
+        # 该分段已完整（上次下载遗留）：直接置位进度，跳过网络请求
+        if self._segment_complete(idx):
+            with self._lock:
+                self._segment_progress[idx] = end - start + 1
+            return True
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-        if self.total_size > 0:
+        # 恢复：从已有部分继续（不支持 Range 的服务器只能从头重下）
+        existing = 0
+        if os.path.exists(seg_file):
+            existing = os.path.getsize(seg_file) if self._range_supported else 0
+        restore_from = start + existing
+
+        # 恢复进度计数：否则暂停后进度条从 0 重新计算
+        with self._lock:
+            self._segment_progress[idx] = existing
+
+        headers = {"User-Agent": _UA}
+        if self.total_size > 0 and self._range_supported:
             headers["Range"] = f"bytes={restore_from}-{end}"
 
         # 主模式先试；失败（状态码不可达 / 连接错误）再用互补模式重试一次
         try:
-            self._stream_segment(idx, headers, seg_file, existing, start, end)
+            return self._stream_segment(idx, headers, seg_file, existing, start, end, gen)
         except Exception as e:
             if _is_proxy_down_error(e):
                 # 代理宕机：整个会话切到直连，后续分段不再重复代理重试
@@ -233,61 +286,57 @@ class DownloadTask:
                                idx, _PROXY_MODE, e)
                 set_proxy_mode("direct")
                 try:
-                    self._stream_segment(idx, headers, seg_file, existing, start, end)
+                    ok = self._stream_segment(idx, headers, seg_file, existing, start, end, gen)
                     logger.info("分段 %d 经直连下载成功", idx)
-                    return
+                    return ok
                 except Exception as e2:
                     logger.error("分段 %d 直连仍失败: %s", idx, e2)
-                    if self.status not in ("cancelled", "paused"):
+                    if self.status not in ("cancelled", "paused", "failed"):
                         raise Exception(_friendly_error(e2))
+                    return False
             alt = _alt_proxy_mode()
             logger.warning("分段 %d 主模式(%s)失败: %s，尝试互补模式 %s",
                            idx, _PROXY_MODE, e, alt)
             try:
                 with _SwitchedProxy(alt):
-                    self._stream_segment(idx, headers, seg_file, existing, start, end)
+                    ok = self._stream_segment(idx, headers, seg_file, existing, start, end, gen)
                 logger.info("分段 %d 经互补模式 %s 下载成功", idx, alt)
-                return
+                return ok
             except Exception as e2:
                 logger.error("分段 %d 互补模式 %s 仍失败: %s", idx, alt, e2)
-                if self.status not in ("cancelled", "paused"):
+                if self.status not in ("cancelled", "paused", "failed"):
                     raise Exception(_friendly_error(e2))
+                return False
 
-    def _stream_segment(self, idx, headers, seg_file, existing, start, end):
-        """用当前全局 Session 的代理模式下载并写入一个分段（不含失败重试）。"""
+    def _stream_segment(self, idx, headers, seg_file, existing, start, end, gen):
+        """用当前全局 Session 的代理模式下载并写入一个分段（不含失败重试）。
+
+        返回 True=流正常结束；False=任务被暂停/取消/重启，调用方应静默退出。
+        """
         resp = _SESSION.get(self.url, headers=headers, stream=True, timeout=30,
                             allow_redirects=True)
-        if resp.status_code in (401, 403):
-            raise Exception("HTTP 403")  # 链接签名过期/无权限
-        if resp.status_code not in (200, 206):
-            raise Exception(f"HTTP {resp.status_code}")
-        mode = "ab" if existing > 0 else "wb"
-        with open(seg_file, mode) as f:
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                if not self._pause_event.is_set():
-                    # 暂停中，等待恢复或取消
-                    while not self._pause_event.is_set():
-                        time.sleep(0.2)
-                        if self.status in ("cancelled", "failed"):
-                            return
-                if self.status in ("cancelled", "failed"):
-                    return
-                f.write(chunk)
-                with self._lock:
-                    self._segment_progress[idx] += len(chunk)
+        try:
+            if resp.status_code in (401, 403):
+                raise Exception("HTTP 403")  # 链接签名过期/无权限
+            if resp.status_code not in (200, 206):
+                raise Exception(f"HTTP {resp.status_code}")
+            # 请求了续传区间但服务器返回 200 整文件：继续写入会破坏分段布局
+            if "Range" in headers and existing > 0 and resp.status_code == 200:
+                raise Exception("服务器不支持 Range 续传（返回 200），无法从断点继续")
 
-    def _all_segments_done(self):
-        """检查所有分段是否下载完成"""
-        for idx in range(self.segments):
-            start, end = self._segment_offsets[idx]
-            seg_file = os.path.join(self._tmp_dir, f"part_{idx:04d}")
-            if not os.path.exists(seg_file):
-                return False
-            seg_size = os.path.getsize(seg_file)
-            expected = (end - start + 1) if self.total_size > 0 else 0
-            if expected > 0 and seg_size < expected:
-                return False
-        return True
+            mode = "ab" if existing > 0 else "wb"
+            with open(seg_file, mode) as f:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    # 暂停/取消/重启（代数变化）：旧线程立即退出，由 resume 重新拉起，
+                    # 避免新旧两组线程同时向同一分段文件写数据导致文件损坏
+                    if self._gen != gen or self.status != "downloading":
+                        return False
+                    f.write(chunk)
+                    with self._lock:
+                        self._segment_progress[idx] += len(chunk)
+            return True
+        finally:
+            resp.close()
 
     def _assemble_file(self):
         """合并分段文件"""
@@ -343,12 +392,26 @@ class DownloadTask:
             else:
                 self.progress = 0
 
-            # 检查是否所有分段都已下载完成
-            if self._all_segments_done():
+            # 检查是否所有分段线程都已置位完成标志（旧实现只看分段文件是否存在，
+            # 未知大小任务一旦文件被创建就会被误判为完成）
+            if (len(self._seg_done) == self.segments and all(self._seg_done)):
+                with self._lock:
+                    if self._completion_handled or self.status != "downloading":
+                        return
+                    self._completion_handled = True
                 try:
                     self._assemble_file()
+                    final_size = os.path.getsize(self.filepath) if os.path.exists(self.filepath) else 0
+                    if self.total_size > 0 and final_size != self.total_size:
+                        raise Exception(
+                            f"文件大小校验失败（预期 {self.total_size} 字节，实际 {final_size} 字节）")
+                    if self.total_size <= 0:
+                        # 未知大小：完成后用实际大小回填，供 UI 显示
+                        self.total_size = final_size
+                        self.downloaded = final_size
+                    else:
+                        self.downloaded = self.total_size
                     self.progress = 100.0
-                    self.downloaded = self.total_size if self.total_size > 0 else total_downloaded
                     self.status = "completed"
                     self.speed = 0.0
                     self.eta = ""
@@ -357,8 +420,7 @@ class DownloadTask:
                     self.error = f"合并文件失败: {e}"
                     logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
                 else:
-                    logger.info("下载完成: %s (%.2f MB)", self.filename,
-                                (self.total_size if self.total_size > 0 else total_downloaded) / 1024 / 1024)
+                    logger.info("下载完成: %s (%.2f MB)", self.filename, final_size / 1024 / 1024)
                 return
 
     def start(self):
@@ -368,7 +430,6 @@ class DownloadTask:
 
         logger.info("开始下载任务: %s  (%s)", self.filename, self.url)
         self.status = "downloading"
-        self._pause_event.set()
 
         # 获取文件信息
         if not self._fetch_info():
@@ -391,9 +452,12 @@ class DownloadTask:
                 self.downloaded = self.total_size
                 return
 
-        self._start_time = time.time()
-        self._last_check_bytes = 0
-        self._last_check_time = 0
+        with self._lock:
+            self._seg_done = [False] * self.segments
+            self._completion_handled = False
+            self._start_time = time.time()
+            self._last_check_time = time.time()
+            self._last_check_bytes = 0
 
         # 启动分段下载线程
         self._threads = []
@@ -408,29 +472,56 @@ class DownloadTask:
         self._threads.append(monitor)
 
     def _run_segment(self, idx):
-        """在线程中运行分段下载"""
+        """在线程中运行分段下载（含 3 次自动重试，覆盖连接中途断开导致的分段不完整）。"""
+        gen = self._gen
         try:
-            self._download_segment(idx)
+            for _attempt in range(3):
+                if self._gen != gen or self.status != "downloading":
+                    return
+                streamed = self._download_segment(idx, gen)
+                # 未知大小：流正常结束即完成；已知大小：校验分段文件确实完整
+                if streamed and (self.total_size <= 0 or self._segment_complete(idx)):
+                    break
+                # 否则不完整（如连接提前断开），自动重试
+            else:
+                if self._gen == gen and self.status == "downloading":
+                    raise Exception("分段下载不完整（已自动重试 3 次仍不完整），请暂停后恢复重试")
+                return
+            if self._gen == gen and self.status == "downloading":
+                with self._lock:
+                    self._seg_done[idx] = True
         except Exception as e:
             with self._lock:
-                if self.status not in ("paused", "cancelled", "completed"):
+                if self.status == "downloading":
                     self.status = "failed"
                     self.error = str(e)
-                    logger.error("任务失败: %s | 分段%d 错误: %s", self.filename, idx, e)
+            logger.error("任务失败: %s | 分段%d 错误: %s", self.filename, idx, e)
 
     def pause(self):
-        """暂停下载"""
+        """暂停下载。代数 +1 让所有分段线程尽快退出（旧实现线程挂起等待，
+        resume 再拉起新线程后新旧两组同时写同一文件，会导致文件损坏）。"""
+        if self.status != "downloading":
+            return
         self.status = "paused"
-        self._pause_event.clear()
+        self._gen += 1
+        self.speed = 0.0
+        self.eta = ""
 
     def resume(self):
         """恢复下载"""
         if self.status != "paused":
             return
         self.status = "downloading"
-        self._pause_event.set()
 
-        # 重新启动分段线程
+        with self._lock:
+            self._seg_done = [False] * self.segments
+            self._completion_handled = False
+            self._start_time = time.time()
+            # 以当前累计字节为基线，避免恢复瞬间速度计算出现负值/尖峰
+            self._last_check_time = time.time()
+            self._last_check_bytes = sum(self._segment_progress)
+
+        # 重新启动分段线程（会从各分段已有字节断点续传）
         self._threads = []
         for idx in range(self.segments):
             t = threading.Thread(target=self._run_segment, args=(idx,), daemon=True)
@@ -445,7 +536,7 @@ class DownloadTask:
     def cancel(self):
         """取消下载"""
         self.status = "cancelled"
-        self._pause_event.set()  # 唤醒等待的线程
+        self._gen += 1  # 唤醒/终止所有分段线程
 
         # 清理临时文件
         if os.path.exists(self._tmp_dir):

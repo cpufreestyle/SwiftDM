@@ -4,6 +4,8 @@ SwiftDM 主窗口 —— PyQt6 原生桌面 UI（IDM 风格）
 import os
 import sys
 import time
+import logging
+import subprocess
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QLabel, QProgressBar, QScrollArea, QFrame,
@@ -31,6 +33,19 @@ def format_speed(bps):
     return format_size(bps) + "/s"
 
 
+def open_in_system(path):
+    """跨平台用系统默认程序打开文件/目录（os.startfile 仅 Windows 可用）。"""
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)  # noqa: P201  (Windows only)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
 # ==================== 样式表 ====================
 QSS = """
 QMainWindow {
@@ -39,7 +54,7 @@ QMainWindow {
 QWidget {
     background-color: #0f0f14;
     color: #e0e0e8;
-    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 13px;
 }
 QToolBar {
@@ -698,7 +713,7 @@ class MainWindow(QMainWindow):
         self.log_edit.setReadOnly(True)
         self.log_edit.setStyleSheet(
             "QPlainTextEdit{background:#0a0a0f;color:#cfcfe0;"
-            "font-family:'Consolas','Courier New',monospace;font-size:12px;border:none;}"
+            "font-family:'Consolas','Menlo','Courier New',monospace;font-size:12px;border:none;}"
         )
         self.log_dock.setWidget(self.log_edit)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
@@ -880,9 +895,9 @@ class MainWindow(QMainWindow):
         elif action == "open":
             filepath = task.filepath
             if os.path.exists(filepath):
-                os.startfile(filepath)
+                open_in_system(filepath)
             else:
-                os.startfile(os.path.dirname(filepath))
+                open_in_system(os.path.dirname(filepath))
 
     def _pause_all(self):
         mgr = self._get_manager()
