@@ -324,14 +324,27 @@ class DownloadTask:
             if "Range" in headers and existing > 0 and resp.status_code == 200:
                 raise Exception("服务器不支持 Range 续传（返回 200），无法从断点继续")
 
+            # 本分段还应下载的字节数（已知大小且支持 Range 时）；
+            # 个别服务器会忽略 Range 的结束偏移多发数据，按需截断，防止分片超长
+            expected = None
+            if self.total_size > 0 and self._range_supported:
+                expected = end - (start + existing) + 1
+
             mode = "ab" if existing > 0 else "wb"
+            written = 0
             with open(seg_file, mode) as f:
                 for chunk in resp.iter_content(chunk_size=256 * 1024):
                     # 暂停/取消/重启（代数变化）：旧线程立即退出，由 resume 重新拉起，
                     # 避免新旧两组线程同时向同一分段文件写数据导致文件损坏
                     if self._gen != gen or self.status != "downloading":
                         return False
+                    if expected is not None:
+                        if written >= expected:
+                            break
+                        if written + len(chunk) > expected:
+                            chunk = chunk[:expected - written]
                     f.write(chunk)
+                    written += len(chunk)
                     with self._lock:
                         self._segment_progress[idx] += len(chunk)
             return True
@@ -541,6 +554,21 @@ class DownloadTask:
         # 清理临时文件
         if os.path.exists(self._tmp_dir):
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
+
+    def retry(self):
+        """重试失败/已取消的任务。
+
+        失败任务的分片文件仍在磁盘上（cancel 才会清理），重试会从各分片
+        已有字节断点续传，不会从头下载。已取消任务因分片被清理则从头开始。
+        """
+        if self.status not in ("failed", "cancelled"):
+            return False
+        self.error = ""
+        self._completion_handled = False
+        self._seg_done = [False] * max(self.segments, 1)
+        self.status = "pending"
+        self.start()
+        return True
 
     def to_dict(self):
         return {

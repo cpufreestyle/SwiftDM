@@ -97,6 +97,18 @@ def cancel_task(task_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/retry/<task_id>", methods=["POST"])
+def retry_task(task_id):
+    """重试失败/已取消的任务（失败任务从已有分片断点续传）"""
+    task = manager.get_task(task_id)
+    if not task:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
+    ok = task.retry()
+    if not ok:
+        return jsonify({"success": False, "error": f"当前状态不支持重试: {task.status}"}), 400
+    return jsonify({"success": True, "task": task.to_dict()})
+
+
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
     manager.remove_task(task_id)

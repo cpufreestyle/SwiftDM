@@ -564,6 +564,10 @@ async function cancelTask(id) {
   await api(`/api/cancel/${id}`, { method: "POST" });
 }
 
+async function retryTask(id) {
+  await api(`/api/retry/${id}`, { method: "POST" });
+}
+
 async function removeTask(id) {
   await api(`/api/remove/${id}`, { method: "DELETE" });
 }
@@ -661,6 +665,7 @@ function createTaskCard(task) {
     `;
   } else if (task.status === "failed" || task.status === "cancelled") {
     actionsHtml = `
+      <button class="btn btn-secondary btn-sm" onclick="retryTask('${task.task_id}')">&#8635; 重试</button>
       <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
     `;
   } else if (task.status === "completed") {

@@ -85,6 +85,11 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
         if self.manager is None:
             from downloader import manager as mgr
             self.__class__.manager = mgr
+        # 去重：同 URL 的活跃任务不重复添加（与 Flask /api/browser-capture 行为一致）
+        for t in self.manager.get_all_tasks():
+            if t.url == url and t.status in ("downloading", "paused", "pending"):
+                print(f"[Monitor] URL 已存在任务中，跳过: {url[:60]}...")
+                return
         save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
         os.makedirs(save_dir, exist_ok=True)
         task = self.manager.create_task(url, save_dir, filename, 8)

@@ -1,8 +1,13 @@
 // SwiftDM 浏览器监控 - 后台 Service Worker
-// 优先使用 Flask API（端口 5000），备选浏览器监控服务器（端口 5001）
+// 依次尝试多个端点：Flask API（5000，被占用时主程序自动回退到 5002-5005），
+// 以及浏览器监控服务器（5001 固定端口）
 const SWIFTDM_URLS = [
   'http://127.0.0.1:5000/api/browser-capture',
-  'http://127.0.0.1:5001/capture'
+  'http://127.0.0.1:5001/capture',
+  'http://127.0.0.1:5002/api/browser-capture',
+  'http://127.0.0.1:5003/api/browser-capture',
+  'http://127.0.0.1:5004/api/browser-capture',
+  'http://127.0.0.1:5005/api/browser-capture'
 ];
 
 // 存储下载历史，避免重复发送

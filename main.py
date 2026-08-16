@@ -159,15 +159,19 @@ def main():
     monitor_port = _pick_port("127.0.0.1", SWIFTDM_MONITOR_PORT)
     web_port = _pick_port(SWIFTDM_HOST, SWIFTDM_PORT, avoid=(monitor_port,))
 
-    # 1. 安装依赖（如果需要）
+    # 1. 安装依赖（如果需要）—— 检查全部依赖，缺失则按 requirements.txt 补齐
     try:
-        import PyQt6
+        import PyQt6  # noqa: F401
+        import flask  # noqa: F401
+        import flask_cors  # noqa: F401
+        import requests  # noqa: F401
+        import pyperclip  # noqa: F401
     except ImportError:
-        if not web_only:
-            print("\n正在安装 PyQt6...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "PyQt6", "pyperclip", "-q"])
-            print("依赖安装完成，请重新运行")
-            return
+        req = os.path.join(os.path.dirname(os.path.abspath(__file__)), "requirements.txt")
+        print("\n检测到缺失依赖，正在安装 requirements.txt ...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req])
+        print("依赖安装完成，请重新运行")
+        return
 
     # 2. 启动浏览器监控 HTTP 服务器
     from browser_monitor import BrowserMonitor

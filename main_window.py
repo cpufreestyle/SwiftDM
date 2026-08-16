@@ -193,6 +193,7 @@ class TaskCard(QFrame):
     def __init__(self, task_data, parent=None):
         super().__init__(parent)
         self.task_id = task_data["task_id"]
+        self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
         self.setObjectName("taskCard")
         self.setStyleSheet("""
             TaskCard {
@@ -329,6 +330,12 @@ class TaskCard(QFrame):
             bottom.addWidget(btn_cancel)
 
         elif status in ("failed", "cancelled", "completed"):
+            if status in ("failed", "cancelled"):
+                btn_retry = QPushButton("↻ 重试")
+                btn_retry.setStyleSheet(self._btn_style("#4da6ff"))
+                btn_retry.clicked.connect(lambda: self.action_triggered.emit("retry", self.task_id))
+                bottom.addWidget(btn_retry)
+
             btn_remove = QPushButton("🗑 删除")
             btn_remove.setStyleSheet(self._btn_style("#ff5e7a"))
             btn_remove.clicked.connect(lambda: self.action_triggered.emit("remove", self.task_id))
@@ -832,8 +839,15 @@ class MainWindow(QMainWindow):
 
             # 更新或创建卡片
             for task_id, data in task_dict.items():
-                if task_id in self._cards:
-                    self._cards[task_id].update_data(data)
+                card = self._cards.get(task_id)
+                if card is not None and getattr(card, "_built_status", None) != data["status"]:
+                    # 操作按钮按状态生成（下载中→暂停/取消，失败→重试/删除…），
+                    # 状态变化时重建卡片，否则会一直显示旧状态对应的按钮
+                    self.task_layout.removeWidget(card)
+                    card.deleteLater()
+                    card = None
+                if card is not None:
+                    card.update_data(data)
                 else:
                     card = TaskCard(data)
                     card.action_triggered.connect(self._handle_action)
@@ -888,6 +902,11 @@ class MainWindow(QMainWindow):
             task.pause()
         elif action == "resume":
             task.resume()
+        elif action == "retry":
+            if task.retry():
+                self.status_bar.showMessage(f"正在重试: {task.filename}")
+            else:
+                self.status_bar.showMessage(f"当前状态不支持重试: {task.status}", 5000)
         elif action == "cancel":
             task.cancel()
         elif action == "remove":
