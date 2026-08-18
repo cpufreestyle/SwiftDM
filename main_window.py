@@ -570,9 +570,11 @@ class MainWindow(QMainWindow):
     """SwiftDM 主窗口"""
     log_signal = pyqtSignal(str)
 
-    def __init__(self, http_port=5000):
+    def __init__(self, http_port=5000, monitor=None):
         super().__init__()
         self.http_port = http_port
+        self.monitor = monitor  # 浏览器监控器（由 main 注入），设置可启停它
+        self.download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
         # 日志：文件 + 控制台 + UI 面板
         self.logger = setup_logging()
         self._log_handler = QtLogHandler(self.log_signal)
@@ -881,7 +883,8 @@ class MainWindow(QMainWindow):
             try:
                 import requests as req
                 from downloader import manager
-                save_dir = data["dir"] or os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+                # 优先用用户设置的下载目录，否则回退默认
+                save_dir = data["dir"] or self.download_dir
                 os.makedirs(save_dir, exist_ok=True)
                 task = manager.create_task(data["url"], save_dir, data["filename"], data["segments"])
                 task.start()
@@ -942,6 +945,15 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             settings = dlg.get_settings()
+            # 应用下载目录（真正生效）
+            if settings["dir"]:
+                self.download_dir = settings["dir"]
+            # 应用浏览器监控启停（真正生效）
+            if self.monitor is not None:
+                if settings["monitor"]:
+                    self.monitor.start()
+                else:
+                    self.monitor.stop()
             self.monitor_label.setText(
                 "  🌐 监控已启用" if settings["monitor"] else "  🌐 监控已禁用"
             )
@@ -951,9 +963,10 @@ class MainWindow(QMainWindow):
             # 应用下载代理模式
             from downloader import set_proxy_mode
             set_proxy_mode(settings.get("proxy_mode", "env"))
-            self.logger.info("设置已保存，下载代理模式: %s", settings.get("proxy_mode", "env"))
+            self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
+                             settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(
-                f"设置已保存 | 代理: {settings.get('proxy_mode', 'env')}", 5000)
+                f"设置已保存 | 代理: {settings.get('proxy_mode', 'env')} | 目录: {self.download_dir}", 5000)
 
     def _quit_app(self):
         # 确认退出

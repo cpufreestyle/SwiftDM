@@ -9,9 +9,20 @@ venv/
 *.log
 _*.py
 _*.txt
+_*.bin
+_*/
 web.err
 web.log
 
 # OS
 .DS_Store
 Thumbs.db
+
+# PyInstaller 构建产物
+build/
+dist/
+icon.ico
+*.spec
+!SwiftDM.spec
+warn-*.txt
+xref-*.html

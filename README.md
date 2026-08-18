@@ -167,3 +167,36 @@ python main.py --web-only      # Windows: start.bat --web  |  macOS/Linux: ./sta
 
 启动后监听 `0.0.0.0:5000`（含局域网 IP），方便预览代理 / 远程访问。
 
+## 📦 构建与发布（跨平台二进制）
+
+项目提供构建脚本，**跨 Windows / macOS / Linux** 打包，无需用户安装 Python 即可运行，
+并自动上传到 GitHub Release 作为二进制资源。
+
+```bash
+# 1) 构建当前平台的二进制（自动按系统推断目标）
+python build_exe.py
+#   Windows  -> dist/SwiftDM.exe         （单文件）
+#   macOS    -> dist/SwiftDM.app         （应用包，建议 onedir）
+#   Linux    -> dist/SwiftDM             （单文件 ELF 可执行）
+
+# 也可强制指定目标平台（需在该平台对应的系统上运行）
+python build_exe.py --target win
+python build_exe.py --target mac
+python build_exe.py --target linux
+
+# 2) 发布到 GitHub Release（创建/复用 v0.1.0，并上传对应平台产物）
+python release.py                 # 上传当前平台产物
+python release.py --target win    # 上传 Windows 产物 (SwiftDM-v0.1.0-windows.exe)
+python release.py --target mac    # 上传 macOS 产物 (SwiftDM-v0.1.0-macos.zip)
+python release.py --target linux  # 上传 Linux 产物 (SwiftDM-v0.1.0-linux)
+```
+
+说明：
+- `build_exe.py`：用 PyInstaller 打包，内嵌 `templates/index.html` 与图标，
+  Windows 产出 `dist/SwiftDM.exe`（窗口模式，无控制台黑框），macOS 产出 `SwiftDM.app`，
+  Linux 产出 `SwiftDM`。图标按平台生成（`.ico` / `.icns` / `.png`），清理/结束进程命令也跨平台适配。
+- `release.py`：从 `~/.git-credentials` 读取 GitHub token，幂等地创建/复用 Release 并上传
+  对应平台的二进制资源（同名资源会先删除再上传）。
+- 启动脚本：`start.bat`（Windows）、`start.sh`（macOS/Linux，需 `chmod +x start.sh`）。
+- 构建/发布产物（`build/`、`dist/`、`icon.*` 等）已写入 `.gitignore`。
+
