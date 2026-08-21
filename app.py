@@ -109,6 +109,29 @@ def retry_task(task_id):
     return jsonify({"success": True, "task": task.to_dict()})
 
 
+@app.route("/api/open/<task_id>", methods=["POST"])
+def open_file(task_id):
+    """用系统默认程序打开已下载的文件（跨平台）"""
+    import sys as _sys
+    import subprocess as _sp
+    task = manager.get_task(task_id)
+    if not task:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
+    filepath = task.filepath
+    if not os.path.exists(filepath):
+        return jsonify({"success": False, "error": "文件不存在"}), 404
+    try:
+        if _sys.platform == "win32":
+            os.startfile(filepath)  # noqa: P201
+        elif _sys.platform == "darwin":
+            _sp.Popen(["open", filepath])
+        else:
+            _sp.Popen(["xdg-open", filepath])
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
     manager.remove_task(task_id)
@@ -252,9 +275,13 @@ def self_test():
 
 @app.route("/api/stream")
 def stream():
-    """Server-Sent Events 实时推送任务状态"""
+    """Server-Sent Events 实时推送任务状态。
+
+    无数据变化时每 15s 发送 keepalive 注释行，防止代理/负载均衡器因空闲超时断开连接。
+    """
     def generate():
         last_stats = None
+        idle_since = 0
         while True:
             tasks = [t.to_dict() for t in manager.get_all_tasks()]
             stats = manager.get_stats()
@@ -264,7 +291,15 @@ def stream():
             payload_str = json.dumps(payload)
             if payload_str != last_stats:
                 last_stats = payload_str
+                idle_since = 0
                 yield f"data: {payload_str}\n\n"
+            else:
+                idle_since += 1  # 0.5s per tick
+
+            # 15s 无数据变化时发送 keepalive 注释（SSE 规范: 以 : 开头的行被客户端忽略）
+            if idle_since >= 30:
+                yield ": keepalive\n\n"
+                idle_since = 0
 
             time.sleep(0.5)
     return Response(generate(), mimetype="text/event-stream")

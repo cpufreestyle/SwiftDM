@@ -429,7 +429,7 @@ body {
     <div class="logo">&#11015;</div>
     <div>
       <h1>SwiftDM</h1>
-      <div class="sub">高速多线程下载管理器</div>
+      <div class="sub">高速多线程下载管理器 <span id="connStatus" style="color:var(--green)">&#9679; 已连接</span></div>
     </div>
   </div>
 
@@ -438,6 +438,7 @@ body {
     <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span></div>
     <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
+    <div class="stat-item"><span class="icon">&#10006;</span><span class="label">失败</span><span class="value" id="failedCount" style="color:var(--red)">0</span></div>
     <div class="stat-item"><span class="icon">&#9776;</span><span class="label">总计</span><span class="value" id="totalCount">0</span></div>
   </div>
 
@@ -475,7 +476,7 @@ body {
 // ===== 工具函数 =====
 function formatSize(bytes) {
   if (bytes <= 0) return "未知";
-  const units = ["B", "KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   let sz = bytes;
   while (sz >= 1024 && i < units.length - 1) { sz /= 1024; i++; }
@@ -566,6 +567,13 @@ async function cancelTask(id) {
 
 async function retryTask(id) {
   await api(`/api/retry/${id}`, { method: "POST" });
+}
+
+async function openFile(id) {
+  const res = await api(`/api/open/${id}`, { method: "POST" });
+  if (!res.success) {
+    showToast(res.error || "无法打开文件", "error");
+  }
 }
 
 async function removeTask(id) {
@@ -670,6 +678,7 @@ function createTaskCard(task) {
     `;
   } else if (task.status === "completed") {
     actionsHtml = `
+      <button class="btn btn-secondary btn-sm" onclick="openFile('${task.task_id}')">&#128193; 打开</button>
       <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
     `;
   }
@@ -678,6 +687,7 @@ function createTaskCard(task) {
     <div class="task-top">
       <div class="task-info">
         <div class="task-filename" title="${task.filename}">${task.filename}</div>
+        <div class="task-url" title="${task.url}">${task.url}</div>
         <div class="task-meta">${metaHtml}</div>
         ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${task.error}</div>` : ""}
       </div>
@@ -703,12 +713,22 @@ function renderStats(stats) {
   document.getElementById("totalSpeed").textContent = formatSpeed(stats.total_speed);
   document.getElementById("activeCount").textContent = stats.active;
   document.getElementById("doneCount").textContent = stats.completed;
+  document.getElementById("failedCount").textContent = stats.failed;
   document.getElementById("totalCount").textContent = stats.total;
 }
 
 // ===== SSE 实时更新 =====
 function connectSSE() {
+  const connStatus = document.getElementById("connStatus");
+  connStatus.innerHTML = "&#9679; 连接中...";
+  connStatus.style.color = "var(--orange)";
+
   const evtSource = new EventSource("/api/stream");
+
+  evtSource.onopen = () => {
+    connStatus.innerHTML = "&#9679; 已连接";
+    connStatus.style.color = "var(--green)";
+  };
 
   evtSource.onmessage = (event) => {
     try {
@@ -721,7 +741,8 @@ function connectSSE() {
   };
 
   evtSource.onerror = () => {
-    console.log("SSE disconnected, reconnecting in 3s...");
+    connStatus.innerHTML = "&#9679; 已断开";
+    connStatus.style.color = "var(--red)";
     evtSource.close();
     setTimeout(connectSSE, 3000);
   };

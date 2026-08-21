@@ -830,7 +830,7 @@ class MainWindow(QMainWindow):
                     else:
                         self.status_bar.showMessage(f"✗ 下载失败: {name}", 10000)
 
-            self._prev_statuses = {t.to_dict()["task_id"]: t.to_dict()["status"] for t in tasks}
+            self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
 
             # 移除不存在的任务卡片
             removed = set(self._cards.keys()) - set(task_dict.keys())
