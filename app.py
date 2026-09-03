@@ -7,6 +7,7 @@ import time
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
 from downloader import manager, DownloadManager, get_proxy_mode, set_proxy_mode
+import config
 
 # 让本地回环地址绕过系统代理，避免浏览器经代理访问 127.0.0.1 出现 502
 for _k in ("no_proxy", "NO_PROXY"):
@@ -26,8 +27,8 @@ SWIFTDM_PORT = int(os.environ.get("SWIFTDM_PORT", "5000"))
 app = Flask(__name__)
 CORS(app)
 
-# 默认下载目录
-DEFAULT_DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+# 默认下载目录：统一从共享配置读取（桌面 UI 设置的目录对 Web 端同样生效）
+DEFAULT_DOWNLOAD_DIR = config.get_download_dir()
 os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
 
 # 剪贴板 URL 暂存
@@ -56,7 +57,7 @@ def add_task():
     url = data.get("url", "").strip()
     filename = data.get("filename", "").strip() or None
     segments = int(data.get("segments", 8))
-    save_dir = data.get("save_dir", DEFAULT_DOWNLOAD_DIR)
+    save_dir = data.get("save_dir") or config.get_download_dir()
 
     if not url:
         return jsonify({"success": False, "error": "URL 不能为空"}), 400
@@ -167,13 +168,25 @@ def settings():
         # 代理模式: env(系统代理) / direct(直连) / 自定义地址
         if "proxy_mode" in data:
             set_proxy_mode(data["proxy_mode"])
-        # 可扩展: 保存设置
-        return jsonify({"success": True, "proxy_mode": get_proxy_mode()})
+            config.set("proxy_mode", data["proxy_mode"])
+        # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效
+        if "download_dir" in data:
+            new_dir = str(data["download_dir"]).strip()
+            if new_dir and os.path.isdir(os.path.expanduser(new_dir)):
+                config.set_download_dir(os.path.expanduser(new_dir))
+            elif new_dir:
+                return jsonify({"success": False,
+                                "error": f"目录不存在: {new_dir}"}), 400
+        return jsonify({
+            "success": True,
+            "proxy_mode": get_proxy_mode(),
+            "download_dir": config.get_download_dir(),
+        })
     return jsonify({
-        "download_dir": DEFAULT_DOWNLOAD_DIR,
-        "default_segments": 8,
+        "download_dir": config.get_download_dir(),
+        "default_segments": config.get("segments"),
         "proxy_mode": get_proxy_mode(),
-        "proxy_modes": ["env", "direct"],
+        "proxy_modes": ["env", "direct", "custom"],
     })
 
 
@@ -238,7 +251,7 @@ def self_test():
     import time as _time
     from downloader import manager
 
-    save_dir = os.path.join(DEFAULT_DOWNLOAD_DIR, "_selftest")
+    save_dir = os.path.join(config.get_download_dir(), "_selftest")
     os.makedirs(save_dir, exist_ok=True)
     url = request.host_url.rstrip("/") + "/api/local-test-file"
 
@@ -336,7 +349,7 @@ def browser_capture():
         if t.url == url and t.status in ("downloading", "paused", "pending"):
             return jsonify({"success": True, "task": t.to_dict(), "duplicate": True})
 
-    task = manager.create_task(url, DEFAULT_DOWNLOAD_DIR, filename, 8)
+    task = manager.create_task(url, config.get_download_dir(), filename, 8)
     task.start()
 
     resp = jsonify({"success": True, "task": task.to_dict()})
@@ -347,7 +360,7 @@ def browser_capture():
 if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  IDM 风格下载管理器已启动")
-    print(f"  下载目录: {DEFAULT_DOWNLOAD_DIR}")
+    print(f"  下载目录: {config.get_download_dir()}")
     print(f"  打开浏览器访问: http://127.0.0.1:{SWIFTDM_PORT}")
     print("=" * 50 + "\n")
     app.run(host=SWIFTDM_HOST, port=SWIFTDM_PORT, debug=False, threaded=True)

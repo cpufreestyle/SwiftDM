@@ -447,8 +447,9 @@ class SettingsDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        self.dir_edit = QLineEdit()
-        self.dir_edit.setPlaceholderText("默认: ~/Downloads/IDM_Downloads")
+        # 下载目录：预填当前生效目录（共享配置），而非空白占位
+        import config
+        self.dir_edit = QLineEdit(config.get_download_dir())
         btn_browse = QPushButton("浏览...")
         btn_browse.clicked.connect(self._browse_dir)
         dir_row = QHBoxLayout()
@@ -458,30 +459,35 @@ class SettingsDialog(QDialog):
 
         self.segments_spin = QSpinBox()
         self.segments_spin.setRange(1, 32)
-        self.segments_spin.setValue(8)
+        self.segments_spin.setValue(int(config.get("segments")))
         self.segments_spin.setToolTip("多线程分段数，越大速度越快但占用更多资源")
         layout.addRow("下载线程数:", self.segments_spin)
 
         self.monitor_check = QComboBox()
         self.monitor_check.addItems(["启用", "禁用"])
+        self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
         layout.addRow("浏览器监控:", self.monitor_check)
 
-        # 代理模式：系统代理 / 直连 / 自定义
+        # 代理模式：系统代理 / 直连 / 自定义（三态与 downloader 实际支持一致）
         from downloader import get_proxy_mode
         self.proxy_combo = QComboBox()
-        self.proxy_combo.addItems(["系统代理 (env)", "直连 (direct)"])
+        self.proxy_combo.addItems(["系统代理 (env)", "直连 (direct)", "自定义代理"])
         self.proxy_combo.setToolTip(
             "系统代理: 继承 HTTP_PROXY/HTTPS_PROXY，GitHub 等资源必须走代理\n"
             "直连: 忽略代理，仅适合代理宕机时\n"
-            "自定义: 在下方填写代理地址（如 http://127.0.0.1:7890 或 socks5://...）")
+            "自定义代理: 在下方填写代理地址（如 http://127.0.0.1:7890 或 socks5://...）")
         cur = get_proxy_mode()
-        self.proxy_combo.setCurrentIndex(0 if cur in ("env", "system", "") else 1)
+        if cur in ("env", "system", ""):
+            self.proxy_combo.setCurrentIndex(0)
+        elif cur == "direct":
+            self.proxy_combo.setCurrentIndex(1)
+        else:
+            self.proxy_combo.setCurrentIndex(2)
         layout.addRow("下载代理:", self.proxy_combo)
 
         self.proxy_custom = QLineEdit()
-        self.proxy_custom.setPlaceholderText("自定义代理地址（选「直连」时可填，留空=纯直连）")
+        self.proxy_custom.setPlaceholderText("如 http://127.0.0.1:7890 或 socks5://...")
         if cur not in ("env", "system", "direct", ""):
-            self.proxy_combo.setCurrentIndex(1)
             self.proxy_custom.setText(cur)
         layout.addRow("自定义代理:", self.proxy_custom)
 
@@ -497,13 +503,15 @@ class SettingsDialog(QDialog):
             self.dir_edit.setText(d)
 
     def get_settings(self):
-        if self.proxy_combo.currentIndex() == 0:
+        idx = self.proxy_combo.currentIndex()
+        if idx == 0:
             proxy_mode = "env"
+        elif idx == 1:
+            proxy_mode = "direct"
         else:
-            custom = self.proxy_custom.text().strip()
-            proxy_mode = custom or "direct"
+            proxy_mode = self.proxy_custom.text().strip() or "direct"
         return {
-            "dir": self.dir_edit.text(),
+            "dir": self.dir_edit.text().strip(),
             "segments": self.segments_spin.value(),
             "monitor": self.monitor_check.currentIndex() == 0,
             "proxy_mode": proxy_mode,
@@ -574,7 +582,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.http_port = http_port
         self.monitor = monitor  # 浏览器监控器（由 main 注入），设置可启停它
-        self.download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+        import config
+        self.download_dir = config.get_download_dir()
         # 日志：文件 + 控制台 + UI 面板
         self.logger = setup_logging()
         self._log_handler = QtLogHandler(self.log_signal)
@@ -945,24 +954,28 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             settings = dlg.get_settings()
-            # 应用下载目录（真正生效）
+            import config
+            # 应用下载目录（真正生效）并持久化 —— Web/浏览器捕获/桌面三端统一读取
             if settings["dir"]:
-                self.download_dir = settings["dir"]
-            # 应用浏览器监控启停（真正生效）
+                self.download_dir = config.set_download_dir(settings["dir"])
+            # 应用浏览器监控启停（真正生效，start/stop 已幂等）
             if self.monitor is not None:
                 if settings["monitor"]:
                     self.monitor.start()
                 else:
                     self.monitor.stop()
+            config.set("monitor_enabled", settings["monitor"])
             self.monitor_label.setText(
                 "  🌐 监控已启用" if settings["monitor"] else "  🌐 监控已禁用"
             )
             self.monitor_label.setStyleSheet(
                 f"font-size: 11px; color: {'#00d2a0' if settings['monitor'] else '#ff5e7a'}; font-weight: 600;"
             )
-            # 应用下载代理模式
+            # 应用下载代理模式并持久化（重启后仍生效）
             from downloader import set_proxy_mode
             set_proxy_mode(settings.get("proxy_mode", "env"))
+            config.set("proxy_mode", settings.get("proxy_mode", "env"))
+            config.set("segments", settings.get("segments", 8))
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(

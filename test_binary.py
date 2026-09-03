@@ -22,7 +22,30 @@ import time
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "dist", "SwiftDM.exe")
+
+
+def _find_exe():
+    """按平台定位 PyInstaller 产物（Windows .exe / macOS .app / Linux ELF）。"""
+    if sys.platform == "win32":
+        return os.path.join(HERE, "dist", "SwiftDM.exe")
+    if sys.platform == "darwin":
+        return os.path.join(HERE, "dist", "SwiftDM.app", "Contents", "MacOS", "SwiftDM")
+    return os.path.join(HERE, "dist", "SwiftDM")
+
+
+def _kill_stale():
+    """按进程名清理残留实例（PyInstaller 单文件会 spawn 子进程，需按名清理）。"""
+    import platform as _p
+    import subprocess as _sp
+    if _p.system().lower() == "windows":
+        _sp.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=10)
+    else:
+        _sp.run(["pkill", "-f", "SwiftDM"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=10)
+
+
+EXE = _find_exe()
 
 FAILS = []
 
@@ -93,8 +116,7 @@ def main():
 
     # 2) 启动二进制（强制直连，绕开宕机代理）
     # 先清理可能残留的旧进程（PyInstaller 单文件会 spawn 子进程，需按名清理）
-    subprocess.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    _kill_stale()
     time.sleep(1)
     port = find_free_port()  # 用空闲端口，避开残留实例占用的 5000
     env = os.environ.copy()
@@ -209,8 +231,7 @@ def main():
     finally:
         # 按进程名杀掉真正的 app 子进程（PyInstaller 单文件会 spawn 子进程，
         # Popen 跟踪的引导器 PID 退出后子进程仍驻留，必须按名清理）
-        subprocess.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        _kill_stale()
         try:
             proc.kill()
         except Exception:
