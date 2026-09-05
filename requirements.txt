@@ -3,3 +3,4 @@ flask-cors>=4.0.0
 requests>=2.31.0
 PyQt6>=6.5.0
 pyperclip>=1.8.0
+libtorrent>=2.0.0  # BT / PT 下载（磁力链接与 .torrent 种子）

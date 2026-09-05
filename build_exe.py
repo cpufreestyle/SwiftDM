@@ -181,6 +181,9 @@ def main():
         "--hidden-import", "requests",
         "--hidden-import", "pyperclip",
         "--hidden-import", "pkg_resources",
+        # BT / PT 下载支持
+        "--hidden-import", "libtorrent",
+        "--hidden-import", "torrent",
     ]
 
     if onefile:

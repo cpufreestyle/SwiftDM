@@ -292,6 +292,10 @@ class TaskCard(QFrame):
         info_text = f"📦 {format_size(downloaded)}"
         if total_size > 0:
             info_text += f" / {format_size(total_size)}"
+        if task_data.get("protocol") == "torrent":
+            seeds = task_data.get("seeds", 0)
+            peers = task_data.get("peers", 0)
+            info_text += f"  🌱 {seeds}  👥 {peers}"
         self.size_label = QLabel(info_text)
         self.size_label.setStyleSheet("font-size: 11px; color: #8888a0;")
         bottom.addWidget(self.size_label)
@@ -423,6 +427,10 @@ class TaskCard(QFrame):
         info = f"📦 {format_size(downloaded)}"
         if total_size > 0:
             info += f" / {format_size(total_size)}"
+        if task_data.get("protocol") == "torrent":
+            seeds = task_data.get("seeds", 0)
+            peers = task_data.get("peers", 0)
+            info += f"  🌱 {seeds}  👥 {peers}"
         self.size_label.setText(info)
 
         self.speed_label.setText(f"⚡ {format_speed(speed)}" if speed > 0 and status == "downloading" else "")
@@ -526,7 +534,7 @@ class AddDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         self.url_edit = QLineEdit(url)
-        self.url_edit.setPlaceholderText("https://example.com/file.zip")
+        self.url_edit.setPlaceholderText("https://example.com/file.zip 或 magnet:?xt=urn:btih:...")
         layout.addRow("下载链接:", self.url_edit)
 
         self.name_edit = QLineEdit()
@@ -619,7 +627,7 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("粘贴下载链接...")
+        self.url_input.setPlaceholderText("粘贴下载链接或磁力链接(magnet:)...")
         self.url_input.setMinimumWidth(300)
         self.url_input.setMaximumWidth(500)
         self.url_input.returnPressed.connect(self._add_download)

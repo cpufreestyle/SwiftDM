@@ -598,9 +598,28 @@ class DownloadManager:
         with self._lock:
             self._counter += 1
             task_id = f"dl_{self._counter}"
-            task = DownloadTask(task_id, url, save_dir, filename, segments)
+            # BT / PT 下载（magnet: 或 .torrent 文件）走独立的 TorrentTask，
+            # 其余 HTTP(S) 链接走原有的多线程分段下载。两者接口完全兼容。
+            if self._is_torrent_url(url):
+                from torrent import TorrentTask
+                task = TorrentTask(task_id, url, save_dir, filename, segments or 0)
+            else:
+                task = DownloadTask(task_id, url, save_dir, filename, segments)
             self._tasks[task_id] = task
             return task
+
+    @staticmethod
+    def _is_torrent_url(url):
+        """判断是否为 BT/PT 下载链接（磁力链接或 .torrent 文件）。"""
+        u = (url or "").strip().lower()
+        if u.startswith("magnet:"):
+            return True
+        if "btih:" in u:
+            return True
+        # 以 .torrent 结尾的 http(s) 链接（如 PT 种子下载地址）
+        if (u.startswith("http://") or u.startswith("https://")) and u.endswith(".torrent"):
+            return True
+        return False
 
     def get_task(self, task_id):
         return self._tasks.get(task_id)

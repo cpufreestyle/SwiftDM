@@ -61,8 +61,12 @@ def add_task():
     if not url:
         return jsonify({"success": False, "error": "URL 不能为空"}), 400
 
-    if not url.startswith(("http://", "https://")):
-        return jsonify({"success": False, "error": "请输入有效的 HTTP/HTTPS 链接"}), 400
+    # 支持 HTTP/HTTPS 直链、磁力链接（magnet:）与 .torrent 种子文件
+    is_http = url.startswith(("http://", "https://"))
+    is_magnet = url.strip().lower().startswith("magnet:")
+    is_torrent = is_http and url.strip().lower().endswith(".torrent")
+    if not (is_http or is_magnet or is_torrent):
+        return jsonify({"success": False, "error": "请输入有效的下载链接（HTTP/HTTPS、磁力链接或 .torrent 种子）"}), 400
 
     os.makedirs(save_dir, exist_ok=True)
     task = manager.create_task(url, save_dir, filename, segments)
@@ -293,7 +297,10 @@ def browser_capture():
     url = data.get("url", "").strip()
     filename = data.get("filename", "").strip() or None
 
-    if not url or not url.startswith("http"):
+    # 允许 HTTP(S)、磁力链接、.torrent 种子
+    is_http = url.startswith(("http://", "https://"))
+    is_magnet = url.lower().startswith("magnet:")
+    if not url or (not is_http and not is_magnet):
         return jsonify({"success": False, "error": "无效 URL"}), 400
 
     # 检查重复
