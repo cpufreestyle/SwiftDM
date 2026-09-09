@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread
-from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush
+from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread, QMimeData, QUrl
+from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QDrag
 from log_helper import setup_logging, QtLogHandler
 
 
@@ -193,6 +193,8 @@ class TaskCard(QFrame):
     def __init__(self, task_data, parent=None):
         super().__init__(parent)
         self.task_id = task_data["task_id"]
+        self.filepath = task_data.get("filepath", "")
+        self._drag_start_pos = None
         self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
         self.setObjectName("taskCard")
         self.setStyleSheet("""
@@ -346,10 +348,15 @@ class TaskCard(QFrame):
             bottom.addWidget(btn_remove)
 
         if status == "completed" and task_data.get("total_size", 0) > 0:
-            btn_open = QPushButton("📂 打开")
+            btn_open = QPushButton("📂 打开文件")
             btn_open.setStyleSheet(self._btn_style("#4da6ff"))
             btn_open.clicked.connect(lambda: self.action_triggered.emit("open", self.task_id))
             bottom.addWidget(btn_open)
+
+            btn_open_folder = QPushButton("🗁 打开文件夹")
+            btn_open_folder.setStyleSheet(self._btn_style("#a29bfe"))
+            btn_open_folder.clicked.connect(lambda: self.action_triggered.emit("open_folder", self.task_id))
+            bottom.addWidget(btn_open_folder)
 
         layout.addLayout(bottom)
 
@@ -362,6 +369,38 @@ class TaskCard(QFrame):
         )
         layout.addWidget(self.error_label)
         self._apply_error_visibility(status, task_data.get("error", ""))
+
+    # 允许从已完成卡片的文件区域拖出文件（如拖到资源管理器、聊天窗口等）
+    def mousePressEvent(self, event):
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self.filepath and os.path.exists(self.filepath)):
+            self._drag_start_pos = event.pos()
+        else:
+            self._drag_start_pos = None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start_pos is None or not self.filepath:
+            super().mouseMoveEvent(event)
+            return
+        if event.buttons() != Qt.MouseButton.LeftButton:
+            super().mouseMoveEvent(event)
+            return
+        if (event.pos() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+        drag = QDrag(self)
+        mime = QMimeData()
+        url = QUrl.fromLocalFile(self.filepath)
+        mime.setUrls([url])
+        mime.setText(self.filepath)
+        drag.setMimeData(mime)
+        # 拖拽时跟随光标显示一个半透明缩略图
+        pixmap = self.grab()
+        if not pixmap.isNull():
+            drag.setPixmap(pixmap)
+        drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
+        self._drag_start_pos = None
 
     def _btn_style(self, color):
         return (
@@ -382,6 +421,7 @@ class TaskCard(QFrame):
 
     def update_data(self, task_data):
         """更新卡片显示"""
+        self.filepath = task_data.get("filepath", "")
         status = task_data.get("status", "pending")
         prog = task_data.get("progress", 0)
         total_size = task_data.get("total_size", 0)
@@ -928,6 +968,17 @@ class MainWindow(QMainWindow):
                 open_in_system(filepath)
             else:
                 open_in_system(os.path.dirname(filepath))
+        elif action == "open_folder":
+            filepath = task.filepath
+            if filepath:
+                folder = os.path.dirname(filepath)
+                if os.path.isdir(folder):
+                    open_in_system(folder)
+                    self.status_bar.showMessage(f"已打开文件夹: {folder}", 3000)
+                else:
+                    self.status_bar.showMessage("文件所在文件夹不存在", 5000)
+            else:
+                self.status_bar.showMessage("未知文件路径，无法打开文件夹", 5000)
 
     def _pause_all(self):
         mgr = self._get_manager()

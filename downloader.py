@@ -31,6 +31,44 @@ _SESSION.mount("http://", _POOL)
 _SESSION.mount("https://", _POOL)
 
 
+def _windows_system_proxy():
+    """读取 Windows 系统代理（Internet Settings），返回 {'http':..,'https':..} 或 None。
+
+    requests 的 trust_env 只认 HTTP_PROXY/HTTPS_PROXY 环境变量，不会读 Windows 系统代理；
+    很多用户只在系统设置里配了代理（本机即 127.0.0.1:7897），导致 env 模式等效直连、
+    外网下载全部连不上（没速度 / 失败）。这里补上系统代理，使 env 模式在 Windows 上真正生效。
+    """
+    try:
+        import winreg
+    except Exception:
+        return None
+    proxy = None
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(
+                hive, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+            ) as k:
+                if not winreg.QueryValueEx(k, "ProxyEnable")[0]:
+                    continue
+                server = winreg.QueryValueEx(k, "ProxyServer")[0]
+        except Exception:
+            continue
+        if not server:
+            continue
+        proxies = {}
+        if "=" in server:  # 形如 http=127.0.0.1:7897;https=127.0.0.1:7897
+            for part in server.split(";"):
+                if "=" in part:
+                    scheme, addr = part.split("=", 1)
+                    proxies[scheme.strip().lower()] = addr.strip()
+        else:  # 形如 127.0.0.1:7897
+            proxies = {"http": server, "https": server}
+        if proxies:
+            proxy = proxies
+            break
+    return proxy
+
+
 def _apply_proxy_mode(mode):
     """根据模式配置全局 Session 的代理行为。"""
     global _PROXY_MODE
@@ -41,8 +79,15 @@ def _apply_proxy_mode(mode):
         _SESSION.trust_env = False
         _SESSION.proxies.update({"http": None, "https": None})
     elif _PROXY_MODE in ("env", "", "system"):
-        # 走系统代理（继承 HTTP_PROXY/HTTPS_PROXY）
+        # 走系统代理：优先用 HTTP_PROXY/HTTPS_PROXY 环境变量；
+        # 环境变量缺失时补读 Windows 系统代理（requests 自身不会读，否则会等效直连）
         _SESSION.trust_env = True
+        env_has = (os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+                   or os.environ.get("http_proxy") or os.environ.get("https_proxy"))
+        if not env_has:
+            sys_proxy = _windows_system_proxy()
+            if sys_proxy:
+                _SESSION.proxies.update(sys_proxy)
     else:
         # 自定义代理地址
         _SESSION.trust_env = False
@@ -574,6 +619,7 @@ class DownloadTask:
         return {
             "task_id": self.task_id,
             "filename": self.filename,
+            "filepath": self.filepath,
             "url": self.url,
             "status": self.status,
             "progress": round(self.progress, 1),
