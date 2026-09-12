@@ -93,6 +93,27 @@ def _friendly_error(exc):
     return s
 
 
+def _sanitize_filename(name):
+    """消毒外部来源的文件名（Content-Disposition / API / 扩展），阻断路径遍历。
+
+    攻击面: filename=../../../.zshenv、绝对路径 /etc/x、反斜杠 ..\\..\\evil 等
+    —— os.path.join 遇绝对路径会丢弃 save_dir，必须在这里拦下。
+    """
+    if not name:
+        return ""
+    # 只取最后一段（剥掉所有目录成分，兼容 / 与 \ 两种分隔符）
+    name = name.replace("\\", "/")
+    name = name.rstrip("/").split("/")[-1]
+    # 剥离前导点（隐藏文件 + '.'/'..' 兜底）
+    name = name.lstrip(".")
+    # 剥离控制字符与 Windows 保留字符
+    name = "".join(c for c in name if ord(c) >= 32 and c not in '<>:"|?*')
+    name = name.strip()
+    if name in ("", ".", ".."):
+        return ""
+    return name
+
+
 class DownloadTask:
     """单个下载任务"""
 
@@ -110,7 +131,8 @@ class DownloadTask:
         self.error = ""
         self.added_at = time.time()
 
-        # 确定文件名
+        # 确定文件名（外部输入必须消毒，防路径遍历）
+        filename = _sanitize_filename(filename)
         if filename:
             self.filename = filename
         else:
@@ -138,10 +160,10 @@ class DownloadTask:
         self._dict_cache = None
 
     def _extract_filename(self, url):
-        """从 URL 提取文件名"""
+        """从 URL 提取文件名（经消毒，URL 解码后可能含 \\ 等路径成分）"""
         parsed = urlparse(url)
         path = unquote(parsed.path)
-        name = os.path.basename(path)
+        name = _sanitize_filename(os.path.basename(path))
         if not name or "." not in name:
             # 尝试从 Content-Disposition 获取（在实际下载时）
             name = f"download_{int(time.time())}"
@@ -213,14 +235,22 @@ class DownloadTask:
                     self.total_size = int(content_length)
 
             # 尝试从 Content-Disposition 获取文件名
+            # RFC 5987: filename*=UTF-8''%E5%90%8D.txt（带 charset 前缀）；旧式: filename="name.txt"
             cd = resp.headers.get("Content-Disposition", "")
-            match = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
-            if match:
-                cd_name = unquote(match.group(1).strip())
-                if cd_name:
-                    self.filename = cd_name
-                    self.filepath = os.path.join(self.save_dir, self.filename)
-                    self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
+            cd_name = ""
+            m5987 = re.search(r"filename\*=(?:UTF-8|utf-8)''([^;\s]+)", cd)
+            if m5987:
+                cd_name = unquote(m5987.group(1).strip().strip('"'))
+            else:
+                m_plain = re.search(r'filename[*]?=["\']?([^"\';]+)', cd, re.IGNORECASE)
+                if m_plain:
+                    cd_name = unquote(m_plain.group(1).strip())
+            # 消毒: 服务器可控，是路径遍历攻击的主入口（../../../x、绝对路径等）
+            cd_name = _sanitize_filename(cd_name)
+            if cd_name:
+                self.filename = cd_name
+                self.filepath = os.path.join(self.save_dir, self.filename)
+                self._tmp_dir = os.path.join(self.save_dir, f".{self.filename}.parts")
         finally:
             resp.close()
 
@@ -433,9 +463,11 @@ class DownloadTask:
                     self.eta = ""
                     self._invalidate_cache()
                 except Exception as e:
-                    self.status = "failed"
-                    self.error = f"合并文件失败: {e}"
-                    self._invalidate_cache()
+                    # 合并期间用户可能 cancel（分片已被 rmtree）：不覆写 cancelled 状态
+                    if self.status == "downloading":
+                        self.status = "failed"
+                        self.error = f"合并文件失败: {e}"
+                        self._invalidate_cache()
                     logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
                 else:
                     logger.info("下载完成: %s (%.2f MB)", self.filename, final_size / 1024 / 1024)

@@ -474,6 +474,17 @@ body {
 
 <script>
 // ===== 工具函数 =====
+function escapeHtml(s) {
+  // 任务字段（filename/url/error）可被恶意服务器经 Content-Disposition 注入，
+  // innerHTML 前必须转义，防 XSS
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function formatSize(bytes) {
   if (bytes <= 0) return "未知";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -686,10 +697,10 @@ function createTaskCard(task) {
   card.innerHTML = `
     <div class="task-top">
       <div class="task-info">
-        <div class="task-filename" title="${task.filename}">${task.filename}</div>
-        <div class="task-url" title="${task.url}">${task.url}</div>
+        <div class="task-filename" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
+        <div class="task-url" title="${escapeHtml(task.url)}">${escapeHtml(task.url)}</div>
         <div class="task-meta">${metaHtml}</div>
-        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${task.error}</div>` : ""}
+        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${escapeHtml(task.error)}</div>` : ""}
       </div>
       <div class="task-status">
         <span class="status-badge ${statusClass}">${statusLabel}</span>

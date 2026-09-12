@@ -56,7 +56,12 @@ def add_task():
     data = request.get_json()
     url = data.get("url", "").strip()
     filename = data.get("filename", "").strip() or None
-    segments = int(data.get("segments", 8))
+    try:
+        segments = int(data.get("segments", 8))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "线程数必须是 1-32 的整数"}), 400
+    # 钳制到 1-32：无上限线程数会造成资源耗尽
+    segments = max(1, min(32, segments))
     save_dir = data.get("save_dir") or config.get_download_dir()
 
     if not url:

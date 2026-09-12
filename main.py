@@ -169,8 +169,14 @@ def main():
     except ImportError:
         req = os.path.join(os.path.dirname(os.path.abspath(__file__)), "requirements.txt")
         print("\n检测到缺失依赖，正在安装 requirements.txt ...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req])
-        print("依赖安装完成，请重新运行")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req])
+            print("依赖安装完成，请重新运行")
+        except subprocess.CalledProcessError as e:
+            print(f"\n[错误] 依赖自动安装失败（退出码 {e.returncode}）。")
+            print("  若提示 externally-managed-environment（PEP 668），请任选其一：")
+            print("  1) 用虚拟环境:  python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt")
+            print("  2) 强制安装:    python3 -m pip install --break-system-packages -r requirements.txt")
         return
 
     # 2. 应用上次保存的设置（代理模式持久化，重启后仍生效）
