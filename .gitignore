@@ -18,6 +18,9 @@ web.log
 .DS_Store
 Thumbs.db
 
+# git worktree 隔离工作区
+.worktrees/
+
 # PyInstaller 构建产物
 build/
 dist/
