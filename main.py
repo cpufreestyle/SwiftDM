@@ -35,14 +35,24 @@ SWIFTDM_MONITOR_PORT = int(os.environ.get("SWIFTDM_MONITOR_PORT", "5001"))
 
 
 def _port_bindable(host, port):
-    """探测 (host, port) 是否可绑定（与 Werkzeug 一致使用 SO_REUSEADDR）。
+    """探测 (host, port) 是否可用。
 
-    绑定 0.0.0.0 时同时探测 127.0.0.1：若回环地址已被其它进程以更精确地址占用，
-    通配绑定虽能成功，但发往 127.0.0.1 的请求会被对端截走（如已启动的监控服务），
-    因此两种情况都视为不可用。
+    关键：仅做 bind 测试不够，因为 SO_REUSEADDR 允许同一端口被多个进程同时 bind。
+    如果 127.0.0.1:port 上已经有其它服务在监听（如本机被另一个 python 占用的 5000），
+    bind 会成功，但浏览器实际访问时仍会被那个服务截走。因此先做一次真实连接探测：
+    若 127.0.0.1:port 能连上，说明已有服务在跑，此端口不可用。
     """
     import socket
 
+    # 1. 真实连接探测：能连上 = 已有服务占用（可能是其它进程，也可能是旧实例）
+    test_addr = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    try:
+        with socket.create_connection((test_addr, port), timeout=0.5):
+            return False
+    except OSError:
+        pass
+
+    # 2. bind 兜底：IPv4 通配地址 + 回环地址都试一次
     def _try_bind(h, p):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -239,6 +249,11 @@ def main():
 
         def cleanup():
             monitor.stop()
+            try:
+                from downloader import manager
+                manager.save_history()
+            except Exception:
+                pass
 
         app.aboutToQuit.connect(cleanup)
         sys.exit(app.exec())

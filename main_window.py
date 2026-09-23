@@ -633,6 +633,7 @@ class MainWindow(QMainWindow):
         self._cards = {}  # task_id -> TaskCard
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
         self._prev_statuses = {}  # task_id -> status
+        self._first_refresh = True  # 首刷：从历史加载的任务作为已知状态，不再弹完成/失败通知
 
         self.setWindowTitle("SwiftDM - 高速下载管理器")
         self.setMinimumSize(780, 560)
@@ -864,21 +865,28 @@ class MainWindow(QMainWindow):
             for t in tasks:
                 d = t.to_dict()
                 task_dict[d["task_id"]] = d
-                prev_status = self._prev_statuses.get(d["task_id"])
-                if prev_status != "completed" and d["status"] == "completed":
-                    if d["task_id"] not in self._completed_tasks:
-                        self._completed_tasks.add(d["task_id"])
-                        self._notify_complete(d)
-                # 新失败的任务：状态栏直接提示失败原因
-                elif prev_status != "failed" and d["status"] == "failed":
-                    err = d.get("error", "")
-                    name = d.get("filename", "文件")
-                    if err:
-                        self.status_bar.showMessage(f"✗ 下载失败 [{name}]: {err}", 10000)
-                    else:
-                        self.status_bar.showMessage(f"✗ 下载失败: {name}", 10000)
 
-            self._prev_statuses = {t.to_dict()["task_id"]: t.to_dict()["status"] for t in tasks}
+            if self._first_refresh:
+                # 首刷：从历史加载的任务直接作为「已知」状态，避免重启时弹一堆旧通知
+                self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
+                self._first_refresh = False
+            else:
+                for tid, d in task_dict.items():
+                    prev_status = self._prev_statuses.get(tid)
+                    if prev_status != "completed" and d["status"] == "completed":
+                        if tid not in self._completed_tasks:
+                            self._completed_tasks.add(tid)
+                            self._notify_complete(d)
+                    # 新失败的任务：状态栏直接提示失败原因
+                    elif prev_status != "failed" and d["status"] == "failed":
+                        err = d.get("error", "")
+                        name = d.get("filename", "文件")
+                        if err:
+                            self.status_bar.showMessage(f"✗ 下载失败 [{name}]: {err}", 10000)
+                        else:
+                            self.status_bar.showMessage(f"✗ 下载失败: {name}", 10000)
+
+                self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
 
             # 移除不存在的任务卡片
             removed = set(self._cards.keys()) - set(task_dict.keys())
@@ -936,6 +944,7 @@ class MainWindow(QMainWindow):
                 os.makedirs(save_dir, exist_ok=True)
                 task = manager.create_task(data["url"], save_dir, data["filename"], data["segments"])
                 task.start()
+                manager.save_history()
                 self.url_input.clear()
                 self.status_bar.showMessage(f"已添加: {task.filename}")
             except Exception as e:
@@ -979,12 +988,15 @@ class MainWindow(QMainWindow):
                     self.status_bar.showMessage("文件所在文件夹不存在", 5000)
             else:
                 self.status_bar.showMessage("未知文件路径，无法打开文件夹", 5000)
+        # 操作后即时落盘，避免仅依赖 5s 定时保存
+        mgr.save_history()
 
     def _pause_all(self):
         mgr = self._get_manager()
         for t in mgr.get_all_tasks():
             if t.status == "downloading":
                 t.pause()
+        mgr.save_history()
         self.status_bar.showMessage("已暂停全部下载")
 
     def _resume_all(self):
@@ -992,6 +1004,7 @@ class MainWindow(QMainWindow):
         for t in mgr.get_all_tasks():
             if t.status == "paused":
                 t.resume()
+        mgr.save_history()
         self.status_bar.showMessage("已恢复全部下载")
 
     def _clear_completed(self):
@@ -1019,6 +1032,12 @@ class MainWindow(QMainWindow):
             self.monitor_label.setStyleSheet(
                 f"font-size: 11px; color: {'#00d2a0' if settings['monitor'] else '#ff5e7a'}; font-weight: 600;"
             )
+            # 同步开关到 Flask 捕获端点：禁用时连 5000 端口也不会接管浏览器下载
+            try:
+                import app as _flask_app
+                _flask_app.BROWSER_CAPTURE_ENABLED = settings["monitor"]
+            except Exception:
+                pass
             # 应用下载代理模式
             from downloader import set_proxy_mode
             set_proxy_mode(settings.get("proxy_mode", "env"))

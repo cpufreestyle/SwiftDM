@@ -283,9 +283,18 @@ def set_clipboard():
     return jsonify({"success": True})
 
 
+# 浏览器接管总开关（由桌面 GUI “浏览器监控” 设置同步；关闭时不接管浏览器下载）
+BROWSER_CAPTURE_ENABLED = True
+
+
 @app.route("/api/browser-capture", methods=["POST", "OPTIONS"])
 def browser_capture():
     """浏览器扩展捕获端点 —— 接收 Chrome 扩展发送的下载 URL"""
+    if not BROWSER_CAPTURE_ENABLED:
+        resp = jsonify({"success": False, "reason": "disabled"})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
     if request.method == "OPTIONS":
         resp = app.make_default_options_response()
         resp.headers["Access-Control-Allow-Origin"] = "*"

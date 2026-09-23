@@ -4,6 +4,7 @@ IDM 风格下载引擎 —— 多线程分段下载、暂停/恢复
 import os
 import re
 import time
+import json
 import shutil
 import threading
 import logging
@@ -640,6 +641,17 @@ class DownloadManager:
         self._counter = 0
         self._lock = threading.Lock()
 
+        # 历史记录持久化：把任务元数据落盘，重启后仍能看到「历史下载记录」
+        data_dir = os.path.join(os.path.expanduser("~"), ".swiftdm")
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+        except Exception:
+            data_dir = os.path.dirname(os.path.abspath(__file__))
+        self._history_path = os.path.join(data_dir, "history.json")
+        self._saver_stop = threading.Event()
+        self._load_history()
+        self._start_saver()
+
     def create_task(self, url, save_dir, filename=None, segments=8):
         with self._lock:
             self._counter += 1
@@ -685,6 +697,81 @@ class DownloadManager:
             completed = [tid for tid, t in self._tasks.items() if t.status in ("completed", "cancelled", "failed")]
             for tid in completed:
                 self._tasks.pop(tid, None)
+        self.save_history()
+
+    # ---------------- 历史记录持久化 ----------------
+    def _reconstruct_task(self, d):
+        """根据保存的字典重建任务对象（仅用于历史展示，不会启动下载）。"""
+        url = d.get("url", "")
+        filepath = d.get("filepath", "") or ""
+        save_dir = d.get("save_dir") or (os.path.dirname(filepath) if filepath else "")
+        filename = d.get("filename") or None
+        segments = d.get("segments", 8)
+        if self._is_torrent_url(url):
+            from torrent import TorrentTask
+            task = TorrentTask(d.get("task_id", ""), url, save_dir, filename, segments)
+        else:
+            task = DownloadTask(d.get("task_id", ""), url, save_dir, filename, segments)
+        task.status = d.get("status", "pending")
+        task.progress = d.get("progress", 0.0)
+        task.total_size = d.get("total_size", 0)
+        task.downloaded = d.get("downloaded", 0)
+        task.error = d.get("error", "")
+        task.filepath = filepath
+        # 重启时仍在下载/暂停/等待中的任务视为中断（不自动续传半成品文件），标记为已取消
+        if task.status in ("downloading", "paused", "pending"):
+            task.status = "cancelled"
+            if not task.error:
+                task.error = "重启后中断（未自动续传）"
+        return task
+
+    def _load_history(self):
+        try:
+            if not os.path.exists(self._history_path):
+                return
+            with open(self._history_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning("读取历史下载记录失败: %s", e)
+            return
+        tasks = data.get("tasks", []) if isinstance(data, dict) else (data or [])
+        max_n = 0
+        with self._lock:
+            for d in tasks:
+                try:
+                    task = self._reconstruct_task(d)
+                except Exception as e:
+                    logger.warning("重建历史任务失败: %s", e)
+                    continue
+                self._tasks[task.task_id] = task
+                try:
+                    n = int(str(task.task_id).split("_")[-1])
+                    max_n = max(max_n, n)
+                except Exception:
+                    pass
+        self._counter = max_n
+
+    def save_history(self):
+        with self._lock:
+            tasks = [t.to_dict() for t in self._tasks.values()]
+        tasks = tasks[-500:]  # 仅保留最近 500 条，避免无限增长
+        payload = {"version": 1, "saved_at": time.time(), "tasks": tasks}
+        try:
+            tmp = self._history_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, self._history_path)
+        except Exception as e:
+            logger.warning("保存历史下载记录失败: %s", e)
+
+    def _start_saver(self):
+        def _loop():
+            while not self._saver_stop.wait(5):
+                try:
+                    self.save_history()
+                except Exception:
+                    pass
+        threading.Thread(target=_loop, daemon=True).start()
 
     def get_stats(self):
         tasks = self.get_all_tasks()

@@ -17,11 +17,10 @@ let enabled = true;
 // 从存储中加载设置
 chrome.storage.local.get(['enabled', 'sentCount'], (result) => {
   enabled = result.enabled !== false; // 默认启用
-  document.getElementById?.('status')?.textContent = enabled ? '已启用' : '已暂停';
 });
 
 // 监听下载事件
-chrome.downloads.onCreated.addListener((downloadItem) => {
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
   if (!enabled) return;
   if (sentDownloads.has(downloadItem.id)) return;
 
@@ -30,8 +29,8 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
 
   sentDownloads.add(downloadItem.id);
 
-  // 发送到 SwiftDM
-  sendToSwiftDM({
+  // 发送到 SwiftDM（先确认它被接受，再决定是否接管，避免误删下载）
+  const ok = await sendToSwiftDM({
     url: url,
     filename: downloadItem.filename || extractFilename(url),
     fileSize: downloadItem.fileSize || 0,
@@ -39,8 +38,16 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
     referrer: downloadItem.referrer || ''
   });
 
-  // 取消浏览器原生下载（可选：让 SwiftDM 接管）
-  // chrome.downloads.cancel(downloadItem.id);
+  // 接管：捕获成功后取消浏览器原生下载，改由 SwiftDM 多线程加速（避免重复下载）
+  if (ok) {
+    try {
+      chrome.downloads.cancel(downloadItem.id);
+      chrome.downloads.erase({ id: downloadItem.id }); // 清掉“已中断”残留记录
+    } catch (e) {
+      console.debug('[SwiftDM] 取消/清除浏览器下载失败:', e);
+    }
+    showTakeoverNotification(downloadItem.filename || extractFilename(url));
+  }
 });
 
 // 监听 webRequest —— 捕获尚未添加到下载列表的请求
@@ -143,8 +150,12 @@ async function sendToSwiftDM(data) {
       
       clearTimeout(timeout);
       
-      const result = await response.json();
+      let result = {};
+      try { result = await response.json(); } catch (e) { result = {}; }
       console.log('[SwiftDM]', result.message || result);
+      
+      // 端点响应了但明确拒绝（如无效 URL）：不再尝试其它端点，且不接管
+      if (!result.success) return false;
       
       // 更新计数
       chrome.storage.local.get(['sentCount'], (res) => {
@@ -152,13 +163,14 @@ async function sendToSwiftDM(data) {
         chrome.storage.local.set({ sentCount: count });
       });
       
-      return; // 成功则直接返回
+      return true; // 成功捕获
     } catch (e) {
       console.debug(`[SwiftDM] ${url} 连接失败:`, e.message);
     }
   }
-  // 所有端点都失败
+  // 所有端点都失败（SwiftDM 未运行）
   console.debug('[SwiftDM] SwiftDM 未运行，所有端点连接失败');
+  return false;
 }
 
 // 提取文件名
@@ -181,6 +193,21 @@ function extractFilename(url) {
     }
   } catch(e) {}
   return 'download_' + Date.now();
+}
+
+// 接管成功提示
+function showTakeoverNotification(filename) {
+  try {
+    chrome.notifications.create('swiftdm-takeover-' + Date.now(), {
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'SwiftDM 已接管下载',
+      message: '已取消浏览器原生下载，改由 SwiftDM 加速：\n' + filename,
+      priority: 1
+    });
+  } catch (e) {
+    console.debug('[SwiftDM] 通知失败:', e);
+  }
 }
 
 // 定期清理检测缓存
