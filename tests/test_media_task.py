@@ -300,3 +300,132 @@ def test_base_opts_uses_logger_bridge_not_stderr(fake_ytdlp, tmp_path):
     opts["logger"].info("x")
     opts["logger"].warning("x")
     opts["logger"].error("x")
+
+def test_media_start_drains_stale_worker_before_respawn(tmp_path, fake_ytdlp):
+    """start() 从 paused 续跑前必须先等旧 worker 退出。
+
+    yt-dlp 的 worker 收到 _gen 变化后，要等 progress hook 触发 DownloadCancelled
+    才层层 unwind，期间仍在写 .part。若不 join 就重新拉起，两个 yt-dlp 实例会
+    并发写同一个 .part，互相覆盖导致文件损坏。对应 DownloadTask._drain_threads。
+    """
+    fake_ytdlp["events"] = [("downloading", {"downloaded_bytes": 300, "total_bytes": 1000})]
+    fake_ytdlp["hold"].clear()                   # 卡在「下载中」，让 pause 有确定性
+    t = _mk(tmp_path)
+    t.start()
+    assert _wait_pred(lambda: fake_ytdlp.get("download") is not None)
+    t.pause()
+    assert t.status == "paused"
+
+    gate = threading.Event()
+    stale_exited = threading.Event()
+
+    def _stale():
+        gate.wait(5)
+        stale_exited.set()
+
+    stale = threading.Thread(target=_stale, daemon=True, name="stale-ydl")
+    stale.start()
+    t._worker = stale                            # 用可控的假 worker 顶替真实 worker
+
+    fake_ytdlp["events"].append(
+        ("finished", {"downloaded_bytes": 1000, "total_bytes": 1000,
+                      "filename": os.path.join(str(tmp_path), "movie.mp4")}))
+    resumed = threading.Event()
+
+    def _do_start():
+        t.start()
+        resumed.set()
+
+    threading.Thread(target=_do_start, daemon=True).start()
+
+    time.sleep(0.2)
+    assert not stale_exited.is_set(), "start() 没等旧 worker 退出就继续了"
+    assert not resumed.is_set(), "start() 没等旧 worker 退出就返回了"
+
+    gate.set()
+    assert resumed.wait(5), "旧 worker 退出后 start() 没有返回"
+    fake_ytdlp["hold"].set()                     # 放行新 worker，让它尽快跑完
+    assert t.status == "downloading"
+
+
+def test_media_retry_start_survives_concurrent_cancel(tmp_path, fake_ytdlp, monkeypatch):
+    """retry() 重置字段与 start() 拉起 worker 之间，并发 cancel 必须作废这次启动。
+
+    retry() 要在持锁段里重置字段，而 start() 里要跑 yt-dlp（不能持锁），中间有
+    一个状态还是 pending 的窗口；没有启动令牌的话并发 cancel 会被 start() 覆盖，
+    已取消的任务又被拉起来。对应 DownloadTask 的同名测试。
+    """
+    t = _mk(tmp_path)
+    t.status = "failed"
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _blocked_drain(timeout=5.0):
+        entered.set()                 # 已越过 start() 的前置 guard，正在 drain
+        release.wait(5)
+
+    monkeypatch.setattr(t, "_drain_worker", _blocked_drain)
+
+    result = {}
+
+    def _do_retry():
+        result["ok"] = t.retry()
+
+    threading.Thread(target=_do_retry, daemon=True).start()
+    assert entered.wait(5), "retry 没有走到 start() 的 drain 前"
+    t.cancel()                         # drain 期间取消
+    release.set()
+
+    deadline = time.time() + 10
+    while "ok" not in result and time.time() < deadline:
+        time.sleep(0.01)
+    assert "ok" in result, "retry 没有返回（死锁？）"
+    assert result["ok"] is False, "启动令牌已失效，start() 不应报告启动成功"
+    assert t.status == "cancelled", "cancel 的状态被 start() 覆盖，任务被复活了"
+    assert t._worker is None, "启动令牌失效后不应拉起 worker"
+
+
+def test_media_concurrent_transitions_settle_without_deadlock(tmp_path, fake_ytdlp):
+    """4 个线程对同一任务疯狂 pause/resume/cancel/start/retry：不得死锁、不得抛异常。
+
+    与 DownloadTask 的同类压测对应：验证 MediaTask 的状态迁移互斥、
+    _drain_worker 只在 _xlock 之外 join、完成路径与 cancel 不会互相覆写。
+    """
+    fake_ytdlp["events"] = [("downloading", {"downloaded_bytes": 200, "total_bytes": 1000})]
+    t = _mk(tmp_path)
+    stop = threading.Event()
+    failures = []
+
+    def _hammer(i):
+        ops = [t.pause, t.resume, t.start, t.retry, t.cancel]
+        n = 0
+        while not stop.is_set():
+            try:
+                ops[(i + n) % len(ops)]()
+            except Exception as e:
+                failures.append(e)
+            n += 1
+            time.sleep(0.002)
+
+    t.start()
+    assert _wait_pred(lambda: fake_ytdlp.get("download") is not None)
+    workers = [threading.Thread(target=_hammer, args=(i,), daemon=True) for i in range(4)]
+    for w in workers:
+        w.start()
+    time.sleep(0.5)
+    stop.set()
+    for w in workers:
+        w.join(15)
+    assert not any(w.is_alive() for w in workers), "并发状态转换导致死锁"
+    assert not failures, "状态转换抛出异常: %r" % (failures[:3],)
+
+    # 收尾：等最后一个 worker 退出，cancel 收敛后重试一次完整下载
+    fake_ytdlp["events"].append(
+        ("finished", {"downloaded_bytes": 1000, "total_bytes": 1000,
+                      "filename": os.path.join(str(tmp_path), "movie.mp4")}))
+    assert _wait_pred(lambda: t._worker is None or not t._worker.is_alive(), 10)
+    t.cancel()
+    assert _wait_pred(lambda: t.status == "cancelled", 5)
+    assert t.retry() is True
+    assert _wait_done(t, 20) == "completed", t.error

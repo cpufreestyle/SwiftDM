@@ -615,6 +615,8 @@ class DownloadTask:
             return False
         if token is not None and token != self._start_token:
             return False
+        if token is None and self.status == "cancelled":
+            return False           # 只有 retry 持令牌才允许从 cancelled 重新启动
         logger.info("开始下载任务: %s  (%s)", self.filename, self.url)
         # start() 也可能被用于从 paused 续跑：先等旧线程退出，避免新旧两组线程
         # 同时写同一分段文件、或出现双监控线程
@@ -624,6 +626,8 @@ class DownloadTask:
                 return False
             if token is not None and token != self._start_token:
                 return False
+            if token is None and self.status == "cancelled":
+                return False           # 只有 retry 持令牌才允许从 cancelled 重新启动
             self.status = "downloading"
             self._invalidate_cache()
 

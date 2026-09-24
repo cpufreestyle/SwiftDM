@@ -143,9 +143,11 @@ class TorrentTask:
     # ---------------- 控制接口 ----------------
 
     def start(self):
-        if self.status in ("downloading", "completed"):
-            return
+        # guard 必须在锁内：否则 cancel 落在「guard 通过」与「持锁」之间时，
+        # 会被下面覆写成 downloading，把已取消的任务复活
         with self._lock:
+            if self.status in ("downloading", "completed"):
+                return
             if self._handle is not None:
                 # 已存在句柄（retry 场景）：恢复即可
                 self._handle.resume()
@@ -215,16 +217,20 @@ class TorrentTask:
             self.status = "cancelled"
 
     def retry(self):
-        if self.status not in ("failed", "cancelled"):
-            return False
-        self.error = ""
-        self.downloaded = 0
-        self.progress = 0.0
-        self.total_size = 0
-        self._meta_ready = False
-        self._handle = None
-        self.status = "pending"
-        self.start()
+        # start() 的整个临界区（含拉取 .torrent 的网络 IO）都在 self._lock 内，
+        # 这里同样持锁调用（RLock 可重入），保证「重置 + 启动」原子完成：否则并发
+        # cancel 落在重置之后、start() 之前，会被 start() 覆写成 downloading
+        with self._lock:
+            if self.status not in ("failed", "cancelled"):
+                return False
+            self.error = ""
+            self.downloaded = 0
+            self.progress = 0.0
+            self.total_size = 0
+            self._meta_ready = False
+            self._handle = None
+            self.status = "pending"
+            self.start()
         return True
 
     # ---------------- 监控线程 ----------------

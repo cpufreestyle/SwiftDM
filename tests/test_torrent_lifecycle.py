@@ -1,0 +1,110 @@
+"""torrent.TorrentTask 生命周期转换的回归测试。
+
+TorrentTask 的 retry() 早先只把「重置字段 + status=pending」放在锁外、再调
+start()。并发 cancel 落在重置之后、start() 之前时会被 start() 覆写，已取消的
+任务又被拉回 downloading。修复把整段放进 self._lock（RLock 可重入），并让
+start() 的 guard 也回到锁内，与 DownloadTask / MediaTask 的转换锁保持一致。
+"""
+import threading
+import time
+
+import pytest
+
+torrent = pytest.importorskip("torrent")
+
+
+def test_retry_holds_lock_across_start_so_cancel_cannot_interleave(tmp_path):
+    """retry() 持锁调用 start()：锁释放前 cancel 无法插入。
+
+    无修复时 retry 的重置段不持锁，cancel 可以在 start() 之前落地，随后被
+    start() 覆写成 downloading。修复后 cancel 必须等到 start() 结束才能执行，
+    最终状态由 cancel 决定。
+    """
+    t = torrent.TorrentTask("bt_lock", "magnet:?xt=urn:btih:" + "0" * 40,
+                            str(tmp_path), "movie", 0)
+    t.status = "failed"
+    t.error = "boom"
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _blocked_start():
+        entered.set()                 # 已进入 start()，此时 retry 仍持有 _lock
+        release.wait(5)
+        return True
+
+    t.start = _blocked_start          # 顶替真实 start，只用来占住锁
+
+    result = {}
+
+    def _do_retry():
+        result["ok"] = t.retry()
+
+    threading.Thread(target=_do_retry, daemon=True).start()
+    assert entered.wait(5), "retry 没有进入 start()"
+
+    cancelled = threading.Event()
+
+    def _do_cancel():
+        t.cancel()
+        cancelled.set()
+
+    threading.Thread(target=_do_cancel, daemon=True).start()
+    # 锁被 retry 持有：cancel 必然无法完成
+    assert not cancelled.wait(0.5), "cancel 插进了 retry 的临界区（状态会被覆写）"
+
+    release.set()
+    assert cancelled.wait(5), "锁释放后 cancel 没有执行"
+    deadline = time.time() + 10
+    while "ok" not in result and time.time() < deadline:
+        time.sleep(0.01)
+    assert "ok" in result, "retry 没有返回（死锁？）"
+    assert t.status == "cancelled", "retry 期间并发 cancel 的状态被覆盖了"
+
+
+def test_cancel_cannot_interleave_into_start_critical_section(tmp_path, monkeypatch):
+    """cancel 不能插进 start() 的临界区。
+
+    start() 会持锁拉取 .torrent 并建 session（网络 IO 也在这把锁里），这段期间
+    cancel 必须等待，否则会出现「任务已取消却又重新开始」。本测试把这条不变量
+    钉住：后续若有人把锁拆小或挪走，这里会立刻失败。
+    """
+    t = torrent.TorrentTask("bt_guard", "magnet:?xt=urn:btih:" + "0" * 40,
+                            str(tmp_path), "movie", 0)
+    t.status = "pending"
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _blocked_session():
+        entered.set()
+        release.wait(5)
+        raise RuntimeError("测试里不建真实 session")
+
+    monkeypatch.setattr(torrent, "_get_session", _blocked_session)
+
+    started = threading.Event()
+
+    def _do_start():
+        t.start()
+        started.set()
+
+    threading.Thread(target=_do_start, daemon=True).start()
+    assert entered.wait(5), "start() 没有进入临界区"
+
+    cancelled = threading.Event()
+
+    def _do_cancel():
+        t.cancel()
+        cancelled.set()
+
+    threading.Thread(target=_do_cancel, daemon=True).start()
+    assert not cancelled.wait(0.5), "cancel 插进了 start() 的临界区"
+
+    release.set()
+    assert started.wait(5), "临界区释放后 start() 没有返回"
+    assert cancelled.wait(5), "锁释放后 cancel 没有执行"
+    # start() 内部 _get_session 抛错会把状态置 failed，但紧随其后的 cancel 必须
+    # 成为最终状态，而不是被 start() 的失败分支抢先
+    assert t.status == "cancelled", t.status
+    assert t._handle is None

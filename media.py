@@ -155,6 +155,10 @@ class MediaTask:
         self.added_at = time.time()
         self.filepath = os.path.join(save_dir, self.filename)
         self._lock = threading.Lock()
+        # 生命周期转换锁：start/pause/resume/cancel/retry/完成等状态迁移互斥。
+        # _lock 仍只保护进度字段；嵌套顺序固定 _xlock -> _lock，不会反转。
+        self._xlock = threading.RLock()
+        self._start_token = 0  # 启动令牌：retry 申请，并发 cancel 使其失效
         self._gen = 0
         self._info = None
         self._worker = None
@@ -198,16 +202,53 @@ class MediaTask:
 
     # ---------------- 生命周期 ----------------
 
-    def start(self):
+    def start(self, token=None):
+        """启动 yt-dlp 工作线程。
+
+        token: retry() 申请的启动令牌，用于堵住「retry 已重置字段、但 start() 还没
+        拉起线程」这段窗口里并发 cancel 被覆盖、任务被复活的问题。
+        """
         if self.status in ("downloading", "completed"):
-            return
+            return False
+        if token is None and self.status == "cancelled":
+            return False           # 只有 retry 持令牌才允许从 cancelled 重新启动
+        if token is not None and token != self._start_token:
+            return False
         logger.info("开始流媒体任务: %s  [%s] %s", self.filename, self.kind, self.url)
-        self.status = "downloading"
-        self.error = ""
-        self.error_reason = ""
-        gen = self._gen
-        self._worker = threading.Thread(target=self._run, args=(gen,), daemon=True)
-        self._worker.start()
+        # start() 也可能被用于从 paused 续跑：先等旧 worker 退出，否则两个
+        # yt-dlp 实例会并发写同一个 .part，互相覆盖导致文件损坏
+        self._drain_worker()
+        with self._xlock:
+            if self.status in ("downloading", "completed"):
+                return False
+            if token is None and self.status == "cancelled":
+                return False
+            if token is not None and token != self._start_token:
+                return False
+            self.status = "downloading"
+            self.error = ""
+            self.error_reason = ""
+            gen = self._gen
+            worker = threading.Thread(target=self._run, args=(gen,), daemon=True)
+            worker.start()
+            # 必须先 start 再发布：否则并发的 _drain_worker 可能 join 一个还没
+            # 启动的 Thread（RuntimeError: cannot join thread before it is started）
+            self._worker = worker
+        return True
+
+    def _drain_worker(self, timeout=5.0):
+        """有界地等待旧的 yt-dlp worker 退出。
+
+        pause() 只切状态并对 _gen + 1，worker 不会立即消失（要等 progress hook 触发
+        DownloadCancelled 再层层 unwind）；重新拉起前必须先等它退出，否则新旧两个
+        yt-dlp 实例会并发写同一个 .part 文件。
+
+        必须在 _xlock 之外调用：worker 在完成路径上要取 _xlock，持锁 join 会与
+        还没退出的旧 worker 死锁。
+        """
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=timeout)
 
     def _run(self, gen):
         cookie_path = self._write_cookie_file()
@@ -223,17 +264,22 @@ class MediaTask:
                 inst.download([self.url])
             if self._gen != gen or self.status != "downloading":
                 return                       # 已被暂停/取消：保留调用方设置的状态
-            with self._lock:
-                self.status = "completed"
-                self.progress = 100.0
-                self.speed = 0.0
-                self.eta = ""
-                if self.downloaded > 0:
-                    # 已下载字节才是最可信的完成量：yt-dlp 的 total_bytes_estimate 在分片阶段
-                    # 会大幅抖动（实测 26 万字节的任务估到过 29 万+），拿它当总量会把进度写爆
-                    self.total_size = self.downloaded
-                elif self.total_size > 0:
-                    self.downloaded = self.total_size
+            # 持 _xlock 复核后再置 completed：与 cancel 的状态迁移互斥，
+            # 否则可能把已取消的任务写成 completed
+            with self._xlock:
+                if self._gen != gen or self.status != "downloading":
+                    return
+                with self._lock:
+                    self.status = "completed"
+                    self.progress = 100.0
+                    self.speed = 0.0
+                    self.eta = ""
+                    if self.downloaded > 0:
+                        # 已下载字节才是最可信的完成量：yt-dlp 的 total_bytes_estimate 在分片阶段
+                        # 会大幅抖动（实测 26 万字节的任务估到过 29 万+），拿它当总量会把进度写爆
+                        self.total_size = self.downloaded
+                    elif self.total_size > 0:
+                        self.downloaded = self.total_size
             logger.info("流媒体下载完成: %s", self.filename)
         except cancelled_cls as e:           # 暂停/取消的协作式中断，不是失败
             if self._gen != gen or self.status in ("paused", "cancelled"):
@@ -241,6 +287,8 @@ class MediaTask:
                 return
             self._fail(e)
         except MediaError as e:
+            if self._gen != gen or self.status != "downloading":
+                return               # 已被暂停/取消/重启：保留调用方设置的状态
             self._fail(e, reason=e.reason)
         except Exception as e:               # 底层库异常种类多，统一归类成用户可读提示
             if self._gen != gen or self.status in ("paused", "cancelled"):
@@ -261,39 +309,57 @@ class MediaTask:
 
     def _fail(self, exc, reason=None):
         msg = str(exc)
-        self.status = "failed"
-        self.error_reason = reason or _reason_from_text(msg)
-        self.error = _friendly_media_error(self.error_reason, msg)
+        with self._xlock:
+            # 已被暂停/取消/新一代 worker 接管时不覆写状态
+            if self.status != "downloading":
+                return
+            self.status = "failed"
+            self.error_reason = reason or _reason_from_text(msg)
+            self.error = _friendly_media_error(self.error_reason, msg)
         logger.error("流媒体任务失败: %s | %s | %s", self.filename, self.error_reason, msg)
 
     def pause(self):
-        if self.status != "downloading":
-            return
-        self._gen += 1                  # 工作线程在 progress hook 里看到代数变化即抛 DownloadCancelled
-        self.status = "paused"
-        self.speed = 0.0
-        self.eta = ""
+        # 持 _xlock 让「代数 +1」和「状态置 paused」原子完成：否则并发的 cancel
+        # 可能落在这两步之间，随后又被 pause 覆写成 paused
+        with self._xlock:
+            if self.status != "downloading":
+                return
+            self._gen += 1          # 工作线程在 progress hook 里看到代数变化即抛 DownloadCancelled
+            self.status = "paused"
+            self.speed = 0.0
+            self.eta = ""
 
     def resume(self):
         if self.status != "paused":
             return
-        self.start()                    # continuedl=True，yt-dlp 自行断点续传 .part
+        # start() 会先 drain 旧 worker 再在 _xlock 下复核状态；cancelled 的任务
+        # 没有启动令牌，start() 会拒绝，不会被 resume 复活
+        self.start()                # continuedl=True，yt-dlp 自行断点续传 .part
 
     def cancel(self):
-        self._gen += 1
-        self.status = "cancelled"
-        self.speed = 0.0
+        # 持锁迁移状态：与 _run 的「置 completed」「_fail 置 failed」互斥，
+        # 否则 cancel 可能被这两条路径覆写
+        with self._xlock:
+            self._gen += 1
+            self._start_token += 1  # 作废 retry 已申请但尚未生效的启动令牌
+            self.status = "cancelled"
+            self.speed = 0.0
         self._drop_partials()
 
     def retry(self):
-        if self.status not in ("failed", "cancelled"):
-            return False
-        self.error = ""
-        self.error_reason = ""
-        self.progress = 0.0
-        self.status = "pending"
-        self.start()
-        return True
+        with self._xlock:
+            if self.status not in ("failed", "cancelled"):
+                return False
+            self.error = ""
+            self.error_reason = ""
+            self.progress = 0.0
+            self.status = "pending"
+            # start() 内部要跑 yt-dlp（worker 可能长时间占住），不能在锁内调用，
+            # 否则并发的 pause/cancel 会被长时间阻塞。改用启动令牌：若期间状态被
+            # 并发操作改动，start() 会看到令牌失效而直接返回，不会复活已取消的任务
+            self._start_token += 1
+            token = self._start_token
+        return self.start(token)
 
     # ---------------- yt-dlp 选项 ----------------
 
