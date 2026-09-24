@@ -103,6 +103,12 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 | `browser_monitor.py` | 浏览器监控本地捕获服务（端口 5001）+ 剪贴板监听 |
 | `app.py` | Flask 后端 API（含 `/api/browser-capture`、SSE 流、任务管理） |
 | `torrent.py` | libtorrent 封装（BT/PT） |
+| `media_service.py` | 嗅探缓存 `MediaRegistry`（60s TTL，按 tab 聚合媒体项） |
+| `media.py` | `MediaTask`：HLS/DASH/站点解析下载编排 + yt-dlp/ffmpeg 依赖探测 |
+| `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高） |
+| `scheduler.py` | 定时到点自启 + 完成动作（none/shutdown/suspend/beep）+ 可撤销倒计时 |
+| `extension/content.js` | DOM 侧嗅探（MSE/blob、video 元素），`runtime.sendMessage` 上报 |
+| `extension/sniff.js` | content/background 共用的嗅探规则 + Cookie→Netscape |
 | `templates/index.html` | Web UI（内嵌打包） |
 | `extension/` | Chrome 扩展（manifest/background/popup/icons） |
 | `build_exe.py` / `SwiftDM.spec` | PyInstaller 打包 |
@@ -111,7 +117,46 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ---
 
-## 7. 给下一个 agent 的建议 / 待办
+## 7. 流媒体嗅探与下载（2026-09-23，已实现并验收）
+
+**新模块职责（一句话）：**
+- `media_service.py`（嗅探缓存）：`MediaRegistry`，60s TTL 的易失缓存，按 tab 聚合“嗅探/解析到的媒体项”，扩展 popup 与页面解析都从这里读。
+- `media.py`（MediaTask + 依赖探测）：`MediaTask` 统一编排 HLS/DASH/站点解析的下载；运行期探测 `yt-dlp`（必选）与 `ffmpeg`（可选，仅检测系统版本，不自动下载）；`SWIFTDM_FFMPEG` 可显式指定可执行路径。
+- `throttle.py`（限速令牌）：写入粒度的令牌桶，`write_granularity = rate × 0.5s` 突发额度，避免 256KB 整块写入把瞬时速度读数放大。
+- `scheduler.py`（定时与完成动作）：计划任务到点自启、完成后动作（`none / shutdown / suspend / beep`）与 60s 可撤销倒计时；关机的验证由 `tests/test_scheduler.py` 的注册 runner 覆盖（不真关机）。
+- `extension/sniff.js`（共享嗅探规则）：content.js 与 service worker 共用的 `classifyResource` / `noteFragment` / `cookiesToNetscape`。
+- `extension/content.js`（DOM 侧嗅探）：兜底 MediaSource(`blob:`) / `<video>` 元素，经 `chrome.runtime.sendMessage({type:'swiftdm-dom-media'})` 上报。
+
+**运行依赖：**
+- `yt-dlp` **必装**（`pip install -r requirements.txt`；`build_exe.py` 已 `--collect-all yt_dlp` + `--hidden-import yt_dlp.utils / mutagen`）。
+- `ffmpeg` **选装**：SwiftDM **只检测系统 PATH 里的 ffmpeg 版本**，不自动下载二进制；缺失时纯 TS 的 HLS 仍可下载（yt-dlp 内置合流），唯有“视听分离”解析才返回 409 `needs_ffmpeg`（卡单与设置面板都给安装指引）；`SWIFTDM_FFMPEG` 指定路径可覆盖。
+
+**测试命令：**
+```bash
+python -m pytest tests -q          # 120 passed, 1 skipped
+node tests/test_sniff.js
+node tests/test_background_load.js
+node --check extension/sniff.js extension/background.js extension/content.js extension/popup.js
+python -c "import json;json.load(open('extension/manifest.json',encoding='utf-8'))"
+python test_binary.py              # 打包产物端到端（分段/完整性/暂停续传取消/浏览器单端点）
+python test_norange.py             # 服务器不支持 Range 时，暂停/续传后 sha256 仍一致
+```
+
+**已知限制：**
+- **不做 DRM 绕过**：受保护清单在 preflight / 提取期即判 `drm_protected`，返回 409，无绕过尝试、无任务残留。
+- **MSE / blob 只能降级为“解析本页”**：拿不到直链，改交 yt-dlp 解析页面地址。
+- **定时、`finish_action`、`rate_limit` 均不落盘**，重启即失效。
+- **嗅探仅在扩展启用且页面确有网络请求时才有结果**；纯 TS 的 HLS 也能嗅到（靠分片流量摘要归为 `hls_segments`，只读展示项，不可直接下载）。
+- **流媒体限速是 yt-dlp 的“每条连接”限速**：`concurrent_fragment_downloads` 取 `segments`（默认 8），实际总速率上限约为 `limit × segments`（`DownloadTask` 的全局令牌桶没有这种放大）。
+
+**端口事实：** Flask 5000 被占时依次回落 5002–5005；扩展按 `SWIFTDM_BASES` 依次探测，把首个可用端口持久化到 `chrome.storage.local.swiftBase`。
+
+**关键坑（2026-09-23 修复，务必记住）：** MV3 service worker 顶层脚本里 `chrome.webRequest.onHeadersReceived.addListener` 的过滤 `types` 若含非法值（例如 `'fetch'`——webRequest 合法 ResourceType 里没有 `fetch`，`fetch()` 请求实际报为 `xmlhttprequest` 同族），`addListener` 会同步抛 schema 校验异常，导致其后所有注册（含 `chrome.runtime.onMessage`）全部死亡并进入 crash-loop，表现为“嗅探上报链路断了、popup 收不到 DOM 媒体”。node 桩测试因忽略 `filter` 参数**无法捕获**，必须真机 / Playwright 核验。已从 `extension/background.js` 删除该 `'fetch'`。
+
+---
+
+
+## 8. 给下一个 agent 的建议 / 待办
 
 - **下一轮迭代已在设计**：流媒体嗅探 + HLS/DASH 下载（扩展 popup 媒体面板）、yt-dlp 网页视频解析、ffmpeg 混流、下载调度（定时/限速/完成动作）。已定方案：双引擎按 `kind` 分流——http 直链走现有分段引擎，流媒体走 yt-dlp Python API，任务统一注册进 `DownloadManager._tasks`。spec 将基于本副本核对挂点后撰写。
 - 浏览器接管功能需要**真实 Chrome + 手动加载扩展**才能端到端验证（自动化测试覆盖不到扩展侧）。
@@ -120,6 +165,6 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ---
 
-## 8. 临时文件清理提示
+## 9. 临时文件清理提示
 
 根目录下的 `_build.err` / `_run.err` / `_run.out` / `_src.err` / `_src.out` 是调试日志（以 `_` 开头，多数已被 `.gitignore` 忽略）。交接后可手动删除，不影响构建。
