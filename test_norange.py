@@ -29,7 +29,30 @@ def _silent_handle_error(self, request, client_address):
 http.server.ThreadingHTTPServer.handle_error = _silent_handle_error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "dist", "SwiftDM.exe")
+
+
+def _find_exe():
+    """按平台定位 PyInstaller 产物（Windows .exe / macOS .app / Linux ELF）。"""
+    if sys.platform == "win32":
+        return os.path.join(HERE, "dist", "SwiftDM.exe")
+    if sys.platform == "darwin":
+        return os.path.join(HERE, "dist", "SwiftDM.app", "Contents", "MacOS", "SwiftDM")
+    return os.path.join(HERE, "dist", "SwiftDM")
+
+
+def _kill_stale():
+    """按进程名清理残留实例（PyInstaller 单文件会 spawn 子进程，需按名清理）。"""
+    import platform as _p
+    import subprocess as _sp
+    if _p.system().lower() == "windows":
+        _sp.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=10)
+    else:
+        _sp.run(["pkill", "-f", "SwiftDM"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=10)
+
+
+EXE = _find_exe()
 
 
 def trust(s):
@@ -78,8 +101,7 @@ def main():
     env["SWIFTDM_USE_PROXY"] = "direct"
     env["SWIFTDM_HOST"] = "127.0.0.1"
     env["SWIFTDM_PORT"] = str(port)
-    subprocess.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    _kill_stale()
     time.sleep(1)
     if os.environ.get("USE_SRC"):
         # 用源码版（python main.py --web-only）隔离「是否是打包问题」
@@ -177,8 +199,7 @@ def main():
                      f"exp={exp_sha[:8]} got={got_sha[:8] if got_sha else 'none'}{diag}")
         sys.exit(0 if ok else 1)
     finally:
-        subprocess.run(["taskkill", "/F", "/IM", "SwiftDM.exe"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        _kill_stale()
         try:
             proc.kill()
         except Exception:

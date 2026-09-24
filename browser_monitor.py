@@ -82,6 +82,7 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
 
     def _add_download(self, url, filename):
         import os
+        import config
         if self.manager is None:
             from downloader import manager as mgr
             self.__class__.manager = mgr
@@ -90,7 +91,7 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
             if t.url == url and t.status in ("downloading", "paused", "pending"):
                 print(f"[Monitor] URL 已存在任务中，跳过: {url[:60]}...")
                 return
-        save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+        save_dir = config.get_download_dir()
         os.makedirs(save_dir, exist_ok=True)
         task = self.manager.create_task(url, save_dir, filename, 8)
         task.start()
@@ -108,9 +109,13 @@ class BrowserMonitor:
         self._clipboard_thread = None
         self._last_clipboard = ""
         self._enabled = True
+        self._started = False  # 幂等保护：设置面板反复保存不会重复拉起线程
 
     def start(self):
-        """启动 HTTP 服务器和剪贴板监听"""
+        """启动 HTTP 服务器和剪贴板监听（幂等：已启动时直接返回）。"""
+        if self._started:
+            return
+        self._started = True
         self._running = True
 
         # HTTP 服务器
@@ -124,9 +129,22 @@ class BrowserMonitor:
         print(f"[Monitor] 浏览器监控已启动 (端口 {self.port})")
 
     def stop(self):
+        """停止监控（幂等：未启动/已停止时直接返回）。
+
+        shutdown() 只结束 serve_forever 循环，还需 server_close() 关闭监听
+        socket 并 join 线程，否则立刻重启会因端口未释放而绑定失败。
+        """
+        if not self._started:
+            return
+        self._started = False
         self._running = False
         if self._server:
             self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
+        self._thread = None
 
     def _run_server(self):
         try:
@@ -180,11 +198,12 @@ class BrowserMonitor:
     def _auto_add(self, url):
         """自动添加下载"""
         import os
+        import config
         try:
             from downloader import manager
         except ImportError:
             return
-        save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+        save_dir = config.get_download_dir()
         os.makedirs(save_dir, exist_ok=True)
         task = manager.create_task(url, save_dir, None, 8)
         task.start()

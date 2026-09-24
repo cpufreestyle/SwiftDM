@@ -11,6 +11,7 @@ from media_service import media_registry
 from throttle import get_rate, set_rate
 from scheduler import scheduler
 from media import ffmpeg_status, ytdlp_available
+import config
 
 # 让本地回环地址绕过系统代理，避免浏览器经代理访问 127.0.0.1 出现 502
 for _k in ("no_proxy", "NO_PROXY"):
@@ -30,8 +31,8 @@ SWIFTDM_PORT = int(os.environ.get("SWIFTDM_PORT", "5000"))
 app = Flask(__name__)
 CORS(app)
 
-# 默认下载目录
-DEFAULT_DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+# 默认下载目录：统一从共享配置读取（桌面 UI 设置的目录对 Web 端同样生效）
+DEFAULT_DOWNLOAD_DIR = config.get_download_dir()
 os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
 
 
@@ -66,8 +67,13 @@ def add_task():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     filename = (data.get("filename") or "").strip() or None
-    segments = int(data.get("segments") or 8)
-    save_dir = data.get("save_dir") or DEFAULT_DOWNLOAD_DIR
+    try:
+        segments = int(data.get("segments") or 8)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "线程数必须是 1-32 的整数"}), 400
+    # 钳制到 1-32：无上限线程数会造成资源耗尽
+    segments = max(1, min(32, segments))
+    save_dir = data.get("save_dir") or config.get_download_dir()
     kind = (data.get("kind") or "auto").strip().lower()
     referer = (data.get("referer") or "").strip() or None
     cookies_netscape = data.get("cookies_netscape") or ""
@@ -153,6 +159,29 @@ def retry_task(task_id):
     return jsonify({"success": True, "task": task.to_dict()})
 
 
+@app.route("/api/open/<task_id>", methods=["POST"])
+def open_file(task_id):
+    """用系统默认程序打开已下载的文件（跨平台）"""
+    import sys as _sys
+    import subprocess as _sp
+    task = manager.get_task(task_id)
+    if not task:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
+    filepath = task.filepath
+    if not os.path.exists(filepath):
+        return jsonify({"success": False, "error": "文件不存在"}), 404
+    try:
+        if _sys.platform == "win32":
+            os.startfile(filepath)  # noqa: P201
+        elif _sys.platform == "darwin":
+            _sp.Popen(["open", filepath])
+        else:
+            _sp.Popen(["xdg-open", filepath])
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
     scheduler.unschedule(task_id)
@@ -191,19 +220,32 @@ def settings():
         # 代理模式: env(系统代理) / direct(直连) / 自定义地址
         if "proxy_mode" in data:
             set_proxy_mode(data["proxy_mode"])
+            config.set("proxy_mode", data["proxy_mode"])
         if "rate_limit" in data:
             set_rate(data["rate_limit"])
         if "finish_action" in data:
             scheduler.set_finish_action(data["finish_action"])
-        return jsonify({"success": True, "proxy_mode": get_proxy_mode(),
-                        "rate_limit": get_rate(),
-                        "finish_action": scheduler.get_finish_action()})
+        # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效
+        if "download_dir" in data:
+            new_dir = str(data["download_dir"]).strip()
+            if new_dir and os.path.isdir(os.path.expanduser(new_dir)):
+                config.set_download_dir(os.path.expanduser(new_dir))
+            elif new_dir:
+                return jsonify({"success": False,
+                                "error": f"目录不存在: {new_dir}"}), 400
+        return jsonify({
+            "success": True,
+            "proxy_mode": get_proxy_mode(),
+            "download_dir": config.get_download_dir(),
+            "rate_limit": get_rate(),
+            "finish_action": scheduler.get_finish_action(),
+        })
     st = scheduler.status()
     return jsonify({
-        "download_dir": DEFAULT_DOWNLOAD_DIR,
-        "default_segments": 8,
+        "download_dir": config.get_download_dir(),
+        "default_segments": config.get("segments"),
         "proxy_mode": get_proxy_mode(),
-        "proxy_modes": ["env", "direct"],
+        "proxy_modes": ["env", "direct", "custom"],
         "rate_limit": get_rate(),
         "finish_action": st["finish_action"],
         "finish_countdown": st["remaining"],
@@ -281,7 +323,7 @@ def self_test():
     import time as _time
     from downloader import manager
 
-    save_dir = os.path.join(DEFAULT_DOWNLOAD_DIR, "_selftest")
+    save_dir = os.path.join(config.get_download_dir(), "_selftest")
     os.makedirs(save_dir, exist_ok=True)
     url = request.host_url.rstrip("/") + "/api/local-test-file"
 
@@ -328,15 +370,27 @@ def _stream_payload():
 
 @app.route("/api/stream")
 def stream():
-    """Server-Sent Events 实时推送任务状态"""
+    """Server-Sent Events 实时推送任务状态。
+
+    无数据变化时每 15s 发送 keepalive 注释行，防止代理/负载均衡器因空闲超时断开连接。
+    """
     def generate():
         last_stats = None
+        idle_since = 0
         while True:
             # 仅在有变化时推送
             payload_str = json.dumps(_stream_payload())
             if payload_str != last_stats:
                 last_stats = payload_str
+                idle_since = 0
                 yield f"data: {payload_str}\n\n"
+            else:
+                idle_since += 1  # 0.5s per tick
+
+            # 15s 无数据变化时发送 keepalive 注释（SSE 规范: 以 : 开头的行被客户端忽略）
+            if idle_since >= 30:
+                yield ": keepalive\n\n"
+                idle_since = 0
 
             time.sleep(0.5)
     return Response(generate(), mimetype="text/event-stream")
@@ -435,7 +489,7 @@ def browser_capture():
         if t.url == url and t.status in ("downloading", "paused", "pending"):
             return jsonify({"success": True, "task": t.to_dict(), "duplicate": True})
 
-    task = manager.create_task(url, DEFAULT_DOWNLOAD_DIR, filename, 8)
+    task = manager.create_task(url, config.get_download_dir(), filename, 8)
     task.start()
 
     resp = jsonify({"success": True, "task": task.to_dict()})
@@ -446,7 +500,7 @@ def browser_capture():
 if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  IDM 风格下载管理器已启动")
-    print(f"  下载目录: {DEFAULT_DOWNLOAD_DIR}")
+    print(f"  下载目录: {config.get_download_dir()}")
     print(f"  打开浏览器访问: http://127.0.0.1:{SWIFTDM_PORT}")
     print("=" * 50 + "\n")
     scheduler.start()

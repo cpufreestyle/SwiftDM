@@ -179,19 +179,34 @@ def main():
     except ImportError:
         req = os.path.join(os.path.dirname(os.path.abspath(__file__)), "requirements.txt")
         print("\n检测到缺失依赖，正在安装 requirements.txt ...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req])
-        print("依赖安装完成，请重新运行")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req])
+            print("依赖安装完成，请重新运行")
+        except subprocess.CalledProcessError as e:
+            print(f"\n[错误] 依赖自动安装失败（退出码 {e.returncode}）。")
+            print("  若提示 externally-managed-environment（PEP 668），请任选其一：")
+            print("  1) 用虚拟环境:  python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt")
+            print("  2) 强制安装:    python3 -m pip install --break-system-packages -r requirements.txt")
         return
 
-    # 2. 启动浏览器监控 HTTP 服务器
+    # 2. 应用上次保存的设置（代理模式持久化，重启后仍生效）
+    import config
+    from downloader import set_proxy_mode as _set_proxy
+    _set_proxy(config.get("proxy_mode"))
+    os.makedirs(config.get_download_dir(), exist_ok=True)
+
+    # 3. 启动浏览器监控 HTTP 服务器
     from browser_monitor import BrowserMonitor
 
     monitor = BrowserMonitor(port=monitor_port)
+    if config.get("monitor_enabled"):
+        monitor.start()
 
     def on_url_captured(url, filename):
         """浏览器捕获到 URL 时的回调"""
+        import config
         from downloader import manager
-        save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
+        save_dir = config.get_download_dir()
         os.makedirs(save_dir, exist_ok=True)
         for t in manager.get_all_tasks():
             if t.url == url and t.status in ("downloading", "paused", "pending"):
@@ -201,14 +216,13 @@ def main():
         task.start()
         print(f"[Monitor] 浏览器捕获下载: {task.filename}")
 
-    monitor.on_url_captured = on_url_captured
-    monitor.start()
+    monitor.on_url_captured = on_url_captured  # start() 已按配置调用过
 
     # 2.5 下载调度线程：定时开始 + 完成后的动作（不启动则定时永不生效）
     from scheduler import scheduler as dl_scheduler
     dl_scheduler.start()
 
-    # 3. 启动 Flask Web 服务器（后台线程，独立于 UI，UI 崩溃也不影响服务）
+    # 4. 启动 Flask Web 服务器（后台线程，独立于 UI，UI 崩溃也不影响服务）
     from app import app as flask_app
 
     def run_flask():
@@ -219,7 +233,7 @@ def main():
     flask_thread.start()
     print(f"  Web UI: http://127.0.0.1:{web_port}")
 
-    # 4. 自动打开浏览器（禁用代理，规避 502）
+    # 5. 自动打开浏览器（禁用代理，规避 502）
     if not web_only:
         threading.Timer(1.5, open_browser, args=[f"http://127.0.0.1:{web_port}/"]).start()
 
@@ -237,7 +251,7 @@ def main():
             monitor.stop()
         return
 
-    # 5. 启动 PyQt6 桌面应用
+    # 6. 启动 PyQt6 桌面应用
     try:
         from PyQt6.QtWidgets import QApplication
         from main_window import MainWindow
@@ -246,7 +260,7 @@ def main():
         app.setApplicationName("SwiftDM")
         app.setQuitOnLastWindowClosed(False)  # 关闭窗口时隐藏到托盘
 
-        window = MainWindow(http_port=web_port)
+        window = MainWindow(http_port=web_port, monitor=monitor)
         window.show()
 
         print("[OK] SwiftDM 已启动！\n")
