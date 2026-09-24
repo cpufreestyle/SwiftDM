@@ -670,6 +670,16 @@ class DownloadTask:
         """恢复下载"""
         if self.status != "paused":
             return
+        # 先等待旧的下载/监控线程退出再切回 downloading：否则旧监控线程看到
+        # status 又变回 downloading 会继续运行形成双监控；且暂停时 _gen 已 +1，
+        # 旧分段线程可能仍在写同一分片文件，与随后新拉起的线程并发写会导致文件
+        # 损坏、分段校验失败。暂停期间 status 仍为 paused，旧分段线程（_gen 已变）
+        # 与旧监控线程（status 非 downloading）都会在此窗口内自然退出。
+        _deadline = time.time() + 5.0
+        for _t in self._threads:
+            _remain = _deadline - time.time()
+            if _remain > 0:
+                _t.join(timeout=_remain)
         self.status = "downloading"
 
         with self._lock:
