@@ -102,9 +102,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 | `downloader.py` | 下载引擎：多线程分段、暂停/恢复、代理模式（env/direct/显式）；per-task 生命周期转换锁 `_xlock` + 启动令牌 `_start_token`，回归见 `tests/test_resume_race.py` |
 | `browser_monitor.py` | 浏览器监控本地捕获服务（端口 5001）+ 剪贴板监听 |
 | `app.py` | Flask 后端 API（含 `/api/browser-capture`、SSE 流、任务管理） |
-| `torrent.py` | libtorrent 封装（BT/PT）；`retry()` 在锁内完成「重置 + 启动」，`start()` guard 收回锁内 |
+| `torrent.py` | libtorrent 封装（BT/PT）；`retry()` 锁内完成「重置 + 启动」，`start()` guard 收回锁内，`_tick()` 整段持 `_lock` 刷新 |
 | `media_service.py` | 嗅探缓存 `MediaRegistry`（60s TTL，按 tab 聚合媒体项） |
-| `media.py` | `MediaTask`：HLS/DASH/站点解析下载编排 + yt-dlp/ffmpeg 依赖探测；与 `DownloadTask` 同构的 `_xlock` 转换锁 + `_drain_worker` |
+| `media.py` | `MediaTask`：HLS/DASH/站点解析下载编排 + yt-dlp/ffmpeg 依赖探测；与 `DownloadTask` 同构的 `_xlock` 转换锁 + `_drain_worker`（worker 先 start 再发布） |
 | `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高） |
 | `scheduler.py` | 定时到点自启 + 完成动作（none/shutdown/suspend/beep）+ 可撤销倒计时 |
 | `extension/content.js` | DOM 侧嗅探（MSE/blob、video 元素），`runtime.sendMessage` 上报 |
@@ -133,7 +133,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 **测试命令：**
 ```bash
-python -m pytest tests -q          # 131 passed, 1 skipped
+python -m pytest tests -q          # 133 passed, 1 skipped
 node tests/test_sniff.js
 node tests/test_background_load.js
 node --check extension/sniff.js extension/background.js extension/content.js extension/popup.js

@@ -252,62 +252,66 @@ class TorrentTask:
             time.sleep(1.0)
 
     def _tick(self):
-        if self._handle is None:
-            return
-        st = self._handle.status()
+        # 整段刷新都在 _lock 内：与 cancel/pause/start 的状态迁移互斥。
+        # 否则 cancel 已删掉分片并把状态置 cancelled，_tick 仍可能把它改回
+        # completed（表现为"任务已完成"但文件已被删除）
+        with self._lock:
+            if self._handle is None:
+                return
+            st = self._handle.status()
 
-        # 元数据就绪后补全文件名 / 大小（磁力链接场景）
-        if not self._meta_ready and st.name:
-            self._meta_ready = True
-            if not self.filename or self.filename.startswith("magnet_"):
-                self.filename = st.name
-            self.filepath = os.path.join(self.save_dir, self.filename)
-            try:
-                self.segments = max(self._handle.get_torrent_info().num_files(), 1)
-            except Exception:
-                pass
+            # 元数据就绪后补全文件名 / 大小（磁力链接场景）
+            if not self._meta_ready and st.name:
+                self._meta_ready = True
+                if not self.filename or self.filename.startswith("magnet_"):
+                    self.filename = st.name
+                self.filepath = os.path.join(self.save_dir, self.filename)
+                try:
+                    self.segments = max(self._handle.get_torrent_info().num_files(), 1)
+                except Exception:
+                    pass
 
-        self.total_size = st.total if st.total else 0
-        self.downloaded = st.total_done
-        self.speed = st.download_rate
-        self.seeds = st.num_seeds
-        self.peers = st.num_peers
+            self.total_size = st.total if st.total else 0
+            self.downloaded = st.total_done
+            self.speed = st.download_rate
+            self.seeds = st.num_seeds
+            self.peers = st.num_peers
 
-        if st.total and st.total > 0 and st.download_rate > 0 and st.total_done < st.total:
-            remain = (st.total - st.total_done) / st.download_rate
-            if remain < 60:
-                self.eta = f"{int(remain)}s"
-            elif remain < 3600:
-                self.eta = f"{int(remain // 60)}m {int(remain % 60)}s"
+            if st.total and st.total > 0 and st.download_rate > 0 and st.total_done < st.total:
+                remain = (st.total - st.total_done) / st.download_rate
+                if remain < 60:
+                    self.eta = f"{int(remain)}s"
+                elif remain < 3600:
+                    self.eta = f"{int(remain // 60)}m {int(remain % 60)}s"
+                else:
+                    self.eta = f"{int(remain // 3600)}h {int((remain % 3600) // 60)}m"
             else:
-                self.eta = f"{int(remain // 3600)}h {int((remain % 3600) // 60)}m"
-        else:
-            self.eta = ""
+                self.eta = ""
 
-        if st.total and st.total > 0:
-            self.progress = round(min(100.0, st.progress * 100.0), 1)
-        else:
-            self.progress = 0.0
+            if st.total and st.total > 0:
+                self.progress = round(min(100.0, st.progress * 100.0), 1)
+            else:
+                self.progress = 0.0
 
-        # 完成判定：所有分片已下载完成（含校验）
-        if st.is_finished or (st.total and st.total > 0 and st.progress >= 1.0
-                              and not st.need_save_resume_data):
-            self.status = "completed"
-            self.progress = 100.0
-            return
+            # 完成判定：所有分片已下载完成（含校验）
+            if st.is_finished or (st.total and st.total > 0 and st.progress >= 1.0
+                                  and not st.need_save_resume_data):
+                self.status = "completed"
+                self.progress = 100.0
+                return
 
-        # 错误判定：种子元数据拿到了、但完全无 peer 且无进展且 libtorrent 报了错误，
-        # 视为真正失败（仅显示 tracker 报错但不影响下载的不直接判失败）。
-        err = getattr(st, "error", "") or ""
-        if err and self.progress <= 0 and st.num_connections == 0 \
-                and (time.time() - self._started_at) > 20:
-            self.status = "failed"
-            self.error = err
-            return
+            # 错误判定：种子元数据拿到了、但完全无 peer 且无进展且 libtorrent 报了错误，
+            # 视为真正失败（仅显示 tracker 报错但不影响下载的不直接判失败）。
+            err = getattr(st, "error", "") or ""
+            if err and self.progress <= 0 and st.num_connections == 0 \
+                    and (time.time() - self._started_at) > 20:
+                self.status = "failed"
+                self.error = err
+                return
 
-        # 把 tracker 报错作为提示（不阻塞下载）
-        if err and not self.error:
-            self.error = err
+            # 把 tracker 报错作为提示（不阻塞下载）
+            if err and not self.error:
+                self.error = err
 
     # ---------------- 状态导出 ----------------
 

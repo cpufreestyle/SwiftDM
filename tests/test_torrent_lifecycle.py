@@ -7,6 +7,7 @@ start() 的 guard 也回到锁内，与 DownloadTask / MediaTask 的转换锁保
 """
 import threading
 import time
+import types
 
 import pytest
 
@@ -108,3 +109,108 @@ def test_cancel_cannot_interleave_into_start_critical_section(tmp_path, monkeypa
     # 成为最终状态，而不是被 start() 的失败分支抢先
     assert t.status == "cancelled", t.status
     assert t._handle is None
+class _FakeStatus:
+    def __init__(self, finished=False, total=1000, done=1000):
+        self.name = "movie.mkv"
+        self.total = total
+        self.total_done = done
+        self.download_rate = 0
+        self.num_seeds = 2
+        self.num_peers = 3
+        self.num_connections = 0
+        self.progress = 1.0 if finished else 0.5
+        self.is_finished = finished
+        self.need_save_resume_data = False
+        self.error = ""
+
+
+class _FakeHandle:
+    """只实现 TorrentTask 用到的那几个方法的假 torrent_handle。"""
+
+    def __init__(self, finished=False):
+        self._finished = finished
+        self.paused = False
+
+    def status(self):
+        return _FakeStatus(finished=self._finished)
+
+    def get_torrent_info(self):
+        return types.SimpleNamespace(num_files=lambda: 1)
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+
+
+def test_cancel_cannot_be_overwritten_by_monitor_tick(tmp_path):
+    """cancel() 删掉分片后，监控线程的 _tick() 不得再把状态改回 completed。
+
+    _tick() 的完成判定来自 libtorrent 的 status()，它不知道调用方已经取消并删了
+    文件。修复把整段刷新放进 self._lock，与 cancel/pause/start 互斥。
+    """
+    t = torrent.TorrentTask("bt_tick", "magnet:?xt=urn:btih:" + "0" * 40,
+                            str(tmp_path), "movie", 0)
+    t.status = "downloading"
+    t._started_at = time.time()
+    handle = _FakeHandle(finished=True)
+    t._handle = handle
+    t._session = types.SimpleNamespace(remove_torrent=lambda *a, **k: None)
+
+    entered = threading.Event()
+    release = threading.Event()
+    real_status = handle.status
+
+    def _blocking_status():
+        entered.set()                 # 已进入 _tick 临界区，还没写 status
+        release.wait(5)
+        return real_status()
+
+    handle.status = _blocking_status
+
+    ticked = threading.Event()
+
+    def _do_tick():
+        t._tick()
+        ticked.set()
+
+    threading.Thread(target=_do_tick, daemon=True).start()
+    assert entered.wait(5), "_tick 没有进入临界区"
+
+    cancelled = threading.Event()
+
+    def _do_cancel():
+        t.cancel()
+        cancelled.set()
+
+    threading.Thread(target=_do_cancel, daemon=True).start()
+    # cancel 已删分片并置 cancelled，必须等 _tick 让出临界区
+    assert not cancelled.wait(0.5), "cancel 插进了 _tick 的临界区"
+    assert t.status == "cancelled" or t.status == "downloading", t.status
+
+    release.set()
+    assert ticked.wait(5), "锁释放后 _tick 没有返回"
+    assert cancelled.wait(5), "锁释放后 cancel 没有执行"
+    assert t.status == "cancelled", "监控线程把已取消的任务改回了 completed"
+    assert t._handle is None
+
+
+def test_tick_reports_progress_and_completion(tmp_path):
+    """_tick 锁内仍能正常刷新进度 / 完成态 / eta（防回归）。"""
+    t = torrent.TorrentTask("bt_progress", "magnet:?xt=urn:btih:" + "0" * 40,
+                            str(tmp_path), None, 0)
+    t.status = "downloading"
+    t._started_at = time.time()
+    t._handle = _FakeHandle(finished=False)
+
+    t._tick()
+    assert t.status == "downloading"
+    assert t.downloaded == 1000 and t.total_size == 1000
+    assert t.speed == 0 and t.seeds == 2 and t.peers == 3
+    assert t.eta == ""
+    assert t.filename == "movie.mkv" and t.segments == 1
+
+    t._handle = _FakeHandle(finished=True)
+    t._tick()
+    assert t.status == "completed" and t.progress == 100.0

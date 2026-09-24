@@ -705,7 +705,7 @@ class DownloadTask:
                 with self._lock:
                     self._seg_done[idx] = True
         except Exception as e:
-            with self._lock:
+            with self._xlock:
                 if self.status == "downloading":
                     self.status = "failed"
                     self.error = str(e)
