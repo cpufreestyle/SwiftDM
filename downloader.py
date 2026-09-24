@@ -680,6 +680,9 @@ class DownloadTask:
             _remain = _deadline - time.time()
             if _remain > 0:
                 _t.join(timeout=_remain)
+        # join 期间可能有并发 cancel / 完成改了状态：若已不是 paused 就放弃，别覆盖取消
+        if self.status != "paused":
+            return
         self.status = "downloading"
 
         with self._lock:
@@ -810,10 +813,12 @@ class DownloadManager:
         return False
 
     def get_task(self, task_id):
-        return self._tasks.get(task_id)
+        with self._lock:
+            return self._tasks.get(task_id)
 
     def get_all_tasks(self):
-        return list(self._tasks.values())
+        with self._lock:
+            return list(self._tasks.values())
 
     def remove_task(self, task_id):
         with self._lock:
