@@ -84,6 +84,38 @@ h2 { font-size: 15px; color: #fff; }
   cursor: pointer;
 }
 .btn-reset:hover { background: #ff5e7a22; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tab {
+  flex: 1; padding: 6px 0; border: none; border-radius: 4px; cursor: pointer;
+  background: #22222e; color: #8888a0; font-size: 12px; font-weight: 600;
+}
+.tab.active { background: #6c5ce7; color: #fff; }
+.badge {
+  display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px;
+  background: #00d2a0; color: #06231b; font-size: 10px;
+}
+.hidden { display: none !important; }
+.media-head { font-size: 11px; color: #8888a0; margin-bottom: 6px; }
+.ellipsis { display: block; max-width: 232px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-list { max-height: 220px; overflow-y: auto; }
+.media-item {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px;
+  border-radius: 5px; background: #22222e; margin-bottom: 6px;
+}
+.media-kind {
+  font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 3px;
+  background: #3b2f71; color: #a29bfe; text-transform: uppercase;
+}
+.media-kind.video { background: #143c33; color: #00d2a0; }
+.media-kind.dash { background: #3d2a1a; color: #ffb15e; }
+.media-kind.mse { background: #3a1c24; color: #ff5e7a; }
+.media-name { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-sub { font-size: 10px; color: #666680; }
+.btn-dl { background: #00d2a0; color: #06231b; border: none; border-radius: 3px;
+  font-size: 11px; font-weight: 700; padding: 4px 8px; cursor: pointer; }
+.btn-dl.secondary { background: #6c5ce7; color: #fff; }
+.btn-dl[disabled] { background: #2f2d3d; color: #55556a; cursor: not-allowed; }
+.media-empty { font-size: 11px; color: #55556a; text-align: center; padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -92,19 +124,35 @@ h2 { font-size: 15px; color: #fff; }
   <h2>SwiftDM 监控</h2>
 </div>
 
-<div class="status-row">
-  <span>
-    <span class="status-dot active" id="statusDot"></span>
-    <span style="font-size:12px" id="statusText">已启用</span>
-  </span>
-  <button class="btn btn-toggle" id="toggleBtn">暂停</button>
-</div>
-
 <div class="stats">
   <div>已捕获下载: <strong style="color:#a29bfe" id="sentCount">0</strong> 次</div>
   <div>服务器: <span style="color:#888">127.0.0.1:5001</span></div>
   <div style="margin-top:6px">
     <button class="btn-reset" id="resetBtn">清零计数</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" id="tabCapture">捕获</button>
+  <button class="tab" id="tabMedia">媒体 <span class="badge" id="mediaCount">0</span></button>
+</div>
+
+<div id="panelCapture">
+  <div class="status-row">
+    <span>
+      <span class="status-dot active" id="statusDot"></span>
+      <span style="font-size:12px" id="statusText">已启用</span>
+    </span>
+    <button class="btn btn-toggle" id="toggleBtn">暂停</button>
+  </div>
+</div>
+
+<div id="panelMedia" class="hidden">
+  <div class="media-head">
+    <span id="mediaPage" class="ellipsis">当前标签页</span>
+  </div>
+  <div class="media-list" id="mediaList">
+    <div class="media-empty">未嗅探到媒体资源</div>
   </div>
 </div>
 

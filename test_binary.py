@@ -103,7 +103,7 @@ def main():
     env["SWIFTDM_PORT"] = str(port)
     proc = subprocess.Popen([EXE], env=env)
     try:
-        if not wait_port("127.0.0.1", 5000, 30):
+        if not wait_port("127.0.0.1", port, 30):
             fail("Flask 服务未在 30s 内启动")
             return
         ok("SwiftDM 二进制启动，Flask 服务就绪")

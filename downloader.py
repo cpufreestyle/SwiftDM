@@ -11,6 +11,8 @@ import logging
 import requests
 from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse, unquote
+from throttle import consume as _throttle_consume
+from throttle import write_granularity as _throttle_granularity
 
 logger = logging.getLogger("SwiftDM")
 
@@ -70,6 +72,44 @@ def _windows_system_proxy():
     return proxy
 
 
+_PROXY_ENV_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+_EXPORTED_BEFORE = {}   # 导出前各键的值（None 表示原先不存在），供撤销时恢复
+
+
+def _restore_proxy_env():
+    """撤销之前写进环境变量的代理，恢复写入前的值。"""
+    for k, before in _EXPORTED_BEFORE.items():
+        if before is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = before
+    _EXPORTED_BEFORE.clear()
+
+
+def _export_proxy_env(proxies):
+    """把当前生效的代理同步进环境变量。
+
+    yt-dlp（流媒体解析/下载）等进程内客户端只认 HTTP_PROXY/HTTPS_PROXY，不会读 Windows
+    系统代理；env 模式在只配了系统代理的机器上必须显式导出，否则媒体任务等效直连、外网
+    全部连不上。传 None 表示全部抹掉（配合 _restore_proxy_env 实现可撤销）。
+    """
+    if not _EXPORTED_BEFORE:
+        for k in _PROXY_ENV_KEYS:
+            _EXPORTED_BEFORE[k] = os.environ.get(k)
+    for k in _PROXY_ENV_KEYS:
+        os.environ.pop(k, None)
+    if not proxies:
+        return
+    http_v = proxies.get("http") or proxies.get("https")
+    https_v = proxies.get("https") or proxies.get("http")
+    if http_v:
+        os.environ["HTTP_PROXY"] = http_v
+        os.environ["http_proxy"] = http_v
+    if https_v:
+        os.environ["HTTPS_PROXY"] = https_v
+        os.environ["https_proxy"] = https_v
+
+
 def _apply_proxy_mode(mode):
     """根据模式配置全局 Session 的代理行为。"""
     global _PROXY_MODE
@@ -79,20 +119,27 @@ def _apply_proxy_mode(mode):
         # 强制直连：忽略环境变量代理
         _SESSION.trust_env = False
         _SESSION.proxies.update({"http": None, "https": None})
+        # yt-dlp 不读 Session 配置，只认环境变量——直连模式必须把代理变量摘掉
+        _export_proxy_env(None)
     elif _PROXY_MODE in ("env", "", "system"):
         # 走系统代理：优先用 HTTP_PROXY/HTTPS_PROXY 环境变量；
         # 环境变量缺失时补读 Windows 系统代理（requests 自身不会读，否则会等效直连）
         _SESSION.trust_env = True
+        # 先还原此前被 direct/custom 抹掉的用户环境变量，再判断 env_has
+        if _EXPORTED_BEFORE:
+            _restore_proxy_env()
         env_has = (os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
                    or os.environ.get("http_proxy") or os.environ.get("https_proxy"))
         if not env_has:
             sys_proxy = _windows_system_proxy()
             if sys_proxy:
                 _SESSION.proxies.update(sys_proxy)
+                _export_proxy_env(sys_proxy)
     else:
         # 自定义代理地址
         _SESSION.trust_env = False
         _SESSION.proxies.update({"http": _PROXY_MODE, "https": _PROXY_MODE})
+        _export_proxy_env({"http": _PROXY_MODE, "https": _PROXY_MODE})
 
 
 def set_proxy_mode(mode):
@@ -154,6 +201,7 @@ class DownloadTask:
         self.speed = 0.0          # bytes/s
         self.eta = ""             # 预计剩余时间
         self.error = ""
+        self.error_reason = ""
         self.added_at = time.time()
 
         # 确定文件名
@@ -378,6 +426,7 @@ class DownloadTask:
 
             mode = "ab" if existing > 0 else "wb"
             written = 0
+            gran = _throttle_granularity()
             with open(seg_file, mode) as f:
                 for chunk in resp.iter_content(chunk_size=256 * 1024):
                     # 暂停/取消/重启（代数变化）：旧线程立即退出，由 resume 重新拉起，
@@ -389,10 +438,18 @@ class DownloadTask:
                             break
                         if written + len(chunk) > expected:
                             chunk = chunk[:expected - written]
-                    f.write(chunk)
-                    written += len(chunk)
-                    with self._lock:
-                        self._segment_progress[idx] += len(chunk)
+                    # 限速时按半秒额度切片写入：总额受令牌桶控制，UI 上的瞬时速度
+                    # 也不会被整块写入放大数倍
+                    off = 0
+                    while off < len(chunk):
+                        step = (len(chunk) - off) if gran <= 0 else min(gran, len(chunk) - off)
+                        piece = chunk[off:off + step]
+                        f.write(piece)
+                        off += step
+                        written += step
+                        with self._lock:
+                            self._segment_progress[idx] += step
+                        _throttle_consume(step)
             return True
         finally:
             resp.close()
@@ -554,6 +611,7 @@ class DownloadTask:
                 if self.status == "downloading":
                     self.status = "failed"
                     self.error = str(e)
+                    self.error_reason = "download_failed"
             logger.error("任务失败: %s | 分段%d 错误: %s", self.filename, idx, e)
 
     def pause(self):
@@ -629,6 +687,9 @@ class DownloadTask:
             "speed": self.speed,
             "eta": self.eta,
             "error": self.error,
+            "save_dir": self.save_dir,
+            "error_reason": getattr(self, "error_reason", ""),
+            "kind": "http",
             "segments": self.segments,
         }
 
@@ -652,17 +713,27 @@ class DownloadManager:
         self._load_history()
         self._start_saver()
 
-    def create_task(self, url, save_dir, filename=None, segments=8):
+    def create_task(self, url, save_dir, filename=None, segments=8, kind="auto",
+                    referer=None, cookies_netscape=None, resolution=None):
         with self._lock:
             self._counter += 1
             task_id = f"dl_{self._counter}"
-            # BT / PT 下载（magnet: 或 .torrent 文件）走独立的 TorrentTask，
-            # 其余 HTTP(S) 链接走原有的多线程分段下载。两者接口完全兼容。
+            # 三种任务类型接口完全兼容：BT/PT → TorrentTask，
+            # HLS/DASH/网页视频 → MediaTask，其余可 Range 的普通文件 → 多线程 DownloadTask。
             if self._is_torrent_url(url):
                 from torrent import TorrentTask
                 task = TorrentTask(task_id, url, save_dir, filename, segments or 0)
             else:
-                task = DownloadTask(task_id, url, save_dir, filename, segments)
+                from media import MediaTask, MEDIA_KINDS, classify_kind, MediaError
+                try:
+                    resolved = classify_kind(url, kind)
+                except MediaError as e:
+                    raise ValueError(str(e)) from e
+                if resolved in MEDIA_KINDS:
+                    task = MediaTask(task_id, url, save_dir, filename, segments, resolved,
+                                     referer, cookies_netscape, resolution)
+                else:
+                    task = DownloadTask(task_id, url, save_dir, filename, segments)
             self._tasks[task_id] = task
             return task
 
@@ -707,9 +778,16 @@ class DownloadManager:
         save_dir = d.get("save_dir") or (os.path.dirname(filepath) if filepath else "")
         filename = d.get("filename") or None
         segments = d.get("segments", 8)
+        kind = d.get("kind") or ""
+        referer = d.get("referer") or ""
+        resolution = d.get("resolution") or None
         if self._is_torrent_url(url):
             from torrent import TorrentTask
             task = TorrentTask(d.get("task_id", ""), url, save_dir, filename, segments)
+        elif kind in ("hls", "dash", "video_page"):
+            from media import MediaTask
+            task = MediaTask(d.get("task_id", ""), url, save_dir, filename, segments,
+                             kind, referer, None, resolution)
         else:
             task = DownloadTask(d.get("task_id", ""), url, save_dir, filename, segments)
         task.status = d.get("status", "pending")

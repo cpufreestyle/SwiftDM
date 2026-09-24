@@ -204,6 +204,10 @@ def main():
     monitor.on_url_captured = on_url_captured
     monitor.start()
 
+    # 2.5 下载调度线程：定时开始 + 完成后的动作（不启动则定时永不生效）
+    from scheduler import scheduler as dl_scheduler
+    dl_scheduler.start()
+
     # 3. 启动 Flask Web 服务器（后台线程，独立于 UI，UI 崩溃也不影响服务）
     from app import app as flask_app
 

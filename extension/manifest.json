@@ -7,7 +7,9 @@
     "downloads",
     "webRequest",
     "storage",
-    "notifications"
+    "notifications",
+    "tabs",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -23,5 +25,18 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "sniff.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
 }

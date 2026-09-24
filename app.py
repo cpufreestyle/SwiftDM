@@ -7,6 +7,10 @@ import time
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
 from downloader import manager, DownloadManager, get_proxy_mode, set_proxy_mode
+from media_service import media_registry
+from throttle import get_rate, set_rate
+from scheduler import scheduler
+from media import ffmpeg_status, ytdlp_available
 
 # 让本地回环地址绕过系统代理，避免浏览器经代理访问 127.0.0.1 出现 502
 for _k in ("no_proxy", "NO_PROXY"):
@@ -30,6 +34,13 @@ CORS(app)
 DEFAULT_DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads")
 os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
 
+
+def _with_schedule(task):
+    """把定时信息并到任务字典里，UI 才能显示「定时 …」而不是干等的等待中。"""
+    d = task.to_dict()
+    d["scheduled_at"] = scheduler.pending_at(task.task_id)
+    return d
+
 # 剪贴板 URL 暂存
 _clipboard_url = ""
 
@@ -44,35 +55,63 @@ def index():
 @app.route("/api/tasks", methods=["GET"])
 def get_tasks():
     """获取所有任务"""
-    tasks = [t.to_dict() for t in manager.get_all_tasks()]
+    tasks = [_with_schedule(t) for t in manager.get_all_tasks()]
     stats = manager.get_stats()
     return jsonify({"tasks": tasks, "stats": stats})
 
 
 @app.route("/api/add", methods=["POST"])
 def add_task():
-    """添加下载任务"""
-    data = request.get_json()
-    url = data.get("url", "").strip()
-    filename = data.get("filename", "").strip() or None
-    segments = int(data.get("segments", 8))
-    save_dir = data.get("save_dir", DEFAULT_DOWNLOAD_DIR)
+    """添加下载任务（普通直链 / 磁力 / 种子 / HLS / DASH / 网页视频解析）"""
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    filename = (data.get("filename") or "").strip() or None
+    segments = int(data.get("segments") or 8)
+    save_dir = data.get("save_dir") or DEFAULT_DOWNLOAD_DIR
+    kind = (data.get("kind") or "auto").strip().lower()
+    referer = (data.get("referer") or "").strip() or None
+    cookies_netscape = data.get("cookies_netscape") or ""
+    resolution = data.get("resolution") or None
+    start_at = data.get("start_at") or None
 
     if not url:
-        return jsonify({"success": False, "error": "URL 不能为空"}), 400
-
-    # 支持 HTTP/HTTPS 直链、磁力链接（magnet:）与 .torrent 种子文件
+        return jsonify({"success": False, "reason": "invalid_url",
+                        "error": "URL 不能为空"}), 400
     is_http = url.startswith(("http://", "https://"))
-    is_magnet = url.strip().lower().startswith("magnet:")
-    is_torrent = is_http and url.strip().lower().endswith(".torrent")
+    is_magnet = url.lower().startswith("magnet:")
+    is_torrent = is_http and url.lower().endswith(".torrent")
     if not (is_http or is_magnet or is_torrent):
-        return jsonify({"success": False, "error": "请输入有效的下载链接（HTTP/HTTPS、磁力链接或 .torrent 种子）"}), 400
+        return jsonify({"success": False, "reason": "invalid_url",
+                        "error": "请输入有效的下载链接（HTTP/HTTPS、磁力链接或 .torrent 种子）"}), 400
+    from media import VALID_KINDS, MediaError
+    if kind not in VALID_KINDS:
+        return jsonify({"success": False, "reason": "invalid_kind",
+                        "error": f"不支持的下载类型: {kind}"}), 400
+    if cookies_netscape and len(cookies_netscape) > 512 * 1024:
+        return jsonify({"success": False, "reason": "invalid_url",
+                        "error": "Cookie 数据过大，请清理浏览器 Cookie 后重试"}), 400
 
     os.makedirs(save_dir, exist_ok=True)
-    task = manager.create_task(url, save_dir, filename, segments)
-    task.start()
+    try:
+        task = manager.create_task(url, save_dir, filename, segments, kind,
+                                   referer, cookies_netscape, resolution)
+    except ValueError as e:
+        return jsonify({"success": False, "reason": "invalid_kind", "error": str(e)}), 400
 
-    return jsonify({"success": True, "task": task.to_dict()})
+    try:
+        preflight = getattr(task, "preflight", None)
+        if preflight:
+            preflight()
+    except MediaError as e:
+        manager.remove_task(task.task_id)          # 被拒绝的任务不留残骸
+        return jsonify({"success": False, "reason": e.reason, "error": str(e)}), 409
+
+    if start_at:
+        scheduler.schedule(task.task_id, float(start_at))
+    else:
+        task.start()
+
+    return jsonify({"success": True, "task": _with_schedule(task)})
 
 
 @app.route("/api/pause/<task_id>", methods=["POST"])
@@ -95,6 +134,7 @@ def resume_task(task_id):
 
 @app.route("/api/cancel/<task_id>", methods=["POST"])
 def cancel_task(task_id):
+    scheduler.unschedule(task_id)
     task = manager.get_task(task_id)
     if task:
         task.cancel()
@@ -115,6 +155,7 @@ def retry_task(task_id):
 
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
+    scheduler.unschedule(task_id)
     manager.remove_task(task_id)
     return jsonify({"success": True})
 
@@ -141,21 +182,42 @@ def resume_all():
     return jsonify({"success": True})
 
 
-@app.route("/api/settings", methods=["GET", "POST"])
+@app.route("/api/settings", methods=["GET", "POST", "OPTIONS"])
 def settings():
+    if request.method == "OPTIONS":
+        return _cors(app.make_default_options_response(), "GET, POST, OPTIONS")
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         # 代理模式: env(系统代理) / direct(直连) / 自定义地址
         if "proxy_mode" in data:
             set_proxy_mode(data["proxy_mode"])
-        # 可扩展: 保存设置
-        return jsonify({"success": True, "proxy_mode": get_proxy_mode()})
+        if "rate_limit" in data:
+            set_rate(data["rate_limit"])
+        if "finish_action" in data:
+            scheduler.set_finish_action(data["finish_action"])
+        return jsonify({"success": True, "proxy_mode": get_proxy_mode(),
+                        "rate_limit": get_rate(),
+                        "finish_action": scheduler.get_finish_action()})
+    st = scheduler.status()
     return jsonify({
         "download_dir": DEFAULT_DOWNLOAD_DIR,
         "default_segments": 8,
         "proxy_mode": get_proxy_mode(),
         "proxy_modes": ["env", "direct"],
+        "rate_limit": get_rate(),
+        "finish_action": st["finish_action"],
+        "finish_countdown": st["remaining"],
+        "scheduled": st["scheduled"],
+        "capabilities": {"ffmpeg": ffmpeg_status(), "ytdlp": ytdlp_available()},
     })
+
+
+@app.route("/api/finish_action/cancel", methods=["POST"])
+def cancel_finish_action():
+    """取消「全部下载完成后 …」的倒计时。"""
+    res = scheduler.cancel_finish_action()
+    payload = {"success": True, "action": res["action"], "cancelled": res["cancelled"]}
+    return jsonify(payload)
 
 
 # 本地测试文件内容（构建一次后缓存，多分段并发请求时避免重复生成 5MB 数据）
@@ -254,18 +316,24 @@ def self_test():
 
 # ==================== SSE 实时推送 ====================
 
+def _stream_payload():
+    """一帧 SSE 的内容：任务 + 统计 + 完成后动作状态。抽出来是为了能单测。"""
+    st = scheduler.status()
+    return {
+        "tasks": [_with_schedule(t) for t in manager.get_all_tasks()],
+        "stats": manager.get_stats(),
+        "finish": {"action": st["finish_action"], "remaining": st["remaining"]},
+    }
+
+
 @app.route("/api/stream")
 def stream():
     """Server-Sent Events 实时推送任务状态"""
     def generate():
         last_stats = None
         while True:
-            tasks = [t.to_dict() for t in manager.get_all_tasks()]
-            stats = manager.get_stats()
-            payload = {"tasks": tasks, "stats": stats}
-
             # 仅在有变化时推送
-            payload_str = json.dumps(payload)
+            payload_str = json.dumps(_stream_payload())
             if payload_str != last_stats:
                 last_stats = payload_str
                 yield f"data: {payload_str}\n\n"
@@ -285,6 +353,56 @@ def set_clipboard():
 
 # 浏览器接管总开关（由桌面 GUI “浏览器监控” 设置同步；关闭时不接管浏览器下载）
 BROWSER_CAPTURE_ENABLED = True
+
+
+def _cors(resp, methods="POST, OPTIONS"):
+    """扩展从 chrome-extension:// 源访问本地端口，必须逐条放行。"""
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = methods
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+
+def _media_options():
+    return _cors(app.make_default_options_response())
+
+
+@app.route("/api/media/discover", methods=["POST", "OPTIONS"])
+def media_discover():
+    """接收扩展嗅探到的媒体清单（只登记，不下载）。"""
+    if request.method == "OPTIONS":
+        return _media_options()
+    if not BROWSER_CAPTURE_ENABLED:
+        return _cors(jsonify({"ok": False, "reason": "disabled"}))
+
+    data = request.get_json(force=True, silent=True) or {}
+    tab_id = str(data.get("tab_id", "")).strip()
+    items = data.get("items", [])
+    if not tab_id or not isinstance(items, list):
+        return _cors(jsonify({"ok": False,
+                              "error": "缺少 tab_id 或 items 不是数组"})), 400
+    added = media_registry.record(tab_id, data.get("page_url", ""),
+                                  data.get("title", ""), items)
+    return _cors(jsonify({"ok": True, "added": added, "count": media_registry.count()}))
+
+
+@app.route("/api/media/list", methods=["GET", "OPTIONS"])
+def media_list():
+    """popup 拉取当前标签页嗅到的媒体列表。"""
+    if request.method == "OPTIONS":
+        return _media_options()
+    tab_id = (request.args.get("tabId") or "").strip()
+    if not tab_id:
+        return _cors(jsonify({"ok": False, "error": "缺少 tabId"}), "GET, OPTIONS"), 400
+    items = media_registry.list_for_tab(tab_id)
+    return _cors(jsonify({
+        "ok": True,
+        "tab_id": tab_id,
+        "page_url": items[0]["page_url"] if items else "",
+        "title": items[0]["title"] if items else "",
+        "items": items,
+    }), "GET, OPTIONS")
+
 
 
 @app.route("/api/browser-capture", methods=["POST", "OPTIONS"])
@@ -331,4 +449,5 @@ if __name__ == "__main__":
     print(f"  下载目录: {DEFAULT_DOWNLOAD_DIR}")
     print(f"  打开浏览器访问: http://127.0.0.1:{SWIFTDM_PORT}")
     print("=" * 50 + "\n")
+    scheduler.start()
     app.run(host=SWIFTDM_HOST, port=SWIFTDM_PORT, debug=False, threaded=True)

@@ -401,6 +401,37 @@ body {
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.success { background: var(--green); }
 .toast.error { background: var(--red); }
+﻿.toast.info { border-left-color: var(--accent); }
+.settings-btn { margin-left: auto; }
+.modal {
+  display: none; position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px);
+}
+.modal.open { display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; }
+.modal-card {
+  width: 100%; max-width: 560px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px; box-shadow: 0 18px 48px rgba(0,0,0,.45);
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.modal-head h2 { font-size: 15px; margin: 0; }
+.modal-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.modal-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+.modal-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.modal-controls input, .modal-controls select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit;
+}
+.modal-note { font-size: 11px; color: var(--text2); margin-top: 6px; line-height: 1.5; }
+.inline { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.unit { font-size: 12px; color: var(--text2); }
+.chip {
+  padding: 2px 8px; border-radius: 10px; font-size: 11px;
+  background: #2b2b3d; color: #a9a9d0;
+}
+.chip.ok { background: #123a2e; color: #3ddc97; }
+.chip.bad { background: #3a1720; color: #ff7a90; }
+.finish-status { font-size: 12px; color: #ffb45c; }
+.sched-list { font-size: 12px; color: var(--text2); }
 
 /* ===== 动画 ===== */
 @keyframes pulse {
@@ -417,6 +448,28 @@ body {
   .task-status { align-self: flex-end; margin-top: -28px; }
   .add-bar { flex-wrap: wrap; }
   .add-bar input { min-width: 100%; }
+  /* 添加面板：默认收起，避免把主输入框挤得不像样 */
+  .add-adv {
+    display: none; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+    margin-top: 8px; padding: 10px 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .add-adv.open { display: flex; }
+  .add-adv label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text2); }
+  .add-adv select, .add-adv input[type="datetime-local"] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit;
+  }
+  .adv-tip { font-size: 11px; color: var(--text2); flex-basis: 100%; }
+  .kind-badge, .sched-badge {
+    display: inline-block; padding: 1px 6px; margin-right: 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; vertical-align: 2px;
+  }
+  .kind-badge { background: #2b2b3d; color: #a9a9d0; }
+  .kind-badge.hls { background: #123a2e; color: #3ddc97; }
+  .kind-badge.dash { background: #102f45; color: #4cc2ff; }
+  .kind-badge.video_page { background: #3a2410; color: #ffb45c; }
+  .sched-badge { background: #2d2440; color: #b79cff; }
   .batch-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
 }
 </style>
@@ -427,10 +480,12 @@ body {
   <!-- 头部 -->
   <div class="header">
     <div class="logo">&#11015;</div>
-    <div>
+    <div class="header-text">
       <h1>SwiftDM</h1>
       <div class="sub">高速多线程下载管理器</div>
     </div>
+    <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn"
+            onclick="openSettings()" title="限速 / 完成后动作 / 依赖检测">&#9881;</button>
   </div>
 
   <!-- 状态栏 -->
@@ -442,10 +497,36 @@ body {
   </div>
 
   <!-- 添加下载 -->
-  <div class="add-bar">
-    <input type="text" id="urlInput" placeholder="粘贴下载链接 (支持 HTTP/HTTPS) ..." autocomplete="off">
-    <button class="btn btn-secondary btn-icon" onclick="addFromClipboard()" title="粘贴剪贴板">&#128203;</button>
-    <button class="btn btn-primary" onclick="addTask()">&#11015; 开始下载</button>
+  <div class="add-wrap">
+    <div class="add-bar">
+      <input type="text" id="urlInput" placeholder="粘贴下载链接 (HTTP/HTTPS / 磁力 / m3u8 / 视频网页) ..." autocomplete="off">
+      <button class="btn btn-secondary btn-icon" onclick="addFromClipboard()" title="粘贴剪贴板">&#128203;</button>
+      <button class="btn btn-secondary btn-icon" id="advToggle" onclick="toggleAdvanced()" title="类型 / 清晰度 / 定时">&#8987;</button>
+      <button class="btn btn-primary" onclick="addTask()">&#11015; 开始下载</button>
+    </div>
+    <div class="add-adv" id="addAdv">
+      <label>类型
+        <select id="kindSelect">
+          <option value="auto">自动识别</option>
+          <option value="http">普通文件直链</option>
+          <option value="hls">HLS 流 (m3u8)</option>
+          <option value="dash">DASH 流 (mpd)</option>
+          <option value="video_page">网页视频解析</option>
+        </select>
+      </label>
+      <label>清晰度
+        <select id="resolutionSelect">
+          <option value="0">最佳可用</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+        </select>
+      </label>
+      <label>定时开始
+        <input type="datetime-local" id="startAtInput">
+      </label>
+      <span class="adv-tip">清晰度仅对「网页视频解析」生效；留空类型即按链接自动判断</span>
+    </div>
   </div>
 
   <!-- 批量操作 -->
@@ -464,6 +545,55 @@ body {
       <div class="big-icon">&#11015;</div>
       <h3>准备下载</h3>
       <p>在上方粘贴文件链接，点击"开始下载"即可开始</p>
+    </div>
+  </div>
+</div>
+
+﻿<!-- 设置面板 -->
+<div class="modal" id="settingsModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>下载设置</h2>
+      <button class="btn btn-secondary btn-sm" onclick="closeSettings()">&#10006; 关闭</button>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">全局限速</div>
+      <div class="modal-controls">
+        <input type="number" min="0" step="1" id="rateInput" style="width:110px"> <span class="unit">KB/s</span>
+        <label class="inline"><input type="checkbox" id="rateUnlimited" checked> 不限制</label>
+        <button class="btn btn-primary btn-sm" id="applyRate" onclick="applyRate()">应用</button>
+      </div>
+      <div class="modal-note">对多线程分段与流媒体下载同时生效，单位 KB/s。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">全部下载完成后</div>
+      <div class="modal-controls">
+        <select id="finishAction" onchange="onFinishActionChange(this.value)">
+          <option value="none">无动作</option>
+          <option value="shutdown">关机</option>
+          <option value="suspend">睡眠</option>
+          <option value="beep">提示音</option>
+        </select>
+        <span class="finish-status" id="finishStatus"></span>
+        <button class="btn btn-danger btn-sm" id="cancelFinish" onclick="cancelFinishAction()" style="display:none">取消倒计时</button>
+      </div>
+      <div class="modal-note">仅在任务列表里再没有下载中 / 等待中 / 已暂停的任务后开始 60 秒倒计时；关闭程序不会自动取消，请用上面的按钮。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">依赖检测</div>
+      <div class="modal-controls">
+        <span class="chip" id="capFfmpeg">ffmpeg: …</span>
+        <span class="chip" id="capYtdlp">yt-dlp: …</span>
+      </div>
+      <div class="modal-note">ffmpeg 只用系统安装的那个，SwiftDM 不会自动下载二进制文件。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">定时任务</div>
+      <div class="modal-controls"><span id="scheduledList" class="sched-list">无</span></div>
     </div>
   </div>
 </div>
@@ -505,19 +635,61 @@ async function api(path, options = {}) {
 }
 
 // ===== 添加任务 =====
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+// 后端 /api/add 的 reason -> 人话（流媒体失败原因大多来自嗅探/解析，用户需要知道下一步做什么）
+const REASON_HINTS = {
+  drm_protected: "该资源受 DRM 保护，SwiftDM 不支持下载",
+  needs_ffmpeg: "需要系统安装 ffmpeg 才能混流：安装后重试，或在设置面板查看探测结果",
+  cookies_required: "站点要求登录：请在浏览器里登录后，通过扩展弹窗重新发送任务",
+  needs_ytdlp: "解析器未就绪：pip install yt-dlp 后重启 SwiftDM",
+  parse_failed: "页面解析失败，可尝试换「类型」为 HLS/DASH 直链，或改用扩展嗅探",
+  download_failed: "直链下载失败，可点击重试继续断点"
+};
+
+function addOptions() {
+  const startAt = document.getElementById("startAtInput").value;
+  let start_at = null;
+  if (startAt) {
+    const ms = new Date(startAt).getTime();
+    if (!isNaN(ms) && ms > Date.now()) start_at = Math.floor(ms / 1000);
+  }
+  const resolution = parseInt(document.getElementById("resolutionSelect").value, 10) || 0;
+  return {
+    kind: document.getElementById("kindSelect").value,
+    resolution: resolution,
+    start_at: start_at
+  };
+}
+
+function toggleAdvanced() {
+  const box = document.getElementById("addAdv");
+  box.classList.toggle("open");
+  document.getElementById("advToggle").classList.toggle("active");
+}
+
 async function addTask() {
   const input = document.getElementById("urlInput");
   const url = input.value.trim();
   if (!url) { showToast("请输入下载链接", "error"); return; }
 
+  const opts = addOptions();
   const res = await api("/api/add", {
     method: "POST",
-    body: JSON.stringify({ url, segments: 8 }),
+    body: JSON.stringify({
+      url, segments: 8,
+      kind: opts.kind, resolution: opts.resolution, start_at: opts.start_at
+    }),
   });
 
   if (res.success) {
     input.value = "";
-    showToast("已添加下载任务");
+    document.getElementById("startAtInput").value = "";
+    showToast(opts.start_at ? "已加入定时下载" : "已添加下载任务");
   } else {
     showToast(res.error || "添加失败", "error");
   }
@@ -635,11 +807,19 @@ function createTaskCard(task) {
     case "paused": statusLabel = "&#10074;&#10074; 已暂停"; statusClass = "paused"; break;
     case "completed": statusLabel = "&#10004; 完成"; statusClass = "completed"; break;
     case "failed": statusLabel = "&#10006; 失败"; statusClass = "failed"; break;
-    case "pending": statusLabel = "&#8987; 等待中"; statusClass = "pending"; break;
+    case "pending": statusLabel = task.scheduled_at ? "&#128337; 定时等待" : "&#8987; 等待中"; statusClass = "pending"; break;
     case "cancelled": statusLabel = "&#10006; 已取消"; statusClass = "cancelled"; break;
   }
 
   let metaHtml = "";
+  const kindLabels = { http: "直链", hls: "HLS", dash: "DASH", video_page: "网页解析", torrent: "BT/PT" };
+  if (task.kind && kindLabels[task.kind]) {
+    metaHtml += `<span class="kind-badge ${escapeHtml(task.kind)}">${kindLabels[task.kind]}</span>`;
+  }
+  if (task.scheduled_at) {
+    const when = new Date(task.scheduled_at * 1000);
+    metaHtml += `<span class="sched-badge">&#128337; ${escapeHtml(when.toLocaleString())} 开始</span>`;
+  }
   if (task.total_size > 0) {
     metaHtml += `<span>&#128451; ${formatSize(task.downloaded)} / ${formatSize(task.total_size)}</span>`;
   } else {
@@ -677,9 +857,12 @@ function createTaskCard(task) {
   card.innerHTML = `
     <div class="task-top">
       <div class="task-info">
-        <div class="task-filename" title="${task.filename}">${task.filename}</div>
+        <div class="task-filename" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
         <div class="task-meta">${metaHtml}</div>
-        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${task.error}</div>` : ""}
+        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${escapeHtml(task.error)}${
+          task.error_reason && REASON_HINTS[task.error_reason]
+            ? `<br><span style="color:var(--text2)">${REASON_HINTS[task.error_reason]}</span>` : ""
+        }</div>` : ""}
       </div>
       <div class="task-status">
         <span class="status-badge ${statusClass}">${statusLabel}</span>
@@ -707,6 +890,120 @@ function renderStats(stats) {
 }
 
 // ===== SSE 实时更新 =====
+﻿// ===== 设置面板 =====
+let settingsTimer = null;
+
+function KB2B(v) { return Math.max(0, Math.round((parseFloat(v) || 0) * 1024)); }
+function B2KB(v) { return v > 0 ? Math.round(v / 1024) : 0; }
+
+function openSettings() {
+  document.getElementById("settingsModal").classList.add("open");
+  refreshSettings();
+  clearInterval(settingsTimer);
+  settingsTimer = setInterval(refreshSettings, 2000);   // 倒计时要继续走，不必等 SSE
+}
+
+function closeSettings() {
+  document.getElementById("settingsModal").classList.remove("open");
+  clearInterval(settingsTimer);
+  settingsTimer = null;
+}
+
+async function refreshSettings() {
+  const res = await api("/api/settings");
+  if (!res || res.error) return;
+  const unlimited = !res.rate_limit;
+  document.getElementById("rateUnlimited").checked = unlimited;
+  document.getElementById("rateInput").disabled = unlimited;
+  if (document.activeElement !== document.getElementById("rateInput")) {
+    document.getElementById("rateInput").value = B2KB(res.rate_limit);
+  }
+  document.getElementById("finishAction").value = res.finish_action || "none";
+  renderFinishStatus(res);
+  renderCapabilities(res.capabilities || {});
+  renderScheduled(res.scheduled || []);
+}
+
+async function applyRate() {
+  const unlimited = document.getElementById("rateUnlimited").checked;
+  const body = unlimited ? { rate_limit: 0 }
+                         : { rate_limit: KB2B(document.getElementById("rateInput").value) };
+  const res = await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
+  if (res && res.success) showToast(unlimited ? "已取消限速" : `限速 ${B2KB(res.rate_limit)} KB/s`);
+  else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
+async function onFinishActionChange(value) {
+  if (/^(shutdown|suspend)$/.test(value)) {
+    const tip = value === "shutdown" ? "确定在全部下载完成后关机吗？" : "确定在全部下载完成后让电脑睡眠吗？";
+    if (!confirm(tip)) { refreshSettings(); return; }      // 用户反悔 -> 回读后端真实值
+  }
+  const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ finish_action: value }) });
+  if (res && res.success) showToast("已更新完成后动作");
+  refreshSettings();
+}
+
+async function cancelFinishAction() {
+  const res = await api("/api/finish_action/cancel", { method: "POST" });
+  if (res && res.success) showToast(res.cancelled ? "已取消倒计时" : "当前没有进行中的倒计时", "info");
+  refreshSettings();
+}
+
+function renderFinishStatus(res) {
+  const left = res.finish_countdown || 0;
+  const btn = document.getElementById("cancelFinish");
+  const box = document.getElementById("finishStatus");
+  if (left > 0) {
+    box.textContent = `${left} 秒后${res.finish_action === "suspend" ? "睡眠" : "关机"}`;
+    btn.style.display = "";
+  } else if (res.finish_action && res.finish_action !== "none") {
+    const name = { shutdown: "关机", suspend: "睡眠", beep: "提示音" }[res.finish_action];
+    box.textContent = `等待下载全部完成后${name}`;
+    btn.style.display = "";
+  } else {
+    box.textContent = "";
+    btn.style.display = "none";
+  }
+}
+
+function renderCapabilities(caps) {
+  const ff = document.getElementById("capFfmpeg");
+  const ffmpeg = caps.ffmpeg || {};
+  ff.textContent = ffmpeg.available ? "ffmpeg: 已就绪" : "ffmpeg: 未检测到";
+  ff.className = "chip " + (ffmpeg.available ? "ok" : "bad");
+  ff.title = ffmpeg.path || "未找到 ffmpeg：混流/转封装功能不可用";
+  const yd = document.getElementById("capYtdlp");
+  yd.textContent = caps.ytdlp ? "yt-dlp: 已就绪" : "yt-dlp: 未检测到";
+  yd.className = "chip " + (caps.ytdlp ? "ok" : "bad");
+  yd.title = caps.ytdlp ? "" : "网页视频解析不可用：pip install yt-dlp 后重启 SwiftDM";
+}
+
+function renderScheduled(list) {
+  const box = document.getElementById("scheduledList");
+  if (!list.length) { box.textContent = "无"; return; }
+  box.innerHTML = list.map(s => {
+    const when = new Date(s.start_at * 1000).toLocaleString();
+    return `<div>${escapeHtml(when)} · ${escapeHtml(s.task_id)}</div>`;
+  }).join("");
+}
+
+// Web-only 没有系统托盘，倒计时靠 SSE 通知；只在「刚开始倒数」那一刻提示一次。
+let lastFinishRemaining = 0;
+
+function renderFinishFromStream(finish) {
+  const f = finish || {};
+  const remaining = f.remaining || 0;
+  if (remaining > 0 && lastFinishRemaining === 0) {
+    showToast(`${remaining} 秒后${f.action === "suspend" ? "进入睡眠" : "关机"}，打开设置面板可取消`, "info");
+  }
+  lastFinishRemaining = remaining;
+  const modal = document.getElementById("settingsModal");
+  if (modal && modal.classList.contains("open")) {
+    renderFinishStatus({ finish_action: f.action, finish_countdown: remaining });
+  }
+}
+
 function connectSSE() {
   const evtSource = new EventSource("/api/stream");
 
@@ -715,6 +1012,7 @@ function connectSSE() {
       const data = JSON.parse(event.data);
       renderTasks(data.tasks);
       renderStats(data.stats);
+      renderFinishFromStream(data.finish);
     } catch(e) {
       console.error("Parse error:", e);
     }

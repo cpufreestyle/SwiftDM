@@ -4,3 +4,4 @@ requests>=2.31.0
 PyQt6>=6.5.0
 pyperclip>=1.8.0
 libtorrent>=2.0.0  # BT / PT 下载（磁力链接与 .torrent 种子）
+yt-dlp>=2025.1.15  # 流媒体（HLS/DASH/网页视频）解析下载

@@ -184,6 +184,15 @@ def main():
         # BT / PT 下载支持
         "--hidden-import", "libtorrent",
         "--hidden-import", "torrent",
+        # 流媒体下载（yt-dlp 的 extractor 是运行时动态导入的，必须让 PyInstaller 收集）
+        "--hidden-import", "yt_dlp",
+        "--collect-all", "yt_dlp",
+        # 调度器/媒体任务在函数内按平台导入，PyInstaller 静态分析看不到
+        # winsound：完成后动作「提示音」仅 Windows 分支用
+        "--hidden-import", "winsound",
+        # yt_dlp.utils： mutagen 探测等按需导入，缺了运行时读媒体信息会退化
+        "--hidden-import", "yt_dlp.utils",
+        "--hidden-import", "mutagen",
     ]
 
     if onefile:
