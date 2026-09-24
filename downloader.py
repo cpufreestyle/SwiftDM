@@ -237,6 +237,11 @@ class DownloadTask:
 
         # 内部控制
         self._lock = threading.Lock()
+        # 生命周期转换锁：pause/resume/cancel/start/完成等状态迁移互斥。
+        # 与 _lock 的分工：_lock 只保护字段读写（临界区短、绝不 join），
+        # _xlock 只保护状态机迁移；嵌套顺序固定为 _xlock -> _lock，不会反转。
+        self._xlock = threading.RLock()
+        self._start_token = 0  # 启动令牌：retry 申请，并发 cancel/pause 使其失效
         self._threads = []
         self._segment_progress = []   # 每段的已下载字节
         self._segment_offsets = []    # 每段的 [(start, end), ...]
@@ -544,53 +549,93 @@ class DownloadTask:
             # 检查是否所有分段线程都已置位完成标志（旧实现只看分段文件是否存在，
             # 未知大小任务一旦文件被创建就会被误判为完成）
             if (len(self._seg_done) == self.segments and all(self._seg_done)):
-                with self._lock:
+                # 锁外快速让位：完成已由别的线程处理，或任务已离开 downloading
+                # （被 pause/cancel）时直接退出。这里刻意不取锁，保证 pause/cancel
+                # 持锁迁移状态时不会被旧监控线程挡住，resume() join 旧监控线程
+                # 时也不会死锁。
+                if self._completion_handled or self.status != "downloading":
+                    return
+                # 持 _xlock 复核后再组装：与 cancel 的 rmtree、pause 的状态迁移互斥
+                with self._xlock:
                     if self._completion_handled or self.status != "downloading":
                         return
                     self._completion_handled = True
-                try:
-                    self._assemble_file()
-                    final_size = os.path.getsize(self.filepath) if os.path.exists(self.filepath) else 0
-                    if self.total_size > 0 and final_size != self.total_size:
-                        raise Exception(
-                            f"文件大小校验失败（预期 {self.total_size} 字节，实际 {final_size} 字节）")
-                    if self.total_size <= 0:
-                        # 未知大小：完成后用实际大小回填，供 UI 显示
-                        self.total_size = final_size
-                        self.downloaded = final_size
-                    else:
-                        self.downloaded = self.total_size
-                    self.progress = 100.0
-                    self.status = "completed"
-                    self.speed = 0.0
-                    self.eta = ""
-                    self._invalidate_cache()
-                except Exception as e:
-                    # 合并期间用户可能 cancel（分片已被 rmtree）：不覆写 cancelled 状态
-                    if self.status == "downloading":
-                        self.status = "failed"
-                        self.error = f"合并文件失败: {e}"
+                    try:
+                        self._assemble_file()
+                        final_size = os.path.getsize(self.filepath) if os.path.exists(self.filepath) else 0
+                        if self.total_size > 0 and final_size != self.total_size:
+                            raise Exception(
+                                f"文件大小校验失败（预期 {self.total_size} 字节，实际 {final_size} 字节）")
+                        if self.total_size <= 0:
+                            # 未知大小：完成后用实际大小回填，供 UI 显示
+                            self.total_size = final_size
+                            self.downloaded = final_size
+                        else:
+                            self.downloaded = self.total_size
+                        self.progress = 100.0
+                        self.status = "completed"
+                        self.speed = 0.0
+                        self.eta = ""
                         self._invalidate_cache()
-                    logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
-                else:
-                    logger.info("下载完成: %s (%.2f MB)", self.filename, final_size / 1024 / 1024)
+                    except Exception as e:
+                        # 合并期间用户可能 cancel（分片已被 rmtree）：不覆写 cancelled 状态
+                        if self.status == "downloading":
+                            self.status = "failed"
+                            self.error = f"合并文件失败: {e}"
+                            self._invalidate_cache()
+                        logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
+                    else:
+                        logger.info("下载完成: %s (%.2f MB)", self.filename, final_size / 1024 / 1024)
                 return
 
-    def start(self):
-        """启动下载"""
+    def _drain_threads(self, timeout=5.0):
+        """有界地等待旧的下载/监控线程退出。
+
+        pause() 只切状态并对 _gen + 1，线程不会立即消失；resume()/start() 重新
+        拉起线程前必须先等它们退出，否则新旧两组线程会并发写同一个分段文件导致
+        文件损坏，或同时存在两个监控线程。
+
+        必须在 _xlock 之外调用：监控线程在完成路径上要取 _xlock，持锁 join
+        会与还没退出的旧监控线程形成死锁。
+        """
+        deadline = time.time() + timeout
+        for t in list(self._threads):
+            remain = deadline - time.time()
+            if remain > 0:
+                t.join(timeout=remain)
+
+    def start(self, token=None):
+        """启动下载
+
+        token: retry() 申请的启动令牌。retry() 需要在联网探测之前先重置字段，
+        而 _fetch_info() 最长可能阻塞约 45s、不能持锁，因此用令牌保证并发的
+        pause/cancel 抢先时本方法不会把已被取消的任务重新拉起来。
+        """
         if self.status in ("downloading", "completed"):
-            return
-
+            return False
+        if token is not None and token != self._start_token:
+            return False
         logger.info("开始下载任务: %s  (%s)", self.filename, self.url)
-        self.status = "downloading"
-        self._invalidate_cache()
-
-        # 获取文件信息
-        if not self._fetch_info():
-            self.status = "failed"
+        # start() 也可能被用于从 paused 续跑：先等旧线程退出，避免新旧两组线程
+        # 同时写同一分段文件、或出现双监控线程
+        self._drain_threads()
+        with self._xlock:
+            if self.status in ("downloading", "completed"):
+                return False
+            if token is not None and token != self._start_token:
+                return False
+            self.status = "downloading"
             self._invalidate_cache()
+
+        # 获取文件信息（联网，最长约 45s）。刻意不持 _xlock，
+        # 否则并发的 pause/cancel 会被长时间阻塞
+        if not self._fetch_info():
+            with self._xlock:
+                if self.status == "downloading":
+                    self.status = "failed"
+                    self._invalidate_cache()
             logger.error("任务初始化失败，已停止: %s | 原因: %s", self.filename, self.error)
-            return
+            return False
 
         # 计算分段
         self._calc_segments()
@@ -602,30 +647,39 @@ class DownloadTask:
         if self.total_size > 0 and os.path.exists(self.filepath):
             existing_size = os.path.getsize(self.filepath)
             if existing_size >= self.total_size:
-                self.progress = 100
-                self.status = "completed"
-                self.downloaded = self.total_size
-                self._invalidate_cache()
-                return
+                with self._xlock:
+                    # 探测期间可能已被取消，别覆盖 terminal 状态
+                    if self.status != "downloading":
+                        return False
+                    self.progress = 100
+                    self.status = "completed"
+                    self.downloaded = self.total_size
+                    self._invalidate_cache()
+                return True
 
-        with self._lock:
-            self._seg_done = [False] * self.segments
-            self._completion_handled = False
-            self._start_time = time.time()
-            self._last_check_time = time.time()
-            self._last_check_bytes = 0
+        with self._xlock:
+            # 探测期间可能已被 pause/cancel：此时不能再拉起线程，保留当时状态
+            if self.status != "downloading":
+                return False
+            with self._lock:
+                self._seg_done = [False] * self.segments
+                self._completion_handled = False
+                self._start_time = time.time()
+                self._last_check_time = time.time()
+                self._last_check_bytes = 0
 
-        # 启动分段下载线程
-        self._threads = []
-        for idx in range(self.segments):
-            t = threading.Thread(target=self._run_segment, args=(idx,), daemon=True)
-            t.start()
-            self._threads.append(t)
+            # 启动分段下载线程
+            self._threads = []
+            for idx in range(self.segments):
+                t = threading.Thread(target=self._run_segment, args=(idx,), daemon=True)
+                t.start()
+                self._threads.append(t)
 
-        # 启动进度监控线程
-        monitor = threading.Thread(target=self._monitor_progress, daemon=True)
-        monitor.start()
-        self._threads.append(monitor)
+            # 启动进度监控线程
+            monitor = threading.Thread(target=self._monitor_progress, daemon=True)
+            monitor.start()
+            self._threads.append(monitor)
+        return True
 
     def _run_segment(self, idx):
         """在线程中运行分段下载（含 3 次自动重试，覆盖连接中途断开导致的分段不完整）。"""
@@ -658,12 +712,15 @@ class DownloadTask:
     def pause(self):
         """暂停下载。代数 +1 让所有分段线程尽快退出（旧实现线程挂起等待，
         resume 再拉起新线程后新旧两组同时写同一文件，会导致文件损坏）。"""
-        if self.status != "downloading":
-            return
-        self.status = "paused"
-        self._gen += 1
-        self.speed = 0.0
-        self.eta = ""
+        # 持 _xlock 复核后再迁移：与 monitor 的"组装并置 completed"互斥，
+        # 否则可能把一个刚好完成的任务又改回 paused
+        with self._xlock:
+            if self.status != "downloading":
+                return
+            self.status = "paused"
+            self._gen += 1
+            self.speed = 0.0
+            self.eta = ""
         self._invalidate_cache()
 
     def resume(self):
@@ -675,45 +732,47 @@ class DownloadTask:
         # 旧分段线程可能仍在写同一分片文件，与随后新拉起的线程并发写会导致文件
         # 损坏、分段校验失败。暂停期间 status 仍为 paused，旧分段线程（_gen 已变）
         # 与旧监控线程（status 非 downloading）都会在此窗口内自然退出。
-        _deadline = time.time() + 5.0
-        for _t in self._threads:
-            _remain = _deadline - time.time()
-            if _remain > 0:
-                _t.join(timeout=_remain)
-        # join 期间可能有并发 cancel / 完成改了状态：若已不是 paused 就放弃，别覆盖取消
-        if self.status != "paused":
-            return
-        self.status = "downloading"
+        # 注意：join 必须在 _xlock 之外做——监控线程在完成路径上要取 _xlock，
+        # 持锁 join 会与还没退出的旧监控线程形成死锁。
+        self._drain_threads()
+        # 持 _xlock 复核后再迁移：join 期间可能有并发 cancel / 完成改了状态，
+        # 若已不是 paused 就放弃，别覆盖取消
+        with self._xlock:
+            if self.status != "paused":
+                return
+            self.status = "downloading"
+            with self._lock:
+                self._seg_done = [False] * self.segments
+                self._completion_handled = False
+                self._start_time = time.time()
+                # 以当前累计字节为基线，避免恢复瞬间速度计算出现负值/尖峰
+                self._last_check_time = time.time()
+                self._last_check_bytes = sum(self._segment_progress)
 
-        with self._lock:
-            self._seg_done = [False] * self.segments
-            self._completion_handled = False
-            self._start_time = time.time()
-            # 以当前累计字节为基线，避免恢复瞬间速度计算出现负值/尖峰
-            self._last_check_time = time.time()
-            self._last_check_bytes = sum(self._segment_progress)
+            # 重新启动分段线程（会从各分段已有字节断点续传）
+            self._threads = []
+            for idx in range(self.segments):
+                t = threading.Thread(target=self._run_segment, args=(idx,), daemon=True)
+                t.start()
+                self._threads.append(t)
 
-        # 重新启动分段线程（会从各分段已有字节断点续传）
-        self._threads = []
-        for idx in range(self.segments):
-            t = threading.Thread(target=self._run_segment, args=(idx,), daemon=True)
-            t.start()
-            self._threads.append(t)
-
-        # 进度监控
-        monitor = threading.Thread(target=self._monitor_progress, daemon=True)
-        monitor.start()
-        self._threads.append(monitor)
+            # 进度监控
+            monitor = threading.Thread(target=self._monitor_progress, daemon=True)
+            monitor.start()
+            self._threads.append(monitor)
 
     def cancel(self):
         """取消下载"""
-        self.status = "cancelled"
-        self._gen += 1  # 唤醒/终止所有分段线程
-        self._invalidate_cache()
+        # 持锁迁移状态 + 清理临时文件：与 monitor 的"组装 + rmtree 分片目录"互斥
+        with self._xlock:
+            self.status = "cancelled"
+            self._gen += 1  # 唤醒/终止所有分段线程
+            self._start_token += 1  # 作废 retry 已申请但尚未生效的启动令牌
+            self._invalidate_cache()
 
-        # 清理临时文件
-        if os.path.exists(self._tmp_dir):
-            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            # 清理临时文件
+            if os.path.exists(self._tmp_dir):
+                shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def retry(self):
         """重试失败/已取消的任务。
@@ -721,15 +780,20 @@ class DownloadTask:
         失败任务的分片文件仍在磁盘上（cancel 才会清理），重试会从各分片
         已有字节断点续传，不会从头下载。已取消任务因分片被清理则从头开始。
         """
-        if self.status not in ("failed", "cancelled"):
-            return False
-        self.error = ""
-        self._completion_handled = False
-        self._seg_done = [False] * max(self.segments, 1)
-        self.status = "pending"
-        self._invalidate_cache()
-        self.start()
-        return True
+        with self._xlock:
+            if self.status not in ("failed", "cancelled"):
+                return False
+            self.error = ""
+            self._completion_handled = False
+            self._seg_done = [False] * max(self.segments, 1)
+            self.status = "pending"
+            self._invalidate_cache()
+            # start() 内部要联网探测（最长约 45s），不能在锁内调用，否则并发的
+            # pause/cancel 会被长时间阻塞。改用启动令牌：若探测期间状态被并发操作
+            # 改动，start() 会看到令牌失效而直接返回，不会复活已被取消的任务
+            self._start_token += 1
+            token = self._start_token
+        return self.start(token)
 
     def to_dict(self):
         """序列化任务状态。结果缓存到下次字段变化时失效，

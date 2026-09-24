@@ -13,6 +13,10 @@
   连续「暂停 -> 立即恢复（无间隙）」，校验任务最终 completed 且字节数/sha256 与源一致。
   原始竞态在打包二进制（test_binary）里才稳定复现、与调度时序相关，这里作为同类路径的
   完整性回归覆盖。
+- test_retry_start_survives_concurrent_cancel：retry() 在联网探测期间被并发 cancel，
+  启动令牌必须让这次启动作废——已取消的任务不能被拉回 downloading。
+- test_concurrent_transitions_settle_without_deadlock：5 个线程对同一任务疯狂
+  pause/resume/cancel/start/retry，验证不出现死锁，且最终文件没有被并发写花。
 """
 import hashlib
 import http.server
@@ -226,3 +230,100 @@ def test_resume_bails_if_cancelled_during_join(tmp_path):
 
     assert resumed.wait(3), "resume 未在旧线程退出后返回"
     assert task.status == "cancelled", "resume 覆盖了并发取消（竞态回归）"
+
+
+def test_retry_start_survives_concurrent_cancel(tmp_path, monkeypatch):
+    """retry() 重置字段后要联网探测（不能持锁），期间并发的 cancel 必须作废这次启动。
+
+    retry() 需要先重置 _seg_done / _completion_handled 等字段再重启下载，而
+    start() 内部要联网探测文件信息（最长约 45s），不能抱着状态锁干等。于是存在
+    一个窗口：状态还是 failed/cancelled，start() 紧接着就要把它声明成 downloading。
+    若此时并发 cancel 抢先，没有额外机制的话 cancel 会被 start() 覆盖，
+    已被取消的任务又被拉回 downloading。实现用 _start_token 堵住这个窗口。
+    """
+    task = downloader.DownloadTask("tokenprobe", "http://127.0.0.1/probe",
+                                   str(tmp_path), filename="probe.bin", segments=1)
+    task.status = "failed"
+    task.segments = 1
+    task._seg_done = [False]
+    task._segment_progress = [0]
+
+    probing = threading.Event()
+    release = threading.Event()
+
+    def _slow_fetch():
+        probing.set()                 # 已越过 start() 的状态声明，正在联网探测
+        release.wait(5)
+        return True
+
+    monkeypatch.setattr(task, "_fetch_info", _slow_fetch)
+
+    result = {}
+
+    def _do_retry():
+        result["ok"] = task.retry()
+
+    threading.Thread(target=_do_retry, daemon=True).start()
+
+    assert probing.wait(5), "retry 没有进入 start() 的联网探测段"
+    task.cancel()                     # 探测期间取消
+    release.set()                     # 放行探测，让 start() 继续走完
+
+    deadline = time.time() + 10
+    while "ok" not in result and time.time() < deadline:
+        time.sleep(0.01)
+    assert "ok" in result, "retry 没有返回（死锁？）"
+    assert result["ok"] is False, "启动令牌已失效，start() 不应报告启动成功"
+    assert task.status == "cancelled", "cancel 的状态被 start() 覆盖，任务被复活了"
+    assert not task._threads, "启动令牌失效后不应拉起任何线程"
+
+
+def test_concurrent_transitions_settle_without_deadlock(tmp_path, base_url):
+    """5 个线程对同一任务疯狂 pause/resume/cancel/start/retry：不得死锁、不得写坏文件。
+
+    同时压三类不变量：
+      - 所有状态迁移（pause/resume/cancel/retry/start/完成）互斥，只有一种生效；
+      - resume()/start() 只在 _xlock 之外 join 旧线程，不会被旧监控线程反锁；
+      - monitor 完成块先在锁外让位，pause/cancel 不会被文件组装阻塞到超时。
+    """
+    task = downloader.DownloadTask("storm", base_url, str(tmp_path),
+                                   filename="storm.bin", segments=4)
+    throttle.set_rate(256 * 1024)
+    stop = threading.Event()
+    failures = []
+
+    def _hammer(i):
+        ops = [task.pause, task.resume, task.start, task.retry, task.cancel]
+        n = 0
+        while not stop.is_set():
+            try:
+                ops[(i + n) % len(ops)]()
+            except Exception as e:
+                failures.append(e)
+            n += 1
+            time.sleep(0.003)
+
+    task.start()
+    assert _spin_until(lambda: task.status == "downloading" and task.downloaded > 0, 15)
+
+    workers = [threading.Thread(target=_hammer, args=(i,), daemon=True) for i in range(5)]
+    for t in workers:
+        t.start()
+    time.sleep(1.5)
+    stop.set()
+    for t in workers:
+        t.join(20)
+    assert not any(t.is_alive() for t in workers), "并发状态转换导致死锁"
+    assert not failures, "状态转换抛出异常: %r" % (failures[:3],)
+
+    # 收尾：先 cancel 收敛到干净起点，再重试一次完整下载，校验字节没被并发写花
+    task.cancel()
+    assert task.status == "cancelled"
+    assert task.retry() is True
+    assert _spin_until(
+        lambda: task.status in ("completed", "failed", "cancelled"), 60), task.status
+    assert task.status == "completed", "status=%s err=%s" % (task.status, task.error)
+    assert os.path.getsize(task.filepath) == SIZE, "文件大小不符：分段被并发写花"
+    with open(task.filepath, "rb") as f:
+        got = hashlib.sha256(f.read()).hexdigest()
+    assert got == EXPECTED_SHA, "文件内容损坏：分段被并发写花"
