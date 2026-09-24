@@ -99,7 +99,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 |------|------|
 | `main.py` | 入口：启动监控 + UI；端口选择（`_port_bindable`/`_pick_port`）、防 502 代理绕过、`open_browser` |
 | `main_window.py` | PyQt6 桌面主窗口；设置（含「浏览器监控」开关）、托盘、工具栏 |
-| `downloader.py` | 下载引擎：多线程分段、暂停/恢复、代理模式（env/direct/显式） |
+| `downloader.py` | 下载引擎：多线程分段、暂停/恢复、代理模式（env/direct/显式）；per-task 生命周期转换锁 `_xlock` + 启动令牌 `_start_token`，回归见 `tests/test_resume_race.py` |
 | `browser_monitor.py` | 浏览器监控本地捕获服务（端口 5001）+ 剪贴板监听 |
 | `app.py` | Flask 后端 API（含 `/api/browser-capture`、SSE 流、任务管理） |
 | `torrent.py` | libtorrent 封装（BT/PT） |
@@ -133,7 +133,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 **测试命令：**
 ```bash
-python -m pytest tests -q          # 120 passed, 1 skipped
+python -m pytest tests -q          # 126 passed, 1 skipped
 node tests/test_sniff.js
 node tests/test_background_load.js
 node --check extension/sniff.js extension/background.js extension/content.js extension/popup.js
