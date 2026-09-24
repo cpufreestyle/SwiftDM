@@ -183,14 +183,31 @@ def main():
                 fail("下载文件 sha256 与源不一致（分段/Range 处理有误）")
 
         # 4) 暂停-继续-取消
+        # 回环上 3MB 常在固定 sleep 内就下完，pause 时任务已 completed 会让
+        # pause/resume 退化为 no-op（假失败）。先限速把任务稳在下载中段。
+        requests.post(f"{base}/api/settings", json={"rate_limit": 512 * 1024}, timeout=10)
         r = requests.post(f"{base}/api/add",
                           json={"url": "http://127.0.0.1:8000/sample.bin",
                                 "filename": "p2.bin", "segments": 4,
                                 "save_dir": save_dir}, timeout=15)
         tid2 = r.json()["task"]["task_id"]
-        time.sleep(0.3)
+        mid = False
+        for _ in range(200):
+            tasks = requests.get(f"{base}/api/tasks", timeout=10).json()["tasks"]
+            tk = next((t for t in tasks if t["task_id"] == tid2), None)
+            if tk is None:
+                time.sleep(0.05)
+                continue
+            if tk["status"] == "downloading" and tk.get("downloaded", 0) > 0:
+                mid = True
+                break
+            if tk["status"] in ("completed", "failed", "cancelled"):
+                break
+            time.sleep(0.05)
         pr = requests.post(f"{base}/api/pause/{tid2}", timeout=10)
-        if pr.json().get("task", {}).get("status") != "paused":
+        if not mid:
+            fail("未能进入下载中段（任务提前结束），暂停/继续未覆盖")
+        elif pr.json().get("task", {}).get("status") != "paused":
             fail("暂停失败")
         else:
             ok("暂停成功")
@@ -200,6 +217,7 @@ def main():
         else:
             ok("继续成功")
         cr = requests.post(f"{base}/api/cancel/{tid2}", timeout=10)
+        requests.post(f"{base}/api/settings", json={"rate_limit": 0}, timeout=10)
         if not cr.json().get("success"):
             fail("取消失败")
         else:
