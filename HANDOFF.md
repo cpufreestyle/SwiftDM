@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `e296abc`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 19 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `b2ab72c`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 20 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作，最后把批量操作的键盘入口补到 Web 端、并修正桌面端 Ctrl+F 的指向。
 
-本轮共 19 个 commit（HEAD = `e296abc`，`git status -sb` 与 origin/main 0/0）：
+本轮共 20 个 commit（HEAD = `b2ab72c`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -266,10 +266,41 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      `completed`，导致 Ctrl+A「全选可见」选到空集），窗口级测试先钉死 `_filter = "all"`
      再断言，别动用户的配置文件；③ QCheckBox 在 QSS 里画对勾要图片资源，
      改用可勾选 QPushButton + ☐/☑ 字形，主题着色零成本。
+19. **批量操作的键盘入口补进 Web 端；桌面端 Ctrl+F 归位**（`b2ab72c`）：上一轮给桌面端加了
+    多选之后，Web 端的批量选择仍然只能靠鼠标点小勾选框；顺带审计快捷键时发现桌面端
+    Ctrl+F 聚焦的是**链接输入框**，而 Web 端聚焦的是**搜索框**——同一个组合键在两个客户端
+    做两件事，且桌面端的用法还违背「Ctrl+F = 查找」的通用约定。
+   - `templates/index.html`：
+     - `shortcutAction` 新增 `Ctrl/⌘+A -> select_all_visible`；Esc 分支前移：
+       `_selected.size > 0` 时先返回 `clear_selection`，没有再关详情/设置（与桌面端
+       `_on_escape` 同优先级）；
+     - `selectAllVisible()`：全选 `visibleTasks()`（当前过滤 + 搜索下可见），
+       同步回显勾选框并刷操作条，顺序与桌面端一致（先刷条再出 toast）；
+     - `onCardClick(event, taskId)`：Ctrl+点击卡片空白处切换勾选（对齐桌面端
+       `TaskCard.mousePressEvent`）；点在勾选框/按钮/链接上时直接返回，避免叠一次切换；
+     - **修了一个自己写出来的 bug**：`runShortcut` 原先先 `preventDefault()` 再做
+       输入控件让位判断，导致焦点在输入框里按 Ctrl+A 时原生「全选文字」被拦掉。
+       调整为让位判断先行；
+     - 两端的 kbd 提示同步升级：Web 端「↑↓ 选择任务 · Enter 打开 · Ctrl+A 全选」，
+      桌面端 tooltip/可访问名补上 Ctrl+N 新建、Ctrl+F 搜索。
+   - `main_window.py`：`Ctrl+F` 由 `url_input.setFocus` 改为 `_focus_search()`
+     （聚焦搜索框）。链接输入框常驻工具栏最左侧、回车即新建，Ctrl+N 已覆盖新建入口，
+     把最常用的查找键让给次要操作不合理。
+   - 测试：`tests/test_web_shortcuts.js` 新增 4 组断言（Ctrl+A 三种修饰/大小写、Esc 优先级、
+     `selectAllVisible` 真去全选且可重复执行、`onCardClick` 守卫、输入框里 Ctrl+A 不被抢）；
+     `tests/test_desktop_ui.py` 新增真实窗口级测试：真的按 Ctrl+A / Ctrl+F，
+     断言选中集合与焦点落点——只查「快捷键注册了」拦不住把 Ctrl+F 接回链接框的回归
+     （变异测试第一个就跑出这个逃逸，补测试后 6/6 全红）。
+   - 踩坑记录：① vm 沙箱里 `querySelector` 桩必须按 data-id 缓存同一个对象，
+     否则第二次 Ctrl+点击看到的还是初始 `checked=false`，测了个假；② 桩的 `closest`
+     要按「选择器列表」语义匹配（子串），写成 `s === "button"` 等于没测守卫；
+     ③ QTest 合成快捷键**可以**触发 QShortcut（本机实测），但桌面端 Ctrl+A 曾因
+     本机配置 filter=completed 而「选到空集」——窗口级测试先钉死 `_filter`。
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
+- （已关账）批量操作的键盘入口：Web 端 Ctrl+A 全选可见、Esc 先清多选、Ctrl+点击卡片切换勾选；桌面端 Ctrl+F 已从「聚焦链接框」改回「聚焦搜索框」（与 Web 端及通用约定一致）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 - （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
