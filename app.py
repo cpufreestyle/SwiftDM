@@ -86,8 +86,6 @@ def _with_schedule(task):
     d["scheduled_at"] = scheduler.pending_at(task.task_id)
     return d
 
-# 剪贴板 URL 暂存
-_clipboard_url = ""
 
 
 @app.route("/")
@@ -537,15 +535,6 @@ def stream():
 
             time.sleep(0.5)
     return Response(generate(), mimetype="text/event-stream")
-
-
-@app.route("/api/clipboard", methods=["POST"])
-def set_clipboard():
-    """接收从浏览器粘贴的 URL"""
-    global _clipboard_url
-    data = request.get_json()
-    _clipboard_url = data.get("url", "")
-    return jsonify({"success": True})
 
 
 # 浏览器接管总开关（由桌面 GUI “浏览器监控” 设置同步；关闭时不接管浏览器下载）
