@@ -991,6 +991,16 @@ class SettingsDialog(QDialog):
         rate_row.addWidget(self.rate_edit, 1)
         rate_row.addWidget(QLabel("KB/s"))
         form.addRow("下载限速:", rate_row)
+
+        self.auto_retry_spin = QSpinBox()
+        self.auto_retry_spin.setRange(0, 5)
+        self.auto_retry_spin.setValue(int(config.get("auto_retry") or 0))
+        self.auto_retry_spin.setSpecialValueText("关闭")
+        self.auto_retry_spin.setSuffix(" 次")
+        self.auto_retry_spin.setToolTip(
+            "任务失败后自动重试的次数；间隔 30秒/分钟/2分钟/5分钟递增。"
+            "任务会从分片残留处继续，0 = 关闭")
+        form.addRow("失败自动重试:", self.auto_retry_spin)
         layout.addWidget(dl_box)
 
         # —— 网络 ——
@@ -1141,6 +1151,7 @@ class SettingsDialog(QDialog):
             "monitor": self.monitor_check.currentIndex() == 0,
             "proxy_mode": proxy_mode,
             "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
+            "auto_retry": self.auto_retry_spin.value(),
             "finish_action": self.finish_combo.currentData() or "none",
             "notify_sound": self.sound_combo.currentData() or "none",
             "theme": self.theme_combo.currentData() or "dark",
@@ -2230,6 +2241,8 @@ class MainWindow(QMainWindow):
             rl = settings.get("rate_limit") or 0
             set_rate(rl)
             config.set("rate_limit", rl)
+            # 失败自动重试：管理器按任务失败时实时读取，修改当即生效
+            config.set("auto_retry", settings.get("auto_retry", 0))
             # 「全部下载完成后」动作：应用并持久化（与 Web 端共用 scheduler 单例，重启后仍生效）
             from scheduler import scheduler as _dl_scheduler
             _dl_scheduler.set_finish_action(settings.get("finish_action", "none"))

@@ -13,8 +13,37 @@ from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse, unquote
 from throttle import consume as _throttle_consume
 from throttle import write_granularity as _throttle_granularity
+import config
 
 logger = logging.getLogger("SwiftDM")
+
+# 失败自动重试的退避间隔（秒）：第 1/2/3/N 次重试依次取 30s/60s/120s，之后固定 5 分钟。
+# 递增而非固定间隔，避免远端短暂故障时频繁重试放大压力。
+AUTO_RETRY_BACKOFF = (30.0, 60.0, 120.0, 300.0)
+AUTO_RETRY_MAX = 5  # 设置项允许的上限（0 = 关闭）
+
+
+def auto_retry_delay(attempt):
+    """第 attempt 次失败后的自动重试等待秒数（attempt 从 0 开始计）。"""
+    if attempt < 0:
+        attempt = 0
+    return AUTO_RETRY_BACKOFF[min(attempt, len(AUTO_RETRY_BACKOFF) - 1)]
+
+
+def fire_on_failed(task):
+    """任务转入 failed 时通知管理器调度自动重试。
+
+    下载线程直接调用；回调内部只登记定时器，不做重活。
+    任何异常都必须吞掉——失败处理绝不能反过来搞崩下载线程。
+    """
+    callback = getattr(task, "on_failed", None)
+    if callback is None:
+        return
+    try:
+        callback(task)
+    except Exception:
+        logger.exception("任务失败回调执行异常: task_id=%s",
+                         getattr(task, "task_id", "?"))
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -584,6 +613,7 @@ class DownloadTask:
                             self.error = f"合并文件失败: {e}"
                             self._invalidate_cache()
                         logger.error("合并文件失败: %s | 错误: %s", self.filename, e, exc_info=True)
+                        fire_on_failed(self)
                     else:
                         logger.info("下载完成: %s (%.2f MB)", self.filename, final_size / 1024 / 1024)
                 return
@@ -639,6 +669,7 @@ class DownloadTask:
                     self.status = "failed"
                     self._invalidate_cache()
             logger.error("任务初始化失败，已停止: %s | 原因: %s", self.filename, self.error)
+            fire_on_failed(self)
             return False
 
         # 计算分段
@@ -712,6 +743,7 @@ class DownloadTask:
                     self.error_reason = "download_failed"
                     self._invalidate_cache()
             logger.error("任务失败: %s | 分段%d 错误: %s", self.filename, idx, e)
+            fire_on_failed(self)
 
     def pause(self):
         """暂停下载。代数 +1 让所有分段线程尽快退出（旧实现线程挂起等待，
@@ -835,6 +867,10 @@ class DownloadManager:
         self._tasks = {}      # task_id -> DownloadTask
         self._counter = 0
         self._lock = threading.Lock()
+        # 失败自动重试状态：task_id -> {"attempts": int, "timer": Timer|None}。
+        # 与 _lock 无嵌套关系（取锁内不回调 task.retry()）。
+        self._auto_retry_lock = threading.Lock()
+        self._auto_retry_state = {}
 
         # 历史记录持久化：把任务元数据落盘，重启后仍能看到「历史下载记录」
         data_dir = os.path.join(os.path.expanduser("~"), ".swiftdm")
@@ -868,6 +904,7 @@ class DownloadManager:
                                      referer, cookies_netscape, resolution)
                 else:
                     task = DownloadTask(task_id, url, save_dir, filename, segments)
+            task.on_failed = self._schedule_auto_retry
             self._tasks[task_id] = task
             return task
 
@@ -901,6 +938,7 @@ class DownloadManager:
             if task and task.status in ("downloading", "paused"):
                 task.cancel()
             self._tasks.pop(task_id, None)
+        self._cancel_auto_retry(task_id)
 
     def clear_completed(self):
         """清除已完成/已失败/已取消的任务，返回清除数量。"""
@@ -908,8 +946,78 @@ class DownloadManager:
             completed = [tid for tid, t in self._tasks.items() if t.status in ("completed", "cancelled", "failed")]
             for tid in completed:
                 self._tasks.pop(tid, None)
+        for tid in completed:
+            self._cancel_auto_retry(tid)
         self.save_history()
         return len(completed)
+
+    # ---------------- 失败自动重试 ----------------
+
+    def _auto_retry_limit(self):
+        """读取用户配置的自动重试次数（0 = 关闭），限制在 [0, AUTO_RETRY_MAX]。"""
+        try:
+            return max(0, min(AUTO_RETRY_MAX, int(config.get("auto_retry") or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _schedule_auto_retry(self, task):
+        """任务失败回调（由下载线程触发）：按退透间隔安排一次自动重试。
+
+        空闲/未开启/已排定/次数用尽时安全无操作。
+        """
+        if task is None or task.status != "failed":
+            return
+        limit = self._auto_retry_limit()
+        if limit <= 0:
+            return
+        with self._auto_retry_lock:
+            entry = self._auto_retry_state.setdefault(
+                task.task_id, {"attempts": 0, "timer": None})
+            timer = entry["timer"]
+            if timer is not None and timer.is_alive():
+                return                      # 已有待执行重试，重复失败通知合并
+            if entry["attempts"] >= limit:
+                logger.info("自动重试次数已用尽（%d/%d），放弃: %s",
+                            entry["attempts"], limit, task.filename)
+                return
+            delay = auto_retry_delay(entry["attempts"])
+            entry["timer"] = threading.Timer(delay, self._fire_auto_retry,
+                                             args=(task.task_id,))
+            entry["timer"].daemon = True
+            entry["timer"].start()
+        logger.info("任务失败，%.0f 秒后自动重试（第 %d/%d 次）: %s",
+                    delay, entry["attempts"] + 1, limit, task.filename)
+
+    def _fire_auto_retry(self, task_id):
+        """定时器回调：执行一次自动重试（任务已被用户操作则让射）。"""
+        with self._auto_retry_lock:
+            entry = self._auto_retry_state.get(task_id)
+            if entry is None:
+                return
+            entry["timer"] = None
+            entry["attempts"] += 1
+            attempt = entry["attempts"]
+        limit = self._auto_retry_limit()
+        task = self.get_task(task_id)
+        if task is None:
+            self._cancel_auto_retry(task_id)   # 任务已被删除，清理计数
+            return
+        if task.status != "failed":
+            # 用户已手动重试/取消/删除：清零计数，下次失败重新计
+            self._cancel_auto_retry(task_id)
+            return
+        logger.info("自动重试任务: %s（第 %d/%d 次）", task.filename, attempt, limit)
+        try:
+            task.retry()
+        except Exception:
+            logger.exception("自动重试执行失败: %s", task_id)
+
+    def _cancel_auto_retry(self, task_id):
+        """取消待执行的自动重试并清理计数（删除/清理/用户手动操作时调用）。"""
+        with self._auto_retry_lock:
+            entry = self._auto_retry_state.pop(task_id, None)
+        if entry is not None and entry["timer"] is not None:
+            entry["timer"].cancel()
 
     # ---------------- 历史记录持久化 ----------------
     def _reconstruct_task(self, d):

@@ -211,6 +211,8 @@ class TorrentTask:
                 self.status = "failed"
                 self.error = str(e)
                 logger.error("BT 任务启动失败: %s | %s", self.url, e)
+                from downloader import fire_on_failed
+                fire_on_failed(self)
 
     def pause(self):
         with self._lock:
@@ -331,6 +333,8 @@ class TorrentTask:
                     and (time.time() - self._started_at) > 20:
                 self.status = "failed"
                 self.error = err
+                from downloader import fire_on_failed
+                fire_on_failed(self)
                 return
 
             # 把 tracker 报错作为提示（不阻塞下载）

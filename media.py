@@ -317,6 +317,8 @@ class MediaTask:
             self.error_reason = reason or _reason_from_text(msg)
             self.error = _friendly_media_error(self.error_reason, msg)
         logger.error("流媒体任务失败: %s | %s | %s", self.filename, self.error_reason, msg)
+        from downloader import fire_on_failed
+        fire_on_failed(self)
 
     def pause(self):
         # 持 _xlock 让「代数 +1」和「状态置 paused」原子完成：否则并发的 cancel

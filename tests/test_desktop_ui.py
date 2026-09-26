@@ -311,7 +311,7 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
                 if lbl.text().endswith(":")}
 
     by_title = {g.title(): row_labels(g) for g in groups}
-    assert by_title["下载"] == {"下载目录:", "下载线程数:", "下载限速:"}
+    assert by_title["下载"] == {"下载目录:", "下载线程数:", "下载限速:", "失败自动重试:"}
     assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:"}
     assert by_title["完成后"] == {"全部下载完成后:", "完成提示音:"}
     assert by_title["外观"] == {"界面主题:"}
@@ -323,7 +323,7 @@ def test_settings_dialog_get_settings_still_complete(qt_app):
     dlg = mw.SettingsDialog()
     settings = dlg.get_settings()
     for key in ("dir", "segments", "monitor", "proxy_mode",
-                "rate_limit", "finish_action", "notify_sound", "theme"):
+                "rate_limit", "auto_retry", "finish_action", "notify_sound", "theme"):
         assert key in settings, key
 
 
