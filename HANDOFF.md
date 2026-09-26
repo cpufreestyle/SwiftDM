@@ -92,7 +92,14 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 4. **测试**：新增 `tests/test_extension_panel.js`（vm + 最小 DOM 桩跑真实 popup.js：
    `failedTasksOf` 筛选/排序/上限、行渲染与 HTML 转义、点重试的消息往返、失败与掉线路径）；
    `tests/test_background_load.js` 扩到 ⑩ 条断言（GET 无 body、taskId 编码、缺参不发请求）。
-5. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
+5. **popup 头部实时状态**（同一轮追加）：`liveStatsOf()` + `loadLive()` 在打开弹窗时刷新
+   「下载中 / 总速度 / 失败」，每 2 秒轮询，且与失败角标/列表共用同一次 `/api/tasks` 响应。
+   顺手修掉两处会咬人的地方：
+   - `liveStatsOf().failed` 不用后端 `stats.failed`（那只数 `failed`，会和角标对不上），
+     改为与「任务」页同一口径：失败 + 已取消（两者都可一键重试）。
+   - `loadTasks` 原先用「参数为 undefined 就重新请求」的实现，响应为空时会无限递归，
+     现改为 `loadTasks()`（取数）→ `renderTasks(res)`（渲染）两层，掉线只渲染提示、不再递归。
+6. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
    设置「外观 → 界面主题」、`config.py` 新键 `theme`）。
 
 剩余候选：无（待用户反馈后再定）。

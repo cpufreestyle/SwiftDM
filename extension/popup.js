@@ -18,7 +18,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('tabMedia').addEventListener('click', () => showPanel('media'));
   document.getElementById('tabTasks').addEventListener('click', () => showPanel('tasks'));
   document.getElementById('retryAllBtn').addEventListener('click', retryAllTasks);
-  loadTasks();  // 打开弹窗即刷新失败角标，不用点进「任务」页
+  loadLive();                       // 打开弹窗即刷新实时状态与失败角标
+  setInterval(loadLive, LIVE_REFRESH_MS);  // popup 打开期间持续刷新
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs && tabs[0];
     if (!tab) return;
@@ -93,6 +94,39 @@ function loadMedia() {
 // 后端按创建顺序返回，所以倒序取即可得到"最近的失败"）
 const TASK_RETRYABLE = ['failed', 'cancelled'];
 const MAX_TASK_ROWS = 8;
+const LIVE_REFRESH_MS = 2000;
+
+// popup 头部实时状态：优先用后端 stats，缺字段时按任务列表现算（老版本后端也兼容）
+function liveStatsOf(payload) {
+  const tasks = (payload && payload.tasks) || [];
+  const stats = (payload && payload.stats) || {};
+  const num = (v, fallback) => (typeof v === 'number' && isFinite(v) ? v : fallback);
+  const retryable = (t) => TASK_RETRYABLE.indexOf(t.status) >= 0;
+  return {
+    active: num(stats.active, tasks.filter((t) => t.status === 'downloading').length),
+    // 与「任务」页角标/列表同一口径：失败 + 已取消（两者都能一键重试）。
+    // 后端 stats.failed 只数 failed，直接用会和角标对不上，所以这里按任务列表现算。
+    failed: tasks.filter(retryable).length,
+    speed: num(stats.total_speed, tasks.reduce(
+      (sum, t) => sum + (t.status === 'downloading' ? (t.speed || 0) : 0), 0)),
+  };
+}
+
+function formatSpeed(bps) {
+  if (!bps || bps <= 0) return '0 B/s';
+  return formatSize(bps) + '/s';
+}
+
+function loadLive() {
+  chrome.runtime.sendMessage({ action: 'getTasks' }, (res) => {
+    if (!res) return;  // 掉线时保留上一次的数字，不清空
+    const s = liveStatsOf(res);
+    document.getElementById('liveActive').textContent = String(s.active);
+    document.getElementById('liveSpeed').textContent = formatSpeed(s.speed);
+    document.getElementById('liveFailed').textContent = String(s.failed);
+    renderTasks(res);  // 同一份响应顺手刷新失败角标/列表，省一次请求
+  });
+}
 
 function failedTasksOf(payload) {
   const tasks = (payload && payload.tasks) || [];
@@ -102,25 +136,27 @@ function failedTasksOf(payload) {
 }
 
 function loadTasks() {
-  chrome.runtime.sendMessage({ action: 'getTasks' }, (res) => {
-    const box = document.getElementById('taskList');
-    const badge = document.getElementById('taskFailCount');
-    const retryAll = document.getElementById('retryAllBtn');
-    const failed = failedTasksOf(res);
-    badge.textContent = String(failed.length);
-    badge.className = 'badge warn' + (failed.length ? '' : ' hidden');
-    retryAll.style.visibility = failed.length > 1 ? 'visible' : 'hidden';
-    if (!res) {
+  chrome.runtime.sendMessage({ action: 'getTasks' }, (res) => renderTasks(res));
+}
+
+function renderTasks(res) {
+  const box = document.getElementById('taskList');
+  const badge = document.getElementById('taskFailCount');
+  const retryAll = document.getElementById('retryAllBtn');
+  const failed = failedTasksOf(res);
+  badge.textContent = String(failed.length);
+  badge.className = 'badge warn' + (failed.length ? '' : ' hidden');
+  retryAll.style.visibility = failed.length > 1 ? 'visible' : 'hidden';
+  if (!res) {
       box.innerHTML = '<div class="media-empty">连不上 SwiftDM，确认桌面端已启动</div>';
       return;
-    }
-    if (!failed.length) {
+  }
+  if (!failed.length) {
       box.innerHTML = '<div class="media-empty">没有失败的下载任务</div>';
       return;
-    }
-    box.innerHTML = '';
-    failed.forEach((task) => box.appendChild(taskRow(task)));
-  });
+  }
+  box.innerHTML = '';
+  failed.forEach((task) => box.appendChild(taskRow(task)));
 }
 
 function taskRow(task) {

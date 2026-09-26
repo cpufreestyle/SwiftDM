@@ -42,10 +42,14 @@ function makeEl(tag) {
 function makeSandbox(handler) {
   const elements = {};
   const messages = [];
+  const intervals = [];
+  let domReady = null;
   const sandbox = {
     console,
     setTimeout,
     clearTimeout,
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
+    clearInterval: () => {},
     URL,
     URLSearchParams,
     chrome: {
@@ -56,7 +60,7 @@ function makeSandbox(handler) {
       tabs: { query(q, cb) { cb([{ id: 3, url: "https://site/v", title: "T" }]); } },
     },
     document: {
-      addEventListener() {},
+      addEventListener(type, fn) { if (type === 'DOMContentLoaded') domReady = fn; },
       getElementById(id) { return elements[id] || (elements[id] = makeEl("div#" + id)); },
       createElement: (tag) => makeEl(tag),
     },
@@ -64,7 +68,7 @@ function makeSandbox(handler) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(POPUP, sandbox, { filename: "popup.js" });
-  return { sandbox, elements, messages };
+  return { sandbox, elements, messages, intervals, openPopup: () => domReady() };
 }
 
 // ① 纯函数：只留 failed/cancelled，最新失败排最前，最多 8 条
@@ -157,6 +161,71 @@ function makeSandbox(handler) {
   sandbox.retryAllTasks();
   assert.ok(messages.some((m) => m.action === "retryAllTasks"));
   assert.strictEqual(elements.retryAllBtn.textContent, "已重试 2");
+}
+
+// ⑦ 实时状态：优先用后端 stats；老后端没给 stats 时按任务列表现算
+{
+  const { sandbox } = makeSandbox();
+  const withStats = {
+    tasks: [{ task_id: "a", status: "downloading", speed: 100 }],
+    stats: { active: 1, failed: 3, total_speed: 2048 },
+  };
+  // active / speed 用后端 stats；failed 必须和「任务」页角标同口径（失败 + 已取消），
+  // 不能直接用 stats.failed（那只数 failed，会和角标对不上）
+  assert.deepStrictEqual({ ...sandbox.liveStatsOf(withStats) }, { active: 1, failed: 0, speed: 2048 });
+  const mixed = {
+    tasks: [{ task_id: "a", status: "downloading" }, { task_id: "b", status: "failed" },
+            { task_id: "c", status: "cancelled" }],
+    stats: { active: 5, failed: 0, total_speed: 10 },
+  };
+  assert.deepStrictEqual({ ...sandbox.liveStatsOf(mixed) }, { active: 5, failed: 2, speed: 10 });
+  const noStats = { tasks: [
+    { task_id: "a", status: "downloading", speed: 1024 },
+    { task_id: "b", status: "paused", speed: 999 },
+    { task_id: "c", status: "failed" },
+    { task_id: "d", status: "cancelled" },
+  ] };
+  assert.deepStrictEqual({ ...sandbox.liveStatsOf(noStats) }, { active: 1, failed: 2, speed: 1024 },
+    "speed 只累加下载中的任务");
+  assert.deepStrictEqual({ ...sandbox.liveStatsOf(null) }, { active: 0, failed: 0, speed: 0 });
+  assert.strictEqual(sandbox.formatSpeed(0), "0 B/s");
+  assert.strictEqual(sandbox.formatSpeed(1536), "1.5 KB/s");
+}
+
+// ⑧ loadLive：一次请求同时写实时状态与失败角标
+{
+  const { sandbox, elements, messages } = makeSandbox((msg) => {
+    if (msg.action === "getTasks") return TASKS_PAYLOAD;
+    return undefined;
+  });
+  sandbox.loadLive();
+  assert.strictEqual(messages.filter((m) => m.action === "getTasks").length, 1,
+    "实时状态与失败列表应共用一次请求");
+  assert.strictEqual(elements.liveActive.textContent, "1");
+  assert.strictEqual(elements.liveSpeed.textContent, "0 B/s");
+  assert.strictEqual(elements.liveFailed.textContent, "3", "失败含已取消");
+  assert.strictEqual(elements.taskFailCount.textContent, "3");
+
+  // 掉线：保留上一次的数字，不清空（避免用户看到突然归零）
+  sandbox.loadLive();
+  assert.strictEqual(elements.liveActive.textContent, "1");
+  assert.strictEqual(elements.taskFailCount.textContent, "3");
+}
+
+// ⑨ 打开弹窗会拉一次实时状态，并按期刷新
+{
+  let reply = { tasks: [], stats: { active: 2, failed: 0, total_speed: 3072 } };
+  const { sandbox, elements, intervals, openPopup } = makeSandbox((msg) => {
+    if (msg.action === "getTasks") return reply;
+    return undefined;
+  });
+  openPopup();
+  assert.strictEqual(elements.liveActive.textContent, "2");
+  assert.strictEqual(elements.liveSpeed.textContent, "3.0 KB/s");
+  assert.strictEqual(intervals.length, 1, "打开 popup 应启动一个轮询定时器");
+  assert.strictEqual(intervals[0].ms, 2000);
+  intervals[0].fn();  // 定时器触发：再拉一次并刷新
+  assert.strictEqual(elements.liveActive.textContent, "2");
 }
 
 console.log("popup.js tasks panel OK");
