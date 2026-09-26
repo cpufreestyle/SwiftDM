@@ -776,6 +776,26 @@ async function enqueueUrl(url) {
 }
 
 // ===== 操作按钮 =====
+async function copyLink(id) {
+  const t = _tasksById[id];
+  if (!t || !t.url) { showToast("该任务没有可复制的链接", "error"); return; }
+  try {
+    await navigator.clipboard.writeText(t.url);
+    showToast("已复制下载链接");
+  } catch (e) {
+    showToast("复制失败", "error");
+  }
+}
+
+async function openFolder(id) {
+  const res = await api(`/api/open_folder/${id}`, { method: "POST" });
+  if (res.success) {
+    showToast("已打开所在文件夹");
+  } else {
+    showToast(res.error || "打开文件夹失败", "error");
+  }
+}
+
 async function pauseTask(id) {
   await api(`/api/pause/${id}`, { method: "POST" });
 }
@@ -822,6 +842,7 @@ async function clearCompleted() {
 // ===== 状态分段过滤（与桌面端一致）=====
 let currentFilter = "all";
 let _lastTasks = [];
+let _tasksById = {};
 
 function matchFilter(t) {
   switch (currentFilter) {
@@ -857,6 +878,8 @@ function updateFilterCounts(tasks) {
 
 function renderTasks(tasks) {
   _lastTasks = tasks;
+  _tasksById = {};
+  tasks.forEach(t => { _tasksById[t.task_id] = t; });
   updateFilterCounts(tasks);
 
   // 总体进度（对已知体积的任务聚合）
@@ -960,6 +983,7 @@ function createTaskCard(task) {
   } else if (task.status === "completed") {
     actionsHtml = `
       <button class="btn btn-secondary btn-sm" onclick="openFile('${task.task_id}')">&#128193; 打开</button>
+      <button class="btn btn-secondary btn-sm" onclick="openFolder('${task.task_id}')" title="打开所在文件夹">打开文件夹</button>
       <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
     `;
   }
@@ -987,7 +1011,7 @@ function createTaskCard(task) {
         <span class="progress-text">${progressPercent.toFixed(1)}%</span>
       </div>
     </div>
-    <div class="task-actions">${actionsHtml}</div>
+    <div class="task-actions"><button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')" title="复制下载链接">复制链接</button>${actionsHtml}</div>
   `;
 
   return card;

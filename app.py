@@ -182,6 +182,30 @@ def open_file(task_id):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/open_folder/<task_id>", methods=["POST"])
+def open_folder(task_id):
+    """Reveal the task file in the OS file manager (cross-platform)."""
+    import sys as _sys
+    import subprocess as _sp
+    task = manager.get_task(task_id)
+    if not task:
+        return jsonify({"success": False, "error": "task not found"}), 404
+    filepath = task.filepath
+    folder = os.path.dirname(filepath) if filepath else ""
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"success": False, "error": "folder not found"}), 404
+    try:
+        if _sys.platform == "win32":
+            os.startfile(folder)  # noqa: P201
+        elif _sys.platform == "darwin":
+            _sp.Popen(["open", folder])
+        else:
+            _sp.Popen(["xdg-open", folder])
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
     scheduler.unschedule(task_id)

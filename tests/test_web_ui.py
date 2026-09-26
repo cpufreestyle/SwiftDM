@@ -67,3 +67,16 @@ def test_drop_supports_magnet_and_multiple(page):
     assert "extractDropUrls" in page
     assert "magnet:" in page and "enqueueUrl" in page
 
+
+def test_copy_link_and_open_folder(page):
+    assert "async function copyLink" in page and "navigator.clipboard.writeText" in page
+    assert "/api/open_folder/" in page and 'onclick="openFolder(' in page
+    assert 'onclick="copyLink(' in page
+
+
+def test_open_folder_endpoint_exists():
+    appmod.app.config["TESTING"] = True
+    client = appmod.app.test_client()
+    r = client.post("/api/open_folder/dl_does_not_exist")
+    assert r.status_code == 404
+    assert r.get_json().get("success") is False
