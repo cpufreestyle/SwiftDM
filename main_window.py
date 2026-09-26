@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
     QGroupBox,
-    QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit,
     QCheckBox, QDateTimeEdit, QLayout
 )
@@ -1887,42 +1886,42 @@ class MainWindow(QMainWindow):
         self.url_input.returnPressed.connect(self._add_download)
         toolbar.addWidget(self.url_input)
 
-        btn_add = QPushButton("＋ 下载")
-        btn_add.setObjectName("btnAdd")
-        btn_add.clicked.connect(self._add_download)
-        toolbar.addWidget(btn_add)
+        self.btn_add = QPushButton("＋ 下载")
+        self.btn_add.setObjectName("btnAdd")
+        self.btn_add.clicked.connect(self._add_download)
+        toolbar.addWidget(self.btn_add)
 
         toolbar.addSeparator()
 
-        btn_pause_all = QPushButton("⏸ 全部暂停")
-        btn_pause_all.clicked.connect(self._pause_all)
-        toolbar.addWidget(btn_pause_all)
+        self.btn_pause_all = QPushButton("⏸ 全部暂停")
+        self.btn_pause_all.clicked.connect(self._pause_all)
+        toolbar.addWidget(self.btn_pause_all)
 
-        btn_resume_all = QPushButton("▶ 全部恢复")
-        btn_resume_all.clicked.connect(self._resume_all)
-        toolbar.addWidget(btn_resume_all)
+        self.btn_resume_all = QPushButton("▶ 全部恢复")
+        self.btn_resume_all.clicked.connect(self._resume_all)
+        toolbar.addWidget(self.btn_resume_all)
 
-        btn_retry_failed = QPushButton("↻ 重试失败")
-        btn_retry_failed.clicked.connect(self._retry_all_failed)
-        toolbar.addWidget(btn_retry_failed)
+        self.btn_retry_failed = QPushButton("↻ 重试失败")
+        self.btn_retry_failed.clicked.connect(self._retry_all_failed)
+        toolbar.addWidget(self.btn_retry_failed)
 
-        btn_clear = QPushButton("🗑 清除已完成")
-        btn_clear.clicked.connect(self._clear_completed)
-        toolbar.addWidget(btn_clear)
+        self.btn_clear = QPushButton("🗑 清除已完成")
+        self.btn_clear.clicked.connect(self._clear_completed)
+        toolbar.addWidget(self.btn_clear)
 
-        btn_open_dir = QPushButton("📂 打开目录")
-        btn_open_dir.clicked.connect(self._open_download_dir)
-        toolbar.addWidget(btn_open_dir)
+        self.btn_open_dir = QPushButton("📂 打开目录")
+        self.btn_open_dir.clicked.connect(self._open_download_dir)
+        toolbar.addWidget(self.btn_open_dir)
 
-        btn_copy_links = QPushButton("🔗 复制链接")
-        btn_copy_links.setToolTip("复制当前可见任务（含过滤/搜索）的下载链接")
-        btn_copy_links.clicked.connect(self._copy_task_links)
-        toolbar.addWidget(btn_copy_links)
+        self.btn_copy_links = QPushButton("🔗 复制链接")
+        self.btn_copy_links.setToolTip("复制当前可见任务（含过滤/搜索）的下载链接")
+        self.btn_copy_links.clicked.connect(self._copy_task_links)
+        toolbar.addWidget(self.btn_copy_links)
 
-        btn_export = QPushButton("💾 导出列表")
-        btn_export.setToolTip("将当前可见任务导出为 CSV（文件名/链接/状态/大小）")
-        btn_export.clicked.connect(self._export_task_list)
-        toolbar.addWidget(btn_export)
+        self.btn_export = QPushButton("💾 导出列表")
+        self.btn_export.setToolTip("将当前可见任务导出为 CSV（文件名/链接/状态/大小）")
+        self.btn_export.clicked.connect(self._export_task_list)
+        toolbar.addWidget(self.btn_export)
 
         toolbar.addSeparator()
 
@@ -1931,9 +1930,9 @@ class MainWindow(QMainWindow):
         self.btn_log.toggled.connect(self.log_dock.setVisible)
         toolbar.addWidget(self.btn_log)
 
-        btn_settings = QPushButton("⚙ 设置")
-        btn_settings.clicked.connect(self._show_settings)
-        toolbar.addWidget(btn_settings)
+        self.btn_settings = QPushButton("⚙ 设置")
+        self.btn_settings.clicked.connect(self._show_settings)
+        toolbar.addWidget(self.btn_settings)
 
         # 浏览器监控状态
         self.monitor_label = QLabel("  🌐 监控已启用")
@@ -2005,17 +2004,18 @@ class MainWindow(QMainWindow):
             self._compact = bool(_cfg.get("compact"))
         except Exception:
             self._sort = "default"
-        self._filter_group = QButtonGroup(self)
-        self._filter_group.setExclusive(True)
+        # 芯片互斥由 _set_filter 手工维护，不用 QButtonGroup：exclusive 组会把
+        # 除第一个以外的芯片从 Tab 顺序里摘掉（其余三个只剩点击/滚轮聚焦），
+        # 纯键盘用户够不到「进行中/已完成/失败」，和 Web 端不一致。
         self._filter_btns = {}
         for _key, _label in [("all", "全部"), ("active", "进行中"),
                              ("completed", "已完成"), ("failed", "失败")]:
             _b = QPushButton(_label)
             _b.setObjectName("filterBtn")
             _b.setCheckable(True)
+            _b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             _b.setCursor(Qt.CursorShape.PointingHandCursor)
             _b.clicked.connect(lambda _=False, k=_key: self._set_filter(k))
-            self._filter_group.addButton(_b)
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
         fb.addStretch(1)
@@ -2496,6 +2496,10 @@ class MainWindow(QMainWindow):
 
     def _set_filter(self, key):
         """切换状态分段过滤，并持久化以便重启后保持。"""
+        # 手工互斥：每次切换都把四颗芯片刷一遍，点已选中的那颗也要按回去，
+        # 不然视觉上会掉成「没选中」而 self._filter 还指向它。
+        for _k, _b in self._filter_btns.items():
+            _b.setChecked(_k == key)
         if key == self._filter:
             return
         self._filter = key

@@ -3,6 +3,7 @@
 仅覆盖纯逻辑，不依赖显示设备：通过 QT_QPA_PLATFORM=offscreen + QMimeData 完成；
 若运行环境缺少 PyQt6 或离屏平台不可用则自动跳过，避免影响无界面 CI。
 """
+import contextlib
 import io
 import json
 import os
@@ -1871,3 +1872,129 @@ def test_desktop_card_focus_ring_is_visible(qt_app):
             for x in range(min(ia.width(), ib.width()))
             if QColor(ia.pixel(x, y)) != QColor(ib.pixel(x, y))]
     assert diff, "卡片按钮聚焦前后像素无变化"
+
+
+def _widget_name(widget):
+    text = getattr(widget, "text", None)
+    return text() if callable(text) else type(widget).__name__
+
+
+@contextlib.contextmanager
+def _shown_main_window(qt_app, monkeypatch):
+    """真实主窗口（离屏），并把全局 manager 换成没有历史的桩。
+
+    窗口构造会跑一遍 _refresh()，真的会去读 ~/.swiftdm/history.json；
+    换成空桩之后窗口里没有卡片，测出来的 Tab 顺序才不受本机历史影响。
+    """
+    import downloader
+    import main_window as mw
+
+    class _Manager:
+        def get_all_tasks(self):
+            return []
+
+        def get_stats(self):
+            return {"total_speed": 0.0, "active": 0, "completed": 0,
+                    "failed": 0, "paused": 0, "total": 0}
+
+    monkeypatch.setattr(downloader, "manager", _Manager())
+    was_quit = qt_app.quitOnLastWindowClosed()
+    # 最后一个窗口关掉不能顺带退出 QApplication，否则后面的 grab/断言全废
+    qt_app.setQuitOnLastWindowClosed(False)
+    win = mw.MainWindow()
+    win.resize(2200, 900)  # 工具栏够宽，后半段按钮才不会被 QToolBar 藏起来
+    win.show()
+    qt_app.processEvents()
+    try:
+        yield win
+    finally:
+        win.close()
+        # 全局 logger 上还挂着这个窗口的 handler：窗口一删，后台写日志就会
+        # 往已销毁的 QObject 发信号，直接 access violation
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+        qt_app.setQuitOnLastWindowClosed(was_quit)
+
+
+def _tab_to(win, qt_app, prev, nxt):
+    """从 prev 按一次 Tab，断言焦点落在 nxt。"""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    prev.setFocus(Qt.FocusReason.OtherFocusReason)
+    qt_app.processEvents()
+    assert win.focusWidget() is prev, f"没能在 {_widget_name(prev)} 上起手"
+    QTest.keyClick(win, Qt.Key.Key_Tab)
+    qt_app.processEvents()
+    assert win.focusWidget() is nxt, (
+        f"焦点从 {_widget_name(prev)} 走到了 {_widget_name(win.focusWidget())}，"
+        f"应该落在 {_widget_name(nxt)}")
+
+
+def test_desktop_tab_order_walks_the_window_in_reading_order(qt_app, monkeypatch):
+    """Tab 要按视觉阅读顺序走：工具栏从左到右，再过筛选栏、搜索，进任务区。
+
+    Qt 默认顺序就是控件创建顺序，真正的屏障在别处：筛选芯片一旦进
+    Qt 的互斥按钮组，除第一颗外其余三颗会被摘掉 TabFocus，键盘到不了。这里把整条
+    阅读顺序走一遍，哪一站被摘掉会立即变红。
+    """
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        chain = [
+            win.url_input, win.btn_add, win.btn_pause_all, win.btn_resume_all,
+            win.btn_retry_failed, win.btn_clear, win.btn_open_dir,
+            win.btn_copy_links, win.btn_export, win.btn_log, win.btn_settings,
+            win._filter_btns["all"], win._filter_btns["active"],
+            win._filter_btns["completed"], win._filter_btns["failed"],
+            win.sort_combo, win.compact_btn, win.search_input, win.scroll,
+        ]
+        for prev, nxt in zip(chain, chain[1:]):
+            # 隐藏/停用的控件（倒计时按钮、日志面板（默认收起）、被工具栏藏起来的
+            # 按钮）本来就不在 Tab 顺序里，跳过这一段
+            if not all(w.isVisible() and w.isEnabled() for w in (prev, nxt)):
+                continue
+            _tab_to(win, qt_app, prev, nxt)
+
+
+def test_filter_chips_stay_exclusive_and_each_reachable_by_tab(qt_app, monkeypatch):
+    """四颗筛选芯片每颗都能 Tab 到，同时保持互斥。
+
+    互斥原先交给 exclusive QButtonGroup：Qt 会把除第一颗以外的芯片从 Tab 顺序里
+    摘掉（focusPolicy 只剩点击/滚轮），纯键盘用户够不到「进行中/已完成/失败」。
+    改成在 _set_filter 里手工刷 checked 之后，四颗都是正常 Tab 停留点。
+    """
+    from PyQt6.QtCore import Qt
+
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        chips = win._filter_btns
+        for key in ("all", "active", "completed", "failed"):
+            assert chips[key].focusPolicy() == Qt.FocusPolicy.StrongFocus, key
+        # 四颗得真的 Tab 得到：一站一站往后走
+        _tab_to(win, qt_app, chips["all"], chips["active"])
+        _tab_to(win, qt_app, chips["active"], chips["completed"])
+        _tab_to(win, qt_app, chips["completed"], chips["failed"])
+
+        # 点已选中的那颗：不能把自己放倒（互斥改成手工维护后这是唯一防线）
+        checked_key = next(k for k, b in chips.items() if b.isChecked())
+        chips[checked_key].click()
+        qt_app.processEvents()
+        assert [b.isChecked() for b in chips.values()] == [
+            k == checked_key for k in chips
+        ], "点已选中的芯片后选中态掉了"
+
+        # 点另一颗：只有它亮，self._filter 跟着走
+        other = next(k for k in chips if k != checked_key)
+        chips[other].click()
+        qt_app.processEvents()
+        assert [b.isChecked() for b in chips.values()] == [
+            k == other for k in chips
+        ], "点其他芯片后选中态没跟着走"
+        assert win._filter == other
+
+        # 程序化切换（_set_compact/_set_sort 之外的入口）也要把视觉刷对
+        win._set_filter("completed")
+        qt_app.processEvents()
+        assert [b.isChecked() for b in chips.values()] == [
+            k == "completed" for k in chips
+        ]
+        assert win._filter == "completed"
