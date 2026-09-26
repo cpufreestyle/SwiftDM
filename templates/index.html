@@ -472,6 +472,15 @@ body {
   .sched-badge { background: #2d2440; color: #b79cff; }
   .batch-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
 }
+/* 状态分段过滤（与桌面端一致） */
+.filter-bar { display:flex; gap:8px; margin: 14px 0 12px; flex-wrap: wrap; }
+.filter-btn { background: var(--surface2); border:1px solid var(--border); color: var(--text2);
+  border-radius:16px; padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer;
+  display:inline-flex; align-items:center; gap:6px; transition: all .15s ease; }
+.filter-btn:hover { color: var(--text); border-color: var(--accent2); }
+.filter-btn.active { background: var(--accent); border-color: var(--accent); color:#fff; }
+.filter-btn .fc { font-size:11px; opacity:.85; background: rgba(255,255,255,.12); border-radius:8px; padding:0 6px; }
+.filter-empty { color: var(--text2); font-size:13px; text-align:center; padding:28px 0; }
 </style>
 </head>
 <body>
@@ -491,6 +500,7 @@ body {
   <!-- 状态栏 -->
   <div class="stats-bar" id="statsBar">
     <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span></div>
+    <div class="stat-item overall"><span class="icon">&#128200;</span><span class="value" id="overallProgress">--</span></div>
     <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10006;</span><span class="label">失败</span><span class="value" id="failedCount" style="color:var(--red)">0</span></div>
@@ -538,6 +548,14 @@ body {
       <button class="btn btn-secondary btn-sm" onclick="resumeAll()">&#9654; 全部恢复</button>
       <button class="btn btn-danger btn-sm" onclick="clearCompleted()">&#128465; 清除已完成</button>
     </div>
+  </div>
+
+  <!-- 状态分段过滤 -->
+  <div class="filter-bar" id="filterBar">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">全部<span class="fc" id="fc-all">0</span></button>
+    <button class="filter-btn" data-filter="active" onclick="setFilter('active')">进行中<span class="fc" id="fc-active">0</span></button>
+    <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
+    <button class="filter-btn" data-filter="failed" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
   </div>
 
   <!-- 下载列表 -->
@@ -724,16 +742,38 @@ document.getElementById("urlInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") addTask();
 });
 
-// 支持拖拽 URL 到输入框
+// 拖拽即添加：支持 http(s)/magnet、多行、uri-list（去重）
 document.addEventListener("dragover", e => e.preventDefault());
-document.addEventListener("drop", e => {
+document.addEventListener("drop", async e => {
   e.preventDefault();
-  const text = e.dataTransfer.getData("text/plain");
-  if (text && text.startsWith("http")) {
-    document.getElementById("urlInput").value = text;
-    addTask();
-  }
+  const urls = extractDropUrls(e.dataTransfer);
+  if (!urls.length) return;
+  let ok = 0;
+  for (const url of urls) { if (await enqueueUrl(url)) ok++; }
+  showToast(ok > 1 ? `已添加 ${ok} 个下载任务` : "已添加下载任务");
 });
+
+function extractDropUrls(dt) {
+  const out = [];
+  const push = s => {
+    s = (s || "").trim();
+    if (s && (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("magnet:"))) out.push(s);
+  };
+  try { (dt.getData("text/uri-list") || "").split(/\r?\n/).forEach(l => { if (l && !l.startsWith("#")) push(l); }); } catch (e) {}
+  try { (dt.getData("text/plain") || "").split(/\s+/).forEach(push); } catch (e) {}
+  return [...new Set(out)];
+}
+
+async function enqueueUrl(url) {
+  try {
+    const res = await api("/api/add", { method: "POST", body: JSON.stringify({ url, segments: 8 }) });
+    if (res.success) return true;
+    showToast(res.error || `添加失败: ${url.slice(0, 40)}`, "error");
+  } catch (err) {
+    showToast(`添加失败: ${url.slice(0, 40)}`, "error");
+  }
+  return false;
+}
 
 // ===== 操作按钮 =====
 async function pauseTask(id) {
@@ -779,9 +819,53 @@ async function clearCompleted() {
 }
 
 // ===== 渲染 =====
+// ===== 状态分段过滤（与桌面端一致）=====
+let currentFilter = "all";
+let _lastTasks = [];
+
+function matchFilter(t) {
+  switch (currentFilter) {
+    case "active": return t.status === "downloading" || t.status === "pending" || t.status === "paused";
+    case "completed": return t.status === "completed";
+    case "failed": return t.status === "failed" || t.status === "cancelled";
+    default: return true;
+  }
+}
+
+function currentFilterLabel() {
+  return { all: "全部", active: "进行中", completed: "已完成", failed: "失败" }[currentFilter] || "该";
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
+  renderTasks(_lastTasks);
+}
+
+function updateFilterCounts(tasks) {
+  const c = { all: tasks.length, active: 0, completed: 0, failed: 0 };
+  tasks.forEach(t => {
+    if (t.status === "downloading" || t.status === "pending" || t.status === "paused") c.active++;
+    else if (t.status === "completed") c.completed++;
+    else if (t.status === "failed" || t.status === "cancelled") c.failed++;
+  });
+  ["all", "active", "completed", "failed"].forEach(k => {
+    const el = document.getElementById("fc-" + k);
+    if (el) el.textContent = c[k];
+  });
+}
+
 function renderTasks(tasks) {
+  _lastTasks = tasks;
+  updateFilterCounts(tasks);
+
+  // 总体进度（对已知体积的任务聚合）
+  let _dl = 0, _tt = 0;
+  tasks.forEach(t => { if (t.total_size > 0) { _dl += t.downloaded || 0; _tt += t.total_size; } });
+  const op = document.getElementById("overallProgress");
+  if (op) op.textContent = _tt > 0 ? `${formatSize(_dl)} / ${formatSize(_tt)} (${Math.floor(_dl * 100 / _tt)}%)` : "--";
+
   const container = document.getElementById("taskList");
-  const empty = document.getElementById("emptyState");
 
   if (tasks.length === 0) {
     container.innerHTML = "";
@@ -790,14 +874,20 @@ function renderTasks(tasks) {
     return;
   }
 
+  const view = tasks.filter(matchFilter);
+  if (view.length === 0) {
+    container.innerHTML = `<div class="filter-empty">${currentFilterLabel()}下暂无任务</div>`;
+    document.getElementById("taskCountLabel").textContent = `${currentFilterLabel()}下暂无任务`;
+    return;
+  }
+
   document.getElementById("taskCountLabel").textContent = `共 ${tasks.length} 个任务`;
 
-  const active = tasks.filter(t => t.status === "downloading");
-  const completed = tasks.filter(t => t.status === "completed");
-  const other = tasks.filter(t => t.status !== "downloading" && t.status !== "completed");
+  const active = view.filter(t => t.status === "downloading");
+  const completed = view.filter(t => t.status === "completed");
+  const other = view.filter(t => t.status !== "downloading" && t.status !== "completed");
 
   container.innerHTML = "";
-
   [...active, ...other, ...completed].forEach(task => {
     container.appendChild(createTaskCard(task));
   });

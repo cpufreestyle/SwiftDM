@@ -53,3 +53,17 @@ def test_filename_and_error_are_escaped(page):
     assert "escapeHtml(task.error)" in card
     # 原始插值必须消失，否则远端文件名可以注入脚本
     assert 'title="${task.filename}"' not in card
+
+
+def test_status_filter_and_overall(page):
+    assert 'id="filterBar"' in page
+    for fid in ("fc-all", "fc-active", "fc-completed", "fc-failed"):
+        assert fid in page, fid
+    assert "function setFilter" in page and "matchFilter" in page
+    assert 'id="overallProgress"' in page
+
+
+def test_drop_supports_magnet_and_multiple(page):
+    assert "extractDropUrls" in page
+    assert "magnet:" in page and "enqueueUrl" in page
+
