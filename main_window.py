@@ -263,6 +263,80 @@ def _scheduled_suffix(scheduled_at):
     return "  ⏰ " + time.strftime("%m-%d %H:%M", time.localtime(scheduled_at)) + " 开始"
 
 
+def _detail_size_text(downloaded, total):
+    """详情行的「已下载 / 总大小」文案；总大小未知时只报已下载量。"""
+    if total > 0:
+        return f"{format_size(downloaded)} / {format_size(total)}"
+    if downloaded > 0:
+        return f"{format_size(downloaded)}（总大小未知）"
+    return "-"
+
+
+def _detail_rows(task_data):
+    """任务详情面板的信息行 [(标签, 值), ...]。
+
+    直链 / 媒体 / 磁力三类任务共有字段各一行，再按类型追加专属行；
+    失败任务附失败原因与可操作建议（与卡片上的提示同源）。
+    """
+    d = task_data or {}
+    rows = [
+        ("文件名", d.get("filename") or "-"),
+        ("任务 ID", d.get("task_id") or "-"),
+        ("状态", _card_status_text(d.get("status") or "", d.get("scheduled_at"),
+                                  d.get("auto_retry_at") or 0)),
+        ("进度", f"{float(d.get('progress') or 0):.1f}%"),
+        ("已下载 / 总大小", _detail_size_text(d.get("downloaded") or 0,
+                                            d.get("total_size") or 0)),
+        ("下载速度", format_speed(d.get("speed") or 0)
+         if (d.get("speed") or 0) > 0 and d.get("status") == "downloading" else "-"),
+        ("预计剩余", d.get("eta") or "-"),
+        ("保存目录", d.get("save_dir") or d.get("filepath") or "-"),
+    ]
+    if (d.get("kind") or "http") == "torrent":
+        rows += [
+            ("传输协议", d.get("protocol") or "-"),
+            ("种子 / 同伴", f"{d.get('seeds') or 0} / {d.get('peers') or 0}"),
+        ]
+    if d.get("resolution"):
+        rows.append(("分辨率", f"{d['resolution']}p"))
+    err = (d.get("error") or "").strip()
+    if err:
+        rows.append(("失败原因", err))
+        hint = _reason_hint(d.get("error_reason"))
+        if hint:
+            rows.append(("处理建议", hint))
+    if d.get("url"):
+        rows.append(("下载链接", d["url"]))
+    return rows
+
+
+def _segment_rows(task_data):
+    """分段进度明细 [{"done": int, "total": int}, ...]；不足两段返回 []。
+
+    每段的实际字节区间由 to_dict 的 segments_offsets 还原（最后一段吃掉余数），
+    与 downloader._calc_segments 的切分一致；单段任务的整体进度条已等价，
+    无需逐段展示。
+    """
+    d = task_data or {}
+    offsets = d.get("segments_offsets") or []
+    if not isinstance(offsets, (list, tuple)) or len(offsets) < 2:
+        return []
+    progress = d.get("segments_progress") or []
+    rows = []
+    for i, span in enumerate(offsets):
+        try:
+            start, end = int(span[0]), int(span[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        total = max(end - start + 1, 0)
+        try:
+            done = int(progress[i])
+        except (TypeError, ValueError, IndexError):
+            done = 0
+        rows.append({"done": min(done, total) if total else done, "total": total})
+    return rows
+
+
 def _scheduled_at(task_id):
     """任务定时启动时间（epoch 秒）；未定时返回 None。与 Web 端 _with_schedule 同源。"""
     try:
@@ -650,6 +724,7 @@ class TaskCard(QFrame):
     """单个下载任务卡片"""
     action_triggered = pyqtSignal(str, str)  # action, task_id
     selected = pyqtSignal(str)              # task_id：点击卡片即选中（键盘导航配合）
+    activated = pyqtSignal(str)             # task_id：双击卡片（打开任务详情）
 
     def __init__(self, task_data, parent=None, theme=None):
         super().__init__(parent)
@@ -925,6 +1000,11 @@ class TaskCard(QFrame):
             self._drag_start_pos = None
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        """双击卡片打开任务详情面板（Enter 打开文件之外的“先看状态”入口）。"""
+        self.activated.emit(self.task_id)
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event):
         if self._drag_start_pos is None or not self.filepath:
             super().mouseMoveEvent(event)
@@ -1004,6 +1084,7 @@ class TaskCard(QFrame):
             add("打开文件", "open")
         elif status in ("failed", "cancelled"):
             add("重试", "retry")
+        add("查看详情", "details")
         if status != "pending":
             # 下载中/暂停/失败/取消都能定位目录；失败时可查看分片残留决定是否手动续传
             add("打开文件夹", "open_folder")
@@ -1358,6 +1439,167 @@ class AddDialog(QDialog):
         }
 
 
+class TaskDetailDialog(QDialog):
+    """任务详情面板：双击卡片或右键「查看详情」打开。
+
+    非模态 + 500ms 自轮询刷新；任务被删除后数据源返回 None，面板自动关闭。
+    按钮动作经 action_requested 抛回主窗口，与卡片按钮共用同一条处理链。
+    """
+
+    action_requested = pyqtSignal(str, str)  # action, task_id
+
+    def __init__(self, task_id, task_data, fetch=None, parent=None, theme=None):
+        super().__init__(parent)
+        self._task_id = task_id
+        self._fetch = fetch  # callable -> dict | None：任务已不存在时返回 None
+        self._theme = theme if theme in THEMES else "dark"
+        self._tokens = THEMES[self._theme]
+        self.setWindowTitle("任务详情")
+        self.setMinimumWidth(520)
+        self.setStyleSheet(self._qss())
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 16)
+        self.title_label = QLabel()
+        self.title_label.setObjectName("detailTitle")
+        layout.addWidget(self.title_label)
+
+        self.grid = QFormLayout()
+        self.grid.setSpacing(6)
+        self.grid.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        layout.addLayout(self.grid)
+
+        # 分段进度区：只有真正多段的任务才显示
+        self.seg_wrap = QWidget()
+        seg_box = QVBoxLayout(self.seg_wrap)
+        seg_box.setContentsMargins(0, 0, 0, 0)
+        seg_box.setSpacing(4)
+        seg_title = QLabel("分段进度")
+        seg_title.setObjectName("detailSection")
+        seg_box.addWidget(seg_title)
+        self.seg_rows = QVBoxLayout()
+        self.seg_rows.setSpacing(4)
+        seg_box.addLayout(self.seg_rows)
+        layout.addWidget(self.seg_wrap)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(self.reject)
+        btn_folder = btns.addButton("打开文件夹",
+                                    QDialogButtonBox.ButtonRole.ActionRole)
+        btn_folder.clicked.connect(
+            lambda: self.action_requested.emit("open_folder", self._task_id))
+        btn_link = btns.addButton("复制链接",
+                                  QDialogButtonBox.ButtonRole.ActionRole)
+        btn_link.clicked.connect(
+            lambda: self.action_requested.emit("copy_link", self._task_id))
+        layout.addWidget(btns)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._poll)
+        self._last_data = {}
+        self._timer.start(500)
+        self.update_data(task_data)
+
+    def _qss(self):
+        """详情面板样式（全部取主题 token，跟随亮/暗主题）。"""
+        t = self._tokens
+        return f"""
+            QDialog {{ background-color: {t['surface']};
+                       border: 1px solid {t['border']}; border-radius: 10px; }}
+            QLabel {{ font-size: 13px; color: {t['text']}; }}
+            QLabel#detailTitle {{ font-size: 15px; font-weight: 700; color: {t['textStrong']}; }}
+            QLabel#detailSection {{ font-size: 12px; font-weight: 700; color: {t['textMuted']}; }}
+            QLabel#detailSegHead {{ font-size: 11px; color: {t['textMuted']}; }}
+            QLabel#detailSegText {{ font-size: 11px; color: {t['text']}; }}
+        """
+
+    def apply_theme(self, theme):
+        """切换主题（主窗口切换时同步刷新本面板）。"""
+        if theme not in THEMES:
+            return
+        self._theme = theme
+        self._tokens = THEMES[theme]
+        self.setStyleSheet(self._qss())
+        self._rebuild_segments(_segment_rows(self._last_data or {}))
+
+    @staticmethod
+    def _clear_layout(layout):
+        """清空布局并销毁子控件（信息行/分段条每次全量重建）。"""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _rebuild_rows(self, rows):
+        self._clear_layout(self.grid)
+        for label, value in rows:
+            value_label = QLabel(str(value))
+            value_label.setWordWrap(True)
+            value_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.grid.addRow(f"{label}:", value_label)
+
+    def _rebuild_segments(self, segments):
+        """按最新分段进度重绘进度条；单段任务隐藏整个区域。"""
+        self._clear_layout(self.seg_rows)
+        if len(segments) < 2:
+            self.seg_wrap.setVisible(False)
+            return
+        self.seg_wrap.setVisible(True)
+        t = self._tokens
+        for i, seg in enumerate(segments):
+            done = int(seg.get("done") or 0)
+            total = int(seg.get("total") or 0)
+            pct = int(done * 100 / total) if total > 0 else 0
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            head = QLabel(f"段 {i + 1}")
+            head.setObjectName("detailSegHead")
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(min(max(pct, 0), 100))
+            bar.setTextVisible(False)
+            bar.setFixedHeight(6)
+            bar.setStyleSheet(
+                f"QProgressBar{{background:{t['input']};border:none;border-radius:3px;}}"
+                f"QProgressBar::chunk{{background:{t['accent']};border-radius:3px;}}")
+            text = QLabel(f"{format_size(done)} / {format_size(total)} · {pct}%")
+            text.setObjectName("detailSegText")
+            row_layout.addWidget(head)
+            row_layout.addWidget(bar, 1)
+            row_layout.addWidget(text)
+            self.seg_rows.addWidget(row)
+
+    def update_data(self, task_data):
+        """刷新标题、信息行与分段进度（初始化与轮询共用）。"""
+        d = task_data or {}
+        self._last_data = d
+        filename = d.get("filename") or "任务详情"
+        self.title_label.setText(filename)
+        self.setWindowTitle(f"{filename} - 任务详情")
+        self._rebuild_rows(_detail_rows(d))
+        self._rebuild_segments(_segment_rows(d))
+
+    def _poll(self):
+        """每 500ms 拉一次最新状态；任务已被删除则自动关闭面板。"""
+        if self._fetch is None:
+            return
+        try:
+            data = self._fetch()
+        except Exception:
+            return
+        if data is None:
+            self._timer.stop()
+            self.reject()
+            return
+        self.update_data(data)
+
+
 class MainWindow(QMainWindow):
     """SwiftDM 主窗口"""
     log_signal = pyqtSignal(str)
@@ -1378,6 +1620,7 @@ class MainWindow(QMainWindow):
         self._cards = {}  # task_id -> TaskCard
         self._compact = False  # 任务列表紧凑模式
         self._selected_task_id = None  # 键盘/鼠标选中的任务（↑/↓ 导航）
+        self._detail_dialog = None    # 打开中的任务详情面板（持引用防被 GC）
         self._search = ""  # 任务搜索关键字（文件名/链接，大小写不敏感）
         self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
@@ -1647,6 +1890,9 @@ class MainWindow(QMainWindow):
             dock.setStyleSheet(
                 f"QDockWidget::title{{background:{t['toolbar']};"
                 f"color:{t['textMuted']};padding:4px 10px;}}")
+        detail = getattr(self, "_detail_dialog", None)
+        if detail is not None:
+            detail.apply_theme(theme)
         log_edit = getattr(self, "log_edit", None)
         if log_edit is not None:
             log_edit.setStyleSheet(
@@ -1864,6 +2110,7 @@ class MainWindow(QMainWindow):
                     card.set_compact(self._compact)
                     card.action_triggered.connect(self._handle_action)
                     card.selected.connect(lambda tid: self._select_task(tid))
+                    card.activated.connect(lambda tid: self._show_task_detail(tid))
                     self._cards[task_id] = card
                     # 插入到布局中（在 stretch 之前）
                     self.task_layout.insertWidget(self.task_layout.count() - 1, card)
@@ -1921,6 +2168,38 @@ class MainWindow(QMainWindow):
             4000
         )
         self.status_bar.showMessage(f"✓ 下载完成: {name}", 5000)
+
+    def _show_task_detail(self, task_id):
+        """打开任务详情面板：非模态、500ms 自轮询，任务被删除后自动关闭。
+
+        同一时刻只保留一个详情面板：重复打开先关掉旧面板，避免引用被覆盖后
+        旧面板的信号处理链路悬空。
+        """
+        mgr = self._get_manager()
+        task = mgr.get_task(task_id)
+        if not task:
+            return
+        old_dlg = self._detail_dialog
+        if old_dlg is not None:
+            old_dlg.reject()      # 走 done()，确保 finished 触发后再换新面板
+            old_dlg.deleteLater()
+        dlg = TaskDetailDialog(
+            task_id, task.to_dict(),
+            fetch=lambda: self._task_detail_data(task_id),
+            parent=self, theme=self._theme)
+        dlg.action_requested.connect(self._handle_action)
+        dlg.finished.connect(self._detail_dialog_closed)
+        self._detail_dialog = dlg
+        dlg.show()
+
+    def _detail_dialog_closed(self):
+        """详情面板关闭后释放引用（下次打开时重建）。"""
+        self._detail_dialog = None
+
+    def _task_detail_data(self, task_id):
+        """详情面板的数据源：返回最新任务 dict；任务已删除返回 None。"""
+        task = self._get_manager().get_task(task_id)
+        return task.to_dict() if task is not None else None
 
     def _notify_failures(self, items):
         """新失败任务的聚合通知（托盘气泡 + 状态栏）。"""
@@ -1991,6 +2270,8 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("已复制下载链接", 3000)
             else:
                 self.status_bar.showMessage("该任务没有可复制的链接", 3000)
+        elif action == "details":
+            self._show_task_detail(task_id)
         # 操作后即时落盘，避免仅依赖 5s 定时保存
         mgr.save_history()
 

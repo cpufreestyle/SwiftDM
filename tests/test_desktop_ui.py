@@ -1132,3 +1132,246 @@ def test_check_clipboard_noop_when_disabled(qt_app, monkeypatch):
     QApplication.clipboard().setText("https://a.com/x.zip")
     mw.MainWindow._check_clipboard(_Host())
     assert _Host._clip_pending is None
+
+
+def test_detail_rows_cover_shared_and_kind_specific_fields():
+    import main_window as mw
+
+    http_rows = dict(mw._detail_rows({
+        "task_id": "t1", "filename": "movie.bin",
+        "url": "https://site/movie.bin", "filepath": "C:/dl/movie.bin",
+        "save_dir": "C:/dl", "status": "downloading", "progress": 42.55,
+        "total_size": 10 * 1024 * 1024, "downloaded": 4 * 1024 * 1024,
+        "speed": 1048576, "eta": "6s", "kind": "http",
+    }))
+    assert http_rows["文件名"] == "movie.bin"
+    assert http_rows["状态"] == "● 下载中"
+    assert http_rows["进度"] == "42.5%"
+    assert http_rows["已下载 / 总大小"] == "4.0 MB / 10.0 MB"
+    assert http_rows["下载速度"] == "1.0 MB/s"
+    assert http_rows["预计剩余"] == "6s"
+    assert http_rows["保存目录"] == "C:/dl"
+    assert http_rows["下载链接"] == "https://site/movie.bin"
+    # 直链任务不出现 BT / 媒体专属行
+    assert "传输协议" not in http_rows
+    assert "种子 / 同伴" not in http_rows
+    assert "分辨率" not in http_rows
+
+    bt_rows = dict(mw._detail_rows({
+        "task_id": "t2", "filename": "linux.iso",
+        "url": "magnet:?xt=urn:btih:0123456789abcdef", "status": "downloading",
+        "kind": "torrent", "protocol": "BitTorrent", "seeds": 3, "peers": 7,
+        "total_size": 1000, "downloaded": 50,
+    }))
+    assert bt_rows["传输协议"] == "BitTorrent"
+    assert bt_rows["种子 / 同伴"] == "3 / 7"
+    assert bt_rows["已下载 / 总大小"] == "50 B / 1000 B"
+
+    failed_rows = dict(mw._detail_rows({
+        "task_id": "t3", "filename": "v.mp4", "status": "failed",
+        "error": "boom", "error_reason": "needs_ffmpeg",
+    }))
+    assert failed_rows["失败原因"] == "boom"
+    assert "ffmpeg" in failed_rows["处理建议"]
+    assert "下载链接" not in failed_rows  # 没有链接时不占一行
+
+
+def test_detail_size_text_unknown_total_falls_back():
+    import main_window as mw
+    assert mw._detail_size_text(5, 10) == "5 B / 10 B"
+    assert mw._detail_size_text(2048, 0) == "2.0 KB（总大小未知）"
+    assert mw._detail_size_text(0, 0) == "-"
+
+
+def test_segment_rows_reconstructs_byte_ranges_and_skips_junk():
+    import main_window as mw
+    rows = mw._segment_rows({
+        "segments_offsets": [[0, 9], [10, 19], [20, 24]],
+        "segments_progress": [4, 10, "bad"],
+    })
+    assert rows == [{"done": 4, "total": 10}, {"done": 10, "total": 10},
+                    {"done": 0, "total": 5}]
+    # 单段 / 无分段数据 / 结构异常都不展示分段区
+    assert mw._segment_rows({"segments_offsets": [[0, 9]], "segments_progress": [3]}) == []
+    assert mw._segment_rows({"segments_progress": [1, 2]}) == []
+    assert mw._segment_rows({"segments_offsets": "oops", "segments_progress": [1]}) == []
+    assert mw._segment_rows(None) == []
+
+
+def test_download_task_to_dict_reports_segments_even_when_cached():
+    import downloader
+    t = downloader.DownloadTask("t1", "https://x/y.bin", "C:/tmp", "y.bin", 2)
+    first = t.to_dict()
+    assert first["segments_progress"] == []
+    assert first["segments_offsets"] == []
+    assert first["segments_total"] == 0
+    # 缓存命中路径也必须拿到最新分段进度（否则详情面板进度条会卡住）
+    t._segment_offsets = [(0, 9), (10, 19)]
+    t._segment_progress = [3, 7]
+    cached = t.to_dict()
+    assert cached["segments_progress"] == [3, 7]
+    assert cached["segments_total"] == 2
+    assert cached["segments_offsets"] == [[0, 9], [10, 19]]
+
+
+def test_media_and_torrent_to_dict_expose_segment_placeholders():
+    import main_window
+    from media import MediaTask
+    from torrent import TorrentTask
+    tasks = [MediaTask("m1", "https://x/v.m3u8", "C:/tmp", "v.mp4", 4),
+             TorrentTask("b1", "magnet:?xt=urn:btih:0123456789abcdef", "C:/tmp")]
+    for task in tasks:
+        d = task.to_dict()
+        assert d["segments_progress"] == []
+        assert d["segments_offsets"] == []
+        assert d["segments_total"] == 0
+        detail = dict(main_window._detail_rows(d))
+        assert detail["文件名"] == task.filename
+        assert detail["保存目录"] == task.save_dir
+
+
+def test_task_card_double_click_emits_activated(qt_app):
+    import main_window as mw
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QPointF, Qt
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "status": "downloading", "total_size": 10,
+                        "downloaded": 1})
+    got = []
+    card.activated.connect(lambda tid: got.append(tid))
+    ev = QMouseEvent(QMouseEvent.Type.MouseButtonDblClick, QPointF(2, 2),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    card.mouseDoubleClickEvent(ev)
+    assert got == ["t1"]
+
+
+def test_context_menu_offers_details_entry(qt_app, monkeypatch):
+    import main_window as mw
+
+    created = []
+
+    class _FakeAction:
+        def __init__(self, text, slot=None):
+            self.text = text
+            self._slot = slot
+
+        def trigger(self):
+            if self._slot:
+                self._slot()
+
+    class FakeMenu:
+        def __init__(self, parent=None):
+            self.actions = []
+            created.append(self)
+
+        def addAction(self, text, slot=None):
+            act = _FakeAction(text, slot)
+            self.actions.append(act)
+            return act
+
+        def addSeparator(self):
+            self.actions.append(_FakeAction("---sep---"))
+
+        def exec(self, pos=None):
+            pass
+
+    monkeypatch.setattr(mw, "QMenu", FakeMenu)
+
+    class _Ev:
+        def globalPos(self):
+            return None
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "url": "https://site/x.bin", "status": "downloading"})
+    emitted = []
+    card.action_triggered.connect(lambda a, t: emitted.append((a, t)))
+    card.contextMenuEvent(_Ev())
+    texts = [a.text for a in created[-1].actions]
+    details = [a for a in created[-1].actions if a.text == "查看详情"]
+    assert len(details) == 1, texts
+    details[0].trigger()
+    assert emitted == [("details", "t1")]
+
+
+def test_handle_action_details_opens_task_detail(qt_app):
+    import main_window as mw
+
+    class _Task:
+        task_id = "t1"
+
+    class _Mgr:
+        def get_task(self, tid):
+            return _Task()
+
+        def save_history(self):
+            pass
+
+    class _Bar:
+        def showMessage(self, text, timeout=0):
+            pass
+
+    class _Host:
+        def __init__(self):
+            self._mgr = _Mgr()
+            self.status_bar = _Bar()
+            self.shown = []
+
+        def _get_manager(self):
+            return self._mgr
+
+        def _show_task_detail(self, task_id):
+            self.shown.append(task_id)
+
+    host = _Host()
+    mw.MainWindow._handle_action(host, "details", "t1")
+    assert host.shown == ["t1"]
+
+
+def test_task_detail_dialog_renders_rows_and_auto_closes(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QFormLayout, QDialog
+
+    data = {
+        "task_id": "t1", "filename": "movie.bin", "url": "https://site/movie.bin",
+        "save_dir": "C:/dl", "status": "downloading", "progress": 50.0,
+        "total_size": 20, "downloaded": 10, "speed": 5, "eta": "2s",
+        "kind": "http", "segments": 2,
+        "segments_progress": [5, 5],
+        "segments_offsets": [[0, 9], [10, 19]],
+        "segments_total": 2,
+    }
+    polled = []
+    dlg = mw.TaskDetailDialog("t1", data, fetch=lambda: polled.append(1) or None)
+    dlg._timer.stop()  # 手动驱动轮询，避免测试间相互干扰
+    assert dlg.title_label.text() == "movie.bin"
+    labels = [dlg.grid.itemAt(i, QFormLayout.ItemRole.LabelRole).widget().text()
+              for i in range(dlg.grid.rowCount())]
+    assert "下载链接:" in labels
+    assert not dlg.seg_wrap.isHidden()
+    assert dlg.seg_rows.count() == 2
+
+    # 单段任务：分段区整体隐藏，不浪费高度
+    single = dict(data, segments=1, segments_progress=[10],
+                  segments_offsets=[[0, 19]], segments_total=1)
+    dlg.update_data(single)
+    assert dlg.seg_wrap.isHidden()
+
+    dlg.update_data(data)
+    dlg._poll()
+    assert polled
+    assert dlg.result() == QDialog.DialogCode.Rejected
+    assert not dlg._timer.isActive()
+
+
+def test_task_detail_dialog_follows_theme(qt_app):
+    import main_window as mw
+    data = {"task_id": "t1", "filename": "x.bin", "status": "downloading"}
+    dlg = mw.TaskDetailDialog("t1", data, fetch=None, theme="light")
+    dlg._timer.stop()
+    assert mw.THEMES["light"]["surface"] in dlg.styleSheet()
+    dlg.apply_theme("dark")
+    assert mw.THEMES["dark"]["surface"] in dlg.styleSheet()
+    dlg.apply_theme("nonsense")
+    assert dlg._theme == "dark"

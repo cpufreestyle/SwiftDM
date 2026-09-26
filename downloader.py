@@ -851,6 +851,11 @@ class DownloadTask:
             # auto_retry_at 由管理器直接改字段（不一定走缓存失效），
             # 这里每次现取，保证桌面端和 Web 端的倒计时不会因缓存卡死。
             self._dict_cache["auto_retry_at"] = self.auto_retry_at
+            # 分段进度由下载线程高频写入，缓存命中时同样现取，
+            # 保证桌面端详情面板的每段进度条不会卡在旧值。
+            self._dict_cache["segments_progress"] = list(self._segment_progress)
+            self._dict_cache["segments_offsets"] = [list(s) for s in self._segment_offsets]
+            self._dict_cache["segments_total"] = len(self._segment_offsets)
             return self._dict_cache
         self._dict_cache = {
             "task_id": self.task_id,
@@ -869,6 +874,9 @@ class DownloadTask:
             "auto_retry_at": self.auto_retry_at,
             "kind": "http",
             "segments": self.segments,
+            "segments_progress": list(self._segment_progress),
+            "segments_offsets": [list(s) for s in self._segment_offsets],
+            "segments_total": len(self._segment_offsets),
         }
         return self._dict_cache
 
