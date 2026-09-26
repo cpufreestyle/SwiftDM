@@ -627,6 +627,24 @@ body {
   border-radius:16px; padding:5px 10px; font-size:12px; outline:none; cursor:pointer; }
 .sort-select:focus { border-color: var(--accent); }
 .filter-empty { color: var(--text2); font-size:13px; text-align:center; padding:28px 0; }
+/* ===== 键盘焦点可见性 ===== */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.btn:focus-visible,
+.filter-btn:focus-visible,
+.search-input:focus-visible,
+.sort-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 系统开启「减弱动态效果」时停掉不必要的动画 */
+@media (prefers-reduced-motion: reduce) {
+  .pulse { animation: none; }
+  .btn, .filter-btn { transition: none; }
+}
 </style>
 </head>
 <body>
@@ -634,21 +652,21 @@ body {
 
   <!-- 头部 -->
   <div class="header">
-    <div class="logo">&#11015;</div>
+    <div class="logo" aria-hidden="true">&#11015;</div>
     <div class="header-text">
       <h1>SwiftDM</h1>
       <div class="sub">高速多线程下载管理器 <span id="connStatus" style="color:var(--green)">&#9679; 已连接</span></div>
     </div>
     <button class="btn btn-secondary btn-icon settings-btn" id="themeBtn" onclick="toggleTheme()"
-            title="切换浅色/深色主题">&#127769;</button>
+            aria-label="切换浅色/深色主题" title="切换浅色/深色主题">&#127769;</button>
     <button class="btn btn-secondary btn-icon settings-btn" onclick="openDownloadDir()"
-            title="打开下载目录">&#128193;</button>
+            aria-label="打开下载目录" title="打开下载目录">&#128193;</button>
     <button class="btn btn-secondary btn-icon settings-btn" onclick="copyAllLinks()"
-            title="复制全部可见任务链接">&#128279;</button>
+            aria-label="复制全部可见任务链接" title="复制全部可见任务链接">&#128279;</button>
     <button class="btn btn-secondary btn-icon settings-btn" onclick="exportTasksCsv()"
-            title="导出任务列表 CSV">&#128190;</button>
-    <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn"
-            onclick="openSettings()" title="限速 / 完成后动作 / 依赖检测">&#9881;</button>
+            aria-label="导出任务列表 CSV" title="导出任务列表 CSV">&#128190;</button>
+    <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn" aria-expanded="false"
+            onclick="openSettings()" aria-label="限速 / 完成后动作 / 依赖检测" title="限速 / 完成后动作 / 依赖检测">&#9881;</button>
   </div>
 
   <!-- 状态栏 -->
@@ -665,8 +683,8 @@ body {
   <div class="add-wrap">
     <div class="add-bar">
       <input type="text" id="urlInput" placeholder="粘贴下载链接 (HTTP/HTTPS / 磁力 / m3u8 / 视频网页) ..." autocomplete="off">
-      <button class="btn btn-secondary btn-icon" onclick="addFromClipboard()" title="粘贴剪贴板">&#128203;</button>
-      <button class="btn btn-secondary btn-icon" id="advToggle" onclick="toggleAdvanced()" title="类型 / 清晰度 / 定时">&#8987;</button>
+      <button class="btn btn-secondary btn-icon" onclick="addFromClipboard()" aria-label="粘贴剪贴板" title="粘贴剪贴板">&#128203;</button>
+      <button class="btn btn-secondary btn-icon" id="advToggle" aria-expanded="false" onclick="toggleAdvanced()" aria-label="类型 / 清晰度 / 定时" title="类型 / 清晰度 / 定时">&#8987;</button>
       <button class="btn btn-primary" onclick="addTask()">&#11015; 开始下载</button>
     </div>
     <div class="add-adv" id="addAdv">
@@ -716,13 +734,13 @@ body {
   </div>
 
   <!-- 状态分段过滤 -->
-  <div class="filter-bar" id="filterBar">
-    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">全部<span class="fc" id="fc-all">0</span></button>
-    <button class="filter-btn" data-filter="active" onclick="setFilter('active')">进行中<span class="fc" id="fc-active">0</span></button>
-    <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
-    <button class="filter-btn" data-filter="failed" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
-    <input type="text" id="searchInput" class="search-input" placeholder="搜索任务…" oninput="setSearch(this.value)">
-    <select id="sortSelect" class="sort-select" onchange="setSort(this.value)">
+  <div class="filter-bar" id="filterBar" role="group" aria-label="按状态筛选">
+    <button class="filter-btn active" data-filter="all" aria-pressed="true" onclick="setFilter('all')">全部<span class="fc" id="fc-all">0</span></button>
+    <button class="filter-btn" data-filter="active" aria-pressed="false" onclick="setFilter('active')">进行中<span class="fc" id="fc-active">0</span></button>
+    <button class="filter-btn" data-filter="completed" aria-pressed="false" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
+    <button class="filter-btn" data-filter="failed" aria-pressed="false" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
+    <input type="text" id="searchInput" class="search-input" aria-label="搜索任务" placeholder="搜索任务…" oninput="setSearch(this.value)">
+    <select id="sortSelect" aria-label="排序" class="sort-select" onchange="setSort(this.value)">
       <option value="default">默认</option>
       <option value="name">文件名</option>
       <option value="size">大小</option>
@@ -745,10 +763,10 @@ body {
 </div>
 
 ﻿<!-- 设置面板 -->
-<div class="modal" id="settingsModal">
+<div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal-card">
     <div class="modal-head">
-      <h2>下载设置</h2>
+      <h2 id="settingsTitle">下载设置</h2>
       <button class="btn btn-secondary btn-sm" onclick="closeSettings()">&#10006; 关闭</button>
     </div>
 
@@ -879,7 +897,7 @@ body {
 </div>
 
 <!-- 任务详情（与桌面端详情面板同源） -->
-<div class="modal" id="detailModal">
+<div class="modal" id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
   <div class="modal-card">
     <div class="modal-head">
       <h2 id="detailTitle">任务详情</h2>
@@ -891,7 +909,7 @@ body {
 </div>
 
 <!-- Toast -->
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 // ===== 工具函数 =====
@@ -941,11 +959,6 @@ async function api(path, options = {}) {
 }
 
 // ===== 添加任务 =====
-function escapeHtml(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c]));
-}
 
 // 后端 /api/add 的 reason -> 人话（流媒体失败原因大多来自嗅探/解析，用户需要知道下一步做什么）
 const REASON_HINTS = {
@@ -975,7 +988,9 @@ function addOptions() {
 function toggleAdvanced() {
   const box = document.getElementById("addAdv");
   box.classList.toggle("open");
-  document.getElementById("advToggle").classList.toggle("active");
+  const tgl = document.getElementById("advToggle");
+  tgl.classList.toggle("active");
+  setPanelExpanded("advToggle", box.classList.contains("open"));
 }
 
 async function addTask() {
@@ -1364,7 +1379,15 @@ let currentFilter = "all";
 try { const _sf = localStorage.getItem("swiftdm.filter");
      if (["all","active","completed","failed"].indexOf(_sf) >= 0) currentFilter = _sf;
 } catch (e) {}
-function syncFilterButtons(){ document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === currentFilter)); }
+function syncFilterButtons(){
+  // 筛选按钮和紧凑按钮共用 .filter-btn 类名，选择器必须收窄到 [data-filter]，
+  // 否则 setFilter 会把紧凑按钮的 active 类名一起抹掉
+  document.querySelectorAll(".filter-btn[data-filter]").forEach(b => {
+    const on = b.dataset.filter === currentFilter;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
  syncFilterButtons();
 let _lastTasks = [];
 let _tasksById = {};
@@ -1420,7 +1443,10 @@ function toggleCompact() {
 }
 function applyCompact() {
   const btn = document.getElementById("compactBtn");
-  if (btn) btn.classList.toggle("active", compactMode);
+  if (btn) {
+    btn.classList.toggle("active", compactMode);
+    btn.setAttribute("aria-pressed", compactMode ? "true" : "false");
+  }
   const list = document.getElementById("taskList");
   if (list) list.classList.toggle("compact", compactMode);
 }
@@ -1448,7 +1474,7 @@ function setFilter(f) {
   try { localStorage.setItem("swiftdm.filter", f); } catch (e) {}
   api("/api/settings", { method: "POST", body: JSON.stringify({ filter: f }) })
     .then(res => { if (!res || !res.success) showToast("筛选保存失败", "error"); });
-  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
+  document.querySelectorAll(".filter-btn[data-filter]").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
   renderTasks(_lastTasks);
   syncFilterButtons();
 }
@@ -1736,7 +1762,7 @@ function createTaskCard(task) {
 
   card.innerHTML = `
     <div class="task-top">
-      <label class="task-pick" title="选择任务"><input type="checkbox" class="task-pick-box" data-id="${task.task_id}"${_selected.has(task.task_id) ? " checked" : ""} onchange="togglePick(this)"></label>
+      <label class="task-pick" title="选择任务"><input type="checkbox" class="task-pick-box" aria-label="选择任务" data-id="${task.task_id}"${_selected.has(task.task_id) ? " checked" : ""} onchange="togglePick(this)"></label>
       <div class="task-info">
         <div class="task-filename" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
         <div class="task-url" title="${escapeHtml(task.url)}">${escapeHtml(task.url)}</div>
@@ -1752,7 +1778,8 @@ function createTaskCard(task) {
     </div>
     <div class="task-progress">
       <div class="progress-wrapper">
-        <div class="progress-bar">
+        <div class="progress-bar" role="progressbar" aria-label="下载进度"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressPercent.toFixed(1)}">
           <div class="progress-fill ${task.status}" style="width:${progressPercent}%"></div>
         </div>
         <span class="progress-text">${progressPercent.toFixed(1)}%</span>
@@ -1779,8 +1806,15 @@ let settingsTimer = null;
 function KB2B(v) { return Math.max(0, Math.round((parseFloat(v) || 0) * 1024)); }
 function B2KB(v) { return v > 0 ? Math.round(v / 1024) : 0; }
 
+// 开合状态同步到按钮上，读屏软件才知道面板是开是合
+function setPanelExpanded(btnId, open) {
+  const b = document.getElementById(btnId);
+  if (b) b.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function openSettings() {
   document.getElementById("settingsModal").classList.add("open");
+  setPanelExpanded("settingsBtn", true);
   refreshSettings();
   clearInterval(settingsTimer);
   settingsTimer = setInterval(refreshSettings, 2000);   // 倒计时要继续走，不必等 SSE
@@ -1788,6 +1822,7 @@ function openSettings() {
 
 function closeSettings() {
   document.getElementById("settingsModal").classList.remove("open");
+  setPanelExpanded("settingsBtn", false);
   clearInterval(settingsTimer);
   settingsTimer = null;
 }

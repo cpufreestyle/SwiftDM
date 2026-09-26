@@ -542,3 +542,63 @@ def test_settings_api_round_trips_ui_preferences(monkeypatch):
     finally:
         for key, value in saved.items():
             config.set(key, value)
+
+
+def test_keyboard_focus_is_visible_and_motion_can_be_turned_off(page):
+    # 纯键盘用户此前只能靠 border-color 变化判断焦点，弱光下等于没有焦点
+    assert ":focus-visible" in page and "outline-offset: 2px" in page
+    # 焦点环要压过 .add-bar input / .search-input 的 outline:none，靠同名类兜一手
+    for cls in (".btn:focus-visible", ".filter-btn:focus-visible",
+                ".search-input:focus-visible", ".sort-select:focus-visible"):
+        assert cls in page, cls
+    # 系统开启「减弱动态效果」时呼吸动画必须停
+    reduced = page[page.index("prefers-reduced-motion"):]
+    assert "animation: none" in reduced
+
+
+def test_icon_only_buttons_have_accessible_names(page):
+    # 图标按钮没有文字，不写 aria-label 时读屏软件只能读出空；
+    # title 必须留着，鼠标悬浮提示还靠它
+    for marker in ('id="themeBtn"', 'onclick="openDownloadDir()"',
+                   'onclick="copyAllLinks()"', 'onclick="exportTasksCsv()"',
+                   'onclick="addFromClipboard()"', 'id="advToggle"'):
+        seg = page[page.index(marker):]
+        assert 'aria-label="' in seg[:seg.index(">")], marker
+        assert 'title="' in seg[:seg.index(">")], marker
+
+
+def test_toast_and_modals_are_announced(page):
+    # toast 是全部操作反馈的唯一通道，必须进无障碍树
+    toast = page[page.index('id="toast"'):]
+    tag = toast[:toast.index(">")]
+    assert 'role="status"' in tag and 'aria-live="polite"' in tag
+    for mid in ("settingsModal", "detailModal"):
+        seg = page[page.index('id="%s"' % mid):]
+        seg = seg[:seg.index(">")]
+        assert 'role="dialog"' in seg and 'aria-modal="true"' in seg, mid
+    assert 'aria-labelledby="settingsTitle"' in page and 'id="settingsTitle"' in page
+
+
+def test_filters_and_compact_report_pressed_state(page):
+    # 筛选/紧凑是开关语义，没有 aria-pressed 时读屏用户听不出当前是开是关
+    assert 'role="group"' in page and 'aria-label="按状态筛选"' in page
+    for f in ("all", "active", "completed", "failed"):
+        assert 'data-filter="%s" aria-pressed=' % f in page, f
+    sync = page[page.index("function syncFilterButtons"):page.index("let _lastTasks")]
+    assert 'setAttribute("aria-pressed"' in sync
+    # 紧凑按钮复用 .filter-btn 类名，选择器不收窄就会被 setFilter 一起抹掉 active
+    assert 'querySelectorAll(".filter-btn[data-filter]")' in sync
+    assert 'querySelectorAll(".filter-btn")' not in sync
+    assert 'setAttribute("aria-pressed"' in page[page.index("function applyCompact"):]
+
+
+def test_card_progress_and_pick_box_are_labelled(page):
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert 'role="progressbar"' in card and "aria-valuenow" in card
+    assert 'class="task-pick-box" aria-label=' in card
+
+
+def test_escape_html_is_declared_once(page):
+    # 同名函数声明两次，后一份静默覆盖前一份，XSS 注释也跟着失效
+    assert page.count("function escapeHtml(") == 1
