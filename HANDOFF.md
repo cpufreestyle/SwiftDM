@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `2285eac`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 18 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `e296abc`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 19 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，最后让详情面板本身就能操作任务。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作。
 
-本轮共 18 个 commit（HEAD = `2285eac`，`git status -sb` 与 origin/main 0/0）：
+本轮共 19 个 commit（HEAD = `e296abc`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -236,9 +236,40 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 踩坑记录：桌面端**必须自己存一份按钮引用**。`_clear_layout` 里只调 `deleteLater()`，
      控件要等下一次事件循环才销毁，`findChildren` 在本轮里照样能捞出上一个状态的按钮，
      照 findChildren 写断言会看到「暂停 + 继续」同时存在，测试就成了假的。
+18. **桌面端多选批量操作，与 Web 端对齐**（`e296abc`）：Web 端早就有卡片勾选框 +
+    `#selectBar`（暂停/继续/重试/删除 + 取消选择），桌面端却只能逐张卡片操作，
+    「挑 10 个失败任务统一重试」得点 10 次；工具栏那排「全部暂停」又是无差别全量，
+    粒度只有「一个」和「全部」两档。
+   - `main_window.py`：
+     - 模块级 `BATCH_STATUS` / `BATCH_LABELS` / `batch_targets()`：与 Web 端 `batchTargets`
+       逐字同一套状态取舍（pause=downloading、resume=paused、retry=failed/cancelled、
+       remove=不限），勾选中已被清掉的任务顺带滤除，两个客户端不会各漂各的；
+     - `TaskCard` 左上角新增勾选框 `#pickBox`（☐/☑ 字形、内联样式随主题重刷），
+       Ctrl+点击卡片等效于点它；新增 `toggled(task_id, checked)` 信号；
+       勾选态另有一条 `TaskCard[checked="true"]` 描边，和单选高亮区分；
+     - 筛选栏与滚动区之间新增多选操作条 `#selectBar`：计数 + 四个批量按钮
+       （按可用性置灰）+ 取消选择；删除复用既有的 `_clear_confirm_text` 确认框；
+     - `_selected_ids` 在 `_refresh` 里跟着任务生死收刈（对应 Web 端 `pruneSelection`），
+       卡片因状态变化重建后由 `_sync_selection_visual` 回放勾选态；
+     - Ctrl+A 全选当前过滤 + 搜索下可见的任务；Esc 先收起多选，没有再关详情面板；
+       普通点击/方向键保持「即单选」语义（顺带收起多选），与资源管理器一致。
+   - 刻意的不对称：① 勾选框 tooltip 与可访问名同为「选择任务」（与其它卡片按钮同一套约定），
+     「Ctrl+点击」富提示走 accessibleDescription；② 多选快捷键写进筛选栏的 kbd 提示文案，
+     与「↑↓ 选择任务 · Enter 打开」并列。
+   - 测试：`tests/test_desktop_ui.py` 新增 5 例（状态过滤纯函数、Ctrl+点击切换与回放不回声、
+     快捷键注册与 Esc 优先级、操作条端到端含删除确认与收刈、Ctrl+A/Esc 键盘路径）；
+     变异测试 4/4 全红（pause 放弃状态过滤 / Ctrl+点击退化成普通点击 /
+     点击勾选框不刷自身视觉 / Esc 不先清多选）。
+   - 踩坑记录：① `_on_pick_toggled` 必须先把卡片自身视觉态刷一遍再发信号，
+     否则「勾了等于没勾」——信号出去了但 ☐ 没变 ☑、卡片描边也没变；
+     ② 本机 `~/.swiftdm/config.json` 里的 `filter` 会泄进 GUI 测试（本机存的是
+     `completed`，导致 Ctrl+A「全选可见」选到空集），窗口级测试先钉死 `_filter = "all"`
+     再断言，别动用户的配置文件；③ QCheckBox 在 QSS 里画对勾要图片资源，
+     改用可勾选 QPushButton + ☐/☑ 字形，主题着色零成本。
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
+- （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 - （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
