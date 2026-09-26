@@ -47,11 +47,21 @@ def _status_title(active, total_speed, total):
     return "SwiftDM - 高速下载管理器"
 
 
-def _tray_tip(active, total_speed, total):
-    """Tray tooltip: live speed and running count."""
+def _tray_tip(active, total_speed, total, failed=0, countdown=None):
+    """Tray tooltip: live speed and running count.
+
+    空闲/最小化时用户只能看到 tooltip，因此附带失败数
+    与「全部完成后动作」倒计时（关机/休眠即将触发时必须可见）。
+    """
     if active > 0:
-        return f"SwiftDM · ↓{format_speed(total_speed)} · 下载中 {active}/{total}"
-    return "SwiftDM - 下载管理器"
+        text = f"SwiftDM · ↓{format_speed(total_speed)} · 下载中 {active}/{total}"
+    else:
+        text = "SwiftDM - 下载管理器"
+    if failed > 0:
+        text += f" · ✗ {failed} 个失败"
+    if countdown:
+        text += f" · {countdown}"
+    return text
 
 
 def _clear_confirm_text(n):
@@ -1356,7 +1366,9 @@ class MainWindow(QMainWindow):
                 f"失败: {stats['failed']}  |  暂停: {stats['paused']}  |  总计: {stats['total']}"
             )
             self.setWindowTitle(_status_title(stats["active"], stats["total_speed"], stats["total"]))
-            self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"], stats["total"]))
+            self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"],
+                                           stats["total"], stats.get("failed", 0),
+                                           self._finish_countdown_text_now()))
             self._update_tray_icon(stats["active"], stats["failed"])
             self._update_overall(tasks)
             self._update_finish_countdown()
@@ -1862,14 +1874,18 @@ class MainWindow(QMainWindow):
             return
         self.status_bar.showMessage(f"已打开下载目录: {path}", 4000)
 
-    def _update_finish_countdown(self):
-        """按调度器状态刷新工具栏倒计时按钮（桌面/Web 共用 scheduler 单例）。"""
+    def _finish_countdown_text_now(self):
+        """当前「全部完成后动作」倒计时文案；无动作/已到点返回 None。"""
         try:
             from scheduler import scheduler as _dl_scheduler
             st = _dl_scheduler.status()
         except Exception:
-            return
-        text = _finish_countdown_text(st.get("finish_action"), st.get("remaining"))
+            return None
+        return _finish_countdown_text(st.get("finish_action"), st.get("remaining"))
+
+    def _update_finish_countdown(self):
+        """按调度器状态刷新工具栏倒计时按钮（桌面/Web 共用 scheduler 单例）。"""
+        text = self._finish_countdown_text_now()
         if text:
             self.finish_btn.setText(text)
             self.finish_btn.setVisible(True)

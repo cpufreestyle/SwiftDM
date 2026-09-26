@@ -494,3 +494,19 @@ def test_notify_failures_aggregates_status_and_tray(qt_app):
     assert body == expected
     assert icon == QSystemTrayIcon.MessageIcon.Warning
     assert timeout >= 4000
+
+
+def test_tray_tip_surfaces_failures_and_countdown():
+    import main_window as mw
+    # 无附加信息时与旧行为完全一致（不破捯其他断言）
+    assert mw._tray_tip(0, 0, 5) == "SwiftDM - 下载管理器"
+    assert "下载中 2/8" in mw._tray_tip(2, 1536, 8)
+    # 空闲 + 失败：tooltip 必须能看到失败数（图标只是红点）
+    tip = mw._tray_tip(0, 0, 5, failed=3)
+    assert "✗ 3 个失败" in tip
+    # 下载中 + 失败 + 倒计时：三段并列
+    tip2 = mw._tray_tip(2, 1536, 8, failed=1, countdown="12s 后关机")
+    assert "下载中 2/8" in tip2 and "✗ 1 个失败" in tip2
+    assert tip2.endswith("· 12s 后关机")
+    # countdown 为 None/空时不会留導助分隔符
+    assert mw._tray_tip(0, 0, 5, countdown=None) == "SwiftDM - 下载管理器"
