@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `3b7d9fc`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 7 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `1d9502d`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 8 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -81,7 +81,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
 
-本轮共 7 个 commit（HEAD = `3b7d9fc`，`git status -sb` 与 origin/main 0/0）：
+本轮共 8 个 commit（HEAD = `1d9502d`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -112,8 +112,18 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - `tests/test_desktop_ui.py`：新增更严的桌面守卫——QSS_TEMPLATE 里一个十六进制色值都不允许有（白色也得走令牌），已用「塞回 #fff / #abcdef」验证会红；
    - `tests/test_web_ui.py`：Web 端守卫去掉 `#fff` 白名单，与桌面同标准；`tests/test_theme_tokens.py` 登记 `accent-ink ↔ onAccent`，改任一端值即红。
 
+7. **Web 端补齐键盘导航：↑↓/Enter 三端一致**（`1d9502d`）：桌面端快捷键除 Ctrl+N / Ctrl+F / Esc 外还有 ↑↓ 移动选中、回车打开选中任务，Web 端 shortcutAction 只有前三个，纯键盘用户只能用鼠标。
+   - `templates/index.html`：新增 focusableCardIds() / stepFocus(delta) / setFocusTask(id, scroll)，语义对齐桌面 _step_selection——到头钳制不循环、空序列清空焦点、焦点 id 不在可见卡片里时落到首/尾；
+   - shortcutAction 在不带修饰键时认 arrowup / arrowdown / enter；没有焦点任务时 Enter 不拦截，交给输入框和按钮自己处理；
+   - runShortcut 新增输入控件让位守卫（input/select/textarea/contentEditable），对齐桌面 _keyboard_nav_allowed；回车走卡片「打开」按钮同一条 openFile() 路径；
+   - 轮询每 500ms 重建卡片，renderTasks 末尾用 scroll=false 重贴焦点类名，避免把页面拽走；
+   - 视觉：.task-card.focused 用强调色描边加 1px 光环，筛选栏新增 .kbd-hint 提示「↑↓ 选择任务 · Enter 打开」；
+   - 测试：tests/test_web_shortcuts.js 的 sandbox 补卡片桩（id/classList/scrollIntoView）与 openFile、_focusTaskId，覆盖新动作、钳制、焦点失效、空列表、轮询重贴、输入控件让位；跨 realm 数组改用 deepEqual 断言；
+   - tests/test_web_ui.py：renderTasks 的切片窗口从写死 1600 字符改为「切到下一个函数定义」，排序守护不再随函数行数漂移（本轮新增焦点簿记行数后原窗口已失效）。
+
 验证：全量 pytest 336 passed / 1 skipped；12 个 node 测试全绿；
 `build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）。
+打包后的 EXE 起 --web-only 服务，已确认返回的页面含 stepFocus/setFocusTask/focusableCardIds 与 kbd-hint 提示。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
