@@ -356,3 +356,24 @@ def test_task_card_shows_bt_seeds_and_peers(page):
     assert "task.seeds" in card and "task.peers" in card
     # HTML 实体图标与桌面卡片一致（🌱 / 👥）
     assert "&#127793;" in card and "&#128101;" in card
+
+
+def test_web_detail_modal_wired_to_cards(page):
+    # 模态框骨架
+    for needle in ('id="detailModal"', 'id="detailTitle"', 'id="detailBody"',
+                   'id="detailActions"'):
+        assert needle in page, needle
+    seg_src = page[page.index("// ===== 任务详情 ====="):
+                   page.index("function createTaskCard")]
+    for fn in ("function openDetail", "function closeDetail",
+               "function renderDetail", "function detailRows", "function detailText",
+               "function syncDetailModal"):
+        assert fn in seg_src, fn
+    # 卡片操作区有「详情」入口
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert 'onclick="openDetail(' in card
+    # 刷新时同步（含任务被删后自动关闭）
+    assert "syncDetailModal();" in page
+    # 详情值一律转义，防文件名/链接注入
+    assert "escapeHtml(String(v))" in seg_src

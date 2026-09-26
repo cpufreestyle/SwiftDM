@@ -490,6 +490,27 @@ body {
   margin-top: 20px;
 }
 
+/* ===== 任务详情 ===== */
+.detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.detail-row:first-of-type { border-top: none; }
+
+.detail-key { flex: 0 0 96px; color: var(--text2); }
+
+.detail-val {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  word-break: break-all;
+  user-select: text;
+}
+
 /* ===== Toast ===== */
 .toast {
   position: fixed;
@@ -780,6 +801,18 @@ body {
       </div>
       <div class="modal-note">ffmpeg 只用系统安装的那个，SwiftDM 不会自动下载二进制文件。</div>
     </div>
+  </div>
+</div>
+
+<!-- 任务详情（与桌面端详情面板同源） -->
+<div class="modal" id="detailModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="detailTitle">任务详情</h2>
+      <button class="btn btn-secondary btn-sm" onclick="closeDetail()">&#10006; 关闭</button>
+    </div>
+    <div id="detailBody"></div>
+    <div class="modal-actions" id="detailActions"></div>
   </div>
 </div>
 
@@ -1258,6 +1291,7 @@ function renderTasks(tasks) {
   _lastTasks = tasks;
   _tasksById = {};
   tasks.forEach(t => { _tasksById[t.task_id] = t; });
+  syncDetailModal();
   updateFilterCounts(tasks);
   const _dlCount = tasks.filter(t => t.status === "downloading").length;
   const _spSum = tasks.reduce((a, t) => a + (t.speed || 0), 0);
@@ -1341,6 +1375,109 @@ function segmentStripHtml(task) {
         <span class="seg-count">${doneCount}/${segs.length} 段</span>
         <div class="seg-track">${cells}</div>
       </div>`;
+}
+
+// ===== 任务详情 =====
+// 与桌面端详情面板同源：把任务字典摊成 [标签, 值] 行，缺失值统一 "-"，
+// 失败任务附原因与处理建议。纯函数，便于在 node vm 里单测。
+const DETAIL_STATUS = {
+  downloading: "● 下载中", paused: "⏸ 已暂停", completed: "✓ 完成",
+  failed: "✗ 失败", pending: "⏳ 等待中", cancelled: "✗ 已取消",
+};
+
+function detailStatusText(t) {
+  if (t.status === "pending" && t.scheduled_at) return "⏰ 定时等待";
+  const label = DETAIL_STATUS[t.status] || t.status || "-";
+  if (t.status === "failed" && t.auto_retry_at) {
+    const remain = Math.max(0, Math.ceil(t.auto_retry_at - Date.now() / 1000));
+    return label + (remain > 0 ? ` · ↻ ${remain}s 后自动重试` : " · ↻ 即将自动重试");
+  }
+  return label;
+}
+
+function detailSizeText(t) {
+  const total = Number(t.total_size) || 0;
+  const done = Number(t.downloaded) || 0;
+  if (total > 0) return `${formatSize(done)} / ${formatSize(total)}`;
+  if (done > 0) return `${formatSize(done)}（总大小未知）`;
+  return "-";
+}
+
+function detailRows(task) {
+  const t = task || {};
+  const rows = [
+    ["文件名", t.filename || "-"],
+    ["任务 ID", t.task_id || "-"],
+    ["状态", detailStatusText(t)],
+    ["进度", (Number(t.progress) || 0).toFixed(1) + "%"],
+    ["已下载 / 总大小", detailSizeText(t)],
+    ["下载速度", t.status === "downloading" && t.speed > 0 ? formatSpeed(t.speed) : "-"],
+    ["预计剩余", t.eta || "-"],
+    ["保存目录", t.save_dir || t.filepath || "-"],
+  ];
+  if ((t.kind || "http") === "torrent") {
+    rows.push(["传输协议", t.protocol || "-"]);
+    rows.push(["种子 / 同伴", `${t.seeds || 0} / ${t.peers || 0}`]);
+  }
+  if (t.resolution) rows.push(["分辨率", `${t.resolution}p`]);
+  if (t.error) {
+    rows.push(["失败原因", t.error]);
+    const hint = REASON_HINTS[t.error_reason];
+    if (hint) rows.push(["处理建议", hint]);
+  }
+  if (t.url) rows.push(["下载链接", t.url]);
+  return rows;
+}
+
+function detailText(task) {
+  return detailRows(task).map(([k, v]) => `${k}: ${v}`).join("\n");
+}
+
+let _detailTaskId = null;
+
+function openDetail(taskId) {
+  const task = _tasksById[taskId];
+  if (!task) return;
+  _detailTaskId = taskId;
+  renderDetail(task);
+  document.getElementById("detailModal").classList.add("open");
+}
+
+function closeDetail() {
+  _detailTaskId = null;
+  document.getElementById("detailModal").classList.remove("open");
+}
+
+function renderDetail(task) {
+  document.getElementById("detailTitle").textContent = task.filename || "任务详情";
+  const rows = detailRows(task).map(([k, v]) =>
+    `<div class="detail-row"><span class="detail-key">${escapeHtml(k)}</span>` +
+    `<span class="detail-val">${escapeHtml(String(v))}</span></div>`).join("");
+  document.getElementById("detailBody").innerHTML = rows + segmentStripHtml(task);
+  document.getElementById("detailActions").innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="openFolder('${task.task_id}')">打开文件夹</button>
+      <button class="btn btn-secondary btn-sm" onclick="copyDetail('${task.task_id}')">复制详情</button>
+      <button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')">复制链接</button>
+      <button class="btn btn-primary btn-sm" onclick="closeDetail()">关闭</button>`;
+}
+
+async function copyDetail(taskId) {
+  const task = _tasksById[taskId];
+  if (!task) return;
+  try {
+    await navigator.clipboard.writeText(detailText(task));
+    showToast("已复制任务详情");
+  } catch (e) {
+    showToast("复制失败", "error");
+  }
+}
+
+// 详情面板跟随 SSE 刷新：任务被删除后自动关闭，否则用最新数据重绘
+function syncDetailModal() {
+  if (!_detailTaskId) return;
+  const task = _tasksById[_detailTaskId];
+  if (!task) { closeDetail(); return; }
+  renderDetail(task);
 }
 
 function createTaskCard(task) {
@@ -1438,7 +1575,7 @@ function createTaskCard(task) {
         <span class="progress-text">${progressPercent.toFixed(1)}%</span>
       </div>
     </div>${segmentStripHtml(task)}
-    <div class="task-actions"><button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')" title="复制下载链接">复制链接</button>${actionsHtml}</div>
+    <div class="task-actions"><button class="btn btn-secondary btn-sm" onclick="openDetail('${task.task_id}')" title="查看任务详情">详情</button><button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')" title="复制下载链接">复制链接</button>${actionsHtml}</div>
   `;
 
   return card;
