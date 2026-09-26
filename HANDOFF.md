@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `eb6a2d3`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 17 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `2285eac`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 18 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，并清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，最后让详情面板本身就能操作任务。
 
-本轮共 17 个 commit（HEAD = `eb6a2d3`，`git status -sb` 与 origin/main 0/0）：
+本轮共 18 个 commit（HEAD = `2285eac`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -139,7 +139,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 卡片按钮（`_btn_style`）：描边本来就是彩色，焦点环改用淡填充，否则改描边颜色也看不出来；带 `tooltip` 的按钮把 tooltip 同步成 `setAccessibleName`（顶部那个「📋」图标按钮之前没有任何可读名字）。
    - 其余无名控件：「···」溢出按钮、倒计时按钮（文字是动态的）、卡片进度条、搜索框、排序下拉、紧凑开关全部补 `setAccessibleName`。
    - 测试：`tests/test_desktop_ui.py` 新增三组——离屏渲染对比（两套主题 × 五类按钮，要求焦点环落在最外一圈）、名字源码级守卫、卡片行为级断言；变异测试 8/8 全红。
-验证：全量 pytest 358 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 10/10、桌面 13/13、扩展 popup 15/15 均能把新增守卫打红。
+验证：全量 pytest 359 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 12/12、桌面 17/17、扩展 popup 15/15 均能把新增守卫打红。
 `build_exe.py` 重建（exit 0）+ `test_binary.py` 全过（`=== 全部测试通过 ===`）：本轮改的 `main_window.py` 参与打包，桌面 QSS 与控件属性的改动以二进制端到端复测为准；打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
 离屏渲染实测：修复前同一按钮聚焦前后像素完全一致（原生焦点框被 QSS 重画吃掉），修复后最外一圈出现强调色描边；两套主题下都成立。
 
@@ -220,11 +220,27 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      三种 toast 皮肤都必须是独立成行的真规则、选择器前不能有 U+FEFF，且 `showToast` 真的会拼上 type；
    - 变异测试 7/7 全红（三个位置各插一个 BOM + 删规则 + 删 type 拼接）。
      注意「文件开头加 BOM」这个变异是绿的——那是合法状态，守卫故意放行。
+17. **详情面板从「只读」变成「能操作」**（`2285eac`）：三端的任务详情此前都只有
+    打开文件夹 / 复制详情 / 复制链接 / 关闭四个静态按钮；暂停、继续、重试、取消、
+    打开文件这些真正的动作只存在于卡片行（桌面端另有一个右键菜单）。
+    结果是「看完失败原因想重试」「看了进度想暂停」都必须退回列表找那张卡，绕一圈。
+   - `main_window.py`：`TaskDetailDialog` 新增一行状态动作（`_rebuild_state_buttons`），
+     按当前状态挑选动作，复用已有的 `action_requested` 信号，与卡片行/右键菜单同一套取舍；
+   - `templates/index.html`：新增 `detailStateActionsHtml(task)`，复用既有的
+     `pauseTask` / `resumeTask` / `retryTask` / `cancelTask` / `openFile`；
+   - 两个刻意的不对称：① 详情面板**不提供删除**（防误触，删除留在卡片行）；
+     ② `pending`（定时等待）不摆任何按钮，而不是摆一排禁用的；
+   - 测试：桌面端 5 种状态 × 1 组点击回传（断言只剩当前那几个 + `retry -> t1`）；
+     Web 端 5 种状态 + `renderDetail` 把四个原有静态按钮一个不丢地拼回去；
+     变异测试 6/6 全红（Web 2 + 桌面 4）。
+   - 踩坑记录：桌面端**必须自己存一份按钮引用**。`_clear_layout` 里只调 `deleteLater()`，
+     控件要等下一次事件循环才销毁，`findChildren` 在本轮里照样能捞出上一个状态的按钮，
+     照 findChildren 写断言会看到「暂停 + 继续」同时存在，测试就成了假的。
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 也已清掉；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
+- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
