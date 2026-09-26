@@ -1977,16 +1977,19 @@ class MainWindow(QMainWindow):
 
     def _setup_log_panel(self):
         """底部可展开的运行日志面板"""
+        t = THEMES[self._theme]
         self.log_dock = QDockWidget("运行日志", self)
         self.log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea |
                                       Qt.DockWidgetArea.RightDockWidgetArea)
         self.log_dock.setStyleSheet(
-            "QDockWidget::title{background:#16161f;color:#8888a0;padding:4px 10px;}")
+            f"QDockWidget::title{{background:{t['toolbar']};"
+            f"color:{t['textMuted']};padding:4px 10px;}}")
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
         self.log_edit.setStyleSheet(
-            "QPlainTextEdit{background:#0a0a0f;color:#cfcfe0;"
-            "font-family:'Consolas','Menlo','Courier New',monospace;font-size:12px;border:none;}"
+            f"QPlainTextEdit{{background:{t['logBg']};color:{t['logFg']};"
+            f"font-family:'Consolas','Menlo','Courier New',monospace;"
+            f"font-size:12px;border:none;}}"
         )
         self.log_dock.setWidget(self.log_edit)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)

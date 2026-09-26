@@ -111,6 +111,52 @@ def _colors(value):
     return out
 
 
+def _call_span(src, match):
+    """取从匹配到的左括号到与之配对的右括号之间的文本。
+
+    setStyleSheet 的参数经常换行（f-string 拼多行），只看单行会漏掉颜色字面量。
+    必须传 match 而不是 opener 字符串：后者总会回到文件里第一个
+    setStyleSheet，导致每个调用点都只扫到同一处。
+    """
+    start = match.end()
+    depth, i = 1, start
+    while i < len(src) and depth:
+        if src[i] == "(":
+            depth += 1
+        elif src[i] == ")":
+            depth -= 1
+        i += 1
+    return src[start:i]
+
+
+def test_no_hardcoded_colors_in_desktop_stylesheets():
+    """Web 端早就禁止在 CSS 里写死颜色，桌面端也要守住同一条线。
+
+    合法异常只有 TRAY_ICON_INK 那个候选表（故意不随主题变），
+    其余 setStyleSheet 只能出现令牌拼接，不能写死色。
+    """
+    src = _read("main_window.py")
+    allowed = {"#ffffff", "#0d1117"}
+    offenders = []
+    for m in re.finditer(r"\.setStyleSheet\(", src):
+        span = _call_span(src, m)
+        for hexcode in re.findall(r"#[0-9a-fA-F]{3,6}\b", span):
+            if hexcode not in allowed:
+                offenders.append((hexcode, span.strip()[:60]))
+    assert not offenders, offenders
+
+
+def test_qss_template_has_no_hex_colors_either():
+    """QSS_TEMPLATE 里除了白色（用于带色背景的按钮）不应出现其它死色。"""
+    src = _read("main_window.py")
+    opener = 'QSS_TEMPLATE = string.Template("""'
+    start = src.index(opener) + len(opener)
+    qss = src[start:src.index('""")', start)]
+    leftovers = [c for c in re.findall(r"#[0-9a-fA-F]{3,6}\b", qss) if c.lower() != "#fff"]
+    assert not leftovers, leftovers
+
+
+
 @pytest.fixture(scope="module")
 def web():
     html = _read(os.path.join("templates", "index.html"))
