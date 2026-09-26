@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `6e1dd82`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `cc0d208`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -53,6 +53,7 @@ IDM 风格的多线程下载管理器：
 - 不支持 heredoc（`<<EOF` 报错）；多行 git 提交信息需写临时文件后 `git commit -F <file>`。
 - 读文件/命令未指定 encoding 可能被拦截，注意 `-Encoding UTF8`。
 - 核对中文不要用 `Get-Content`（按 GBK 解码显示乱码）：先 `[Console]::OutputEncoding=[Text.Encoding]::UTF8` 再用 `Select-String -Path <f> -Pattern <关键词>`；python `print` 中文到管道可能触发 `UnicodeEncodeError`，用码点校验最稳。
+- `Get-Content` 的行数在本机下不可信（该命令报出的行数比 Python/rg 少几十行，我们在 `HANDOFF.md`、`tests/test_web_ui.py` 上各少了 241/36 行）；定位行号、判断行尾/BOM 一律用 Python 字节级读取，`Get-Content` 只能用来侵吓。
 
 ---
 
@@ -380,6 +381,22 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 - （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
+
+20. **`.modal` 遗留卡片规则糊在全屏遮罩上，暗色遮罩只盖住屏幕左侧 440px**（`cc0d208`）：
+    静态 CSS 审计（提取 `<style>` 全部规则 → 与全文 id/class 交叉比对 →
+    找死规则与重复声明）发现 `.modal` 有两条 depth=0 规则：旧卡片样式
+    （`background/border/border-radius/padding/width:90%/max-width:440px/box-shadow`）与后来的全屏遮罩规则。
+    后者只覆盖了 `background`，其余全部泄露到 `position: fixed; inset: 0` 的遮罩元素上——
+    1280px 视口实测：暗背景只覆盖左侧 440px、带 1px 边框和投影，
+    设置/详情对话框被压成约 406px 宽的窄条。修复：删除整条 legacy 规则；
+    顺带清掉 `.modal-card` 重构后的死规则 `.modal-overlay`、`.modal-overlay.show`、
+    `.modal h3`、`.modal .form-group`、`.modal label`（最后一条还在用 `display:block`
+    压制 `.inline` 的 `inline-flex`）。修复后遮罩满屏、卡片 560px 居中（Playwright 实拍复核）。
+   - 守卫：`tests/test_web_ui.py::test_no_base_level_selector_declares_the_same_property_twice`
+     ——同一选择器在基础层（depth=0）重复声明同一属性即失败；媒体查询覆盖基础属性仍合法。
+     变异测试：塞回 legacy `.modal` 规则 → 红。
+   - 教训：自写 CSS 审计解析器在 `}` 分支必须重置选择器缓冲，否则上一段规则体会污染下一个选择器
+     （第一版就因此假阴性报出「0 冲突」）。
 
 ---
 
