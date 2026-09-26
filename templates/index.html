@@ -1391,6 +1391,40 @@ function renderFinishFromStream(finish) {
   }
 }
 
+// 新失败任务聚合提示（与桌面端状态栏/托盘文案一致）：
+// 首帧只记录不提示，避免刷新页面补弹旧账。
+let _knownFailedIds = null;
+
+function failSummaryText(failed) {
+  if (!failed.length) return null;
+  if (failed.length === 1) {
+    const t = failed[0];
+    const err = (t.error || t.error_reason || "").trim();
+    const name = t.filename || "文件";
+    return err ? `✗ 下载失败 [${name}]: ${err}` : `✗ 下载失败: ${name}`;
+  }
+  const reasons = [];
+  failed.forEach(t => {
+    const r = (t.error || t.error_reason || "").trim();
+    if (r && !reasons.includes(r)) reasons.push(r);
+  });
+  if (!reasons.length) return `✗ ${failed.length} 个任务下载失败`;
+  const shown = reasons.slice(0, 2).join("、") + (reasons.length > 2 ? "等" : "");
+  return `✗ ${failed.length} 个任务下载失败（${shown}）`;
+}
+
+function notifyNewFailures(tasks) {
+  const ids = new Set(tasks.filter(t => t.status === "failed").map(t => t.task_id));
+  if (_knownFailedIds === null) {
+    _knownFailedIds = ids;
+    return;
+  }
+  const fresh = tasks.filter(t => t.status === "failed" && !_knownFailedIds.has(t.task_id));
+  _knownFailedIds = ids;
+  const text = failSummaryText(fresh);
+  if (text) showToast(text, "error");
+}
+
 function connectSSE() {
   const connStatus = document.getElementById("connStatus");
   connStatus.innerHTML = "&#9679; 连接中...";
@@ -1407,6 +1441,7 @@ function connectSSE() {
     try {
       const data = JSON.parse(event.data);
       renderTasks(data.tasks);
+      notifyNewFailures(data.tasks);
       renderStats(data.stats);
       renderFinishFromStream(data.finish);
     } catch(e) {

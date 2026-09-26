@@ -244,3 +244,15 @@ def test_no_stray_hardcoded_colors_in_css(page):
     css = re.sub(r"/\*[\s\S]*?\*/", "", css)
     leftovers = [c for c in re.findall(r"#[0-9a-fA-F]{3,6}\b", css) if c != "#fff"]
     assert not leftovers, leftovers
+
+
+def test_web_notifies_new_failures_via_toast(page):
+    assert "function notifyNewFailures" in page
+    assert "function failSummaryText" in page
+    assert "notifyNewFailures(data.tasks);" in page
+    # 首帧只记录不提示，避免刷新页面补弹旧账
+    assert "_knownFailedIds = null" in page
+    assert "_knownFailedIds === null" in page
+    # 聚合文案与桌面端 _fail_summary_text 一致
+    assert "下载失败 [" in page
+    assert "个任务下载失败（" in page
