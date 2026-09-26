@@ -8,12 +8,14 @@ import time
 import subprocess
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
-from downloader import manager, DownloadManager, get_proxy_mode, set_proxy_mode
+from downloader import (manager, DownloadManager, get_proxy_mode, set_proxy_mode,
+                       AUTO_RETRY_MAX)
 from media_service import media_registry
 from throttle import get_rate, set_rate
 from scheduler import scheduler
 from media import ffmpeg_status, ytdlp_available
 import config
+import notify_sound
 
 # 让本地回环地址绕过系统代理，避免浏览器经代理访问 127.0.0.1 出现 502
 for _k in ("no_proxy", "NO_PROXY"):
@@ -50,6 +52,21 @@ def _default_segments():
     """Reads the "default threads" setting; used when a new task omits segments
     instead of always assuming 8."""
     return _clamp_segments(config.get("segments"), 8)
+
+
+def _clamp_auto_retry(value, default=0):
+    """Retry budget clamped to [0, AUTO_RETRY_MAX]; 0 means disabled.
+
+    Unlike the thread count, 0 is a meaningful value here, so anything below 1
+    collapses to "off" rather than to the default.
+    """
+    try:
+        times = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    if times < 1:
+        return 0
+    return min(AUTO_RETRY_MAX, times)
 
 
 def _with_schedule(task):
@@ -281,6 +298,7 @@ def resume_all():
 
 @app.route("/api/settings", methods=["GET", "POST", "OPTIONS"])
 def settings():
+    global BROWSER_CAPTURE_ENABLED
     if request.method == "OPTIONS":
         return _cors(app.make_default_options_response(), "GET, POST, OPTIONS")
     if request.method == "POST":
@@ -298,6 +316,17 @@ def settings():
         if "segments" in data:
             # default threads: shares the clamp rule with /api/add
             config.set("segments", _clamp_segments(data["segments"], 8))
+        if "auto_retry" in data:
+            # downloader re-reads this on every failure, so no restart is needed
+            config.set("auto_retry", _clamp_auto_retry(data["auto_retry"]))
+        if "notify_sound" in data:
+            # shared setting: only the player differs between desktop and Web
+            config.set("notify_sound",
+                       notify_sound.set_sound(data["notify_sound"]))
+        if "browser_capture" in data:
+            # the desktop pairs this toggle with the same config key
+            BROWSER_CAPTURE_ENABLED = bool(data["browser_capture"])
+            config.set("monitor_enabled", BROWSER_CAPTURE_ENABLED)
         # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效
         if "download_dir" in data:
             new_dir = str(data["download_dir"]).strip()
@@ -312,6 +341,9 @@ def settings():
             "download_dir": config.get_download_dir(),
             "rate_limit": get_rate(),
             "finish_action": scheduler.get_finish_action(),
+            "auto_retry": _clamp_auto_retry(config.get("auto_retry")),
+            "notify_sound": notify_sound.get_sound(),
+            "browser_capture": BROWSER_CAPTURE_ENABLED,
         })
     st = scheduler.status()
     return jsonify({
@@ -322,6 +354,11 @@ def settings():
         "proxy_modes": ["env", "direct", "custom"],
         "rate_limit": get_rate(),
         "finish_action": st["finish_action"],
+        "auto_retry": _clamp_auto_retry(config.get("auto_retry")),
+        "auto_retry_max": AUTO_RETRY_MAX,
+        "notify_sound": notify_sound.get_sound(),
+        "notify_sounds": notify_sound.NOTIFY_SOUND_LABELS,
+        "browser_capture": BROWSER_CAPTURE_ENABLED,
         "finish_countdown": st["remaining"],
         "scheduled": st["scheduled"],
         "capabilities": {"ffmpeg": ffmpeg_status(), "ytdlp": ytdlp_available()},
@@ -564,7 +601,8 @@ def browser_capture():
         if t.url == url and t.status in ("downloading", "paused", "pending"):
             return jsonify({"success": True, "task": t.to_dict(), "duplicate": True})
 
-    task = manager.create_task(url, config.get_download_dir(), filename, 8)
+    task = manager.create_task(
+        url, config.get_download_dir(), filename, _default_segments())
     task.start()
 
     resp = jsonify({"success": True, "task": task.to_dict()})

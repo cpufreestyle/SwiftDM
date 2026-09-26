@@ -430,8 +430,9 @@ async function addMediaTask(message) {
     kind: kind,
     filename: item.filename || '',
     referer: message.pageUrl || item.page_url || '',
-    cookies_netscape: cookies,
-    segments: 8
+    cookies_netscape: cookies
+    // 不写 segments：由后端按设置面板的默认线程数决定，
+    // 否则这里写死 8 会让那个设置对扩展推送的任务永远失效
   };
   const res = await postJson('/api/add', payload);
   if (!res) return { success: false, error: 'SwiftDM 未运行' };

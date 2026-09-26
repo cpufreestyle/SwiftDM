@@ -768,6 +768,22 @@ body {
     </div>
 
     <div class="modal-row">
+      <div class="modal-label">失败自动重试</div>
+      <div class="modal-controls">
+        <select id="autoRetrySelect" onchange="applyAutoRetry()"></select>
+      </div>
+      <div class="modal-note">任务失败后自动重试的次数；间隔 30秒/1分/2分/5分钟递增，会从分片残留处继续，0 = 关闭。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">完成提示音</div>
+      <div class="modal-controls">
+        <select id="soundSelect" onchange="applySound()"></select>
+      </div>
+      <div class="modal-note">下载完成时播放声音；浏览器端用 WebAudio 复制桌面端的三声短音，桌面端仍由本机播放。</div>
+    </div>
+
+    <div class="modal-row">
       <div class="modal-label">下载目录</div>
       <div class="modal-controls">
         <input type="text" id="dirInput" style="width:100%;max-width:260px" placeholder="如 D:/Downloads">
@@ -823,6 +839,17 @@ body {
         </select>
       </div>
       <div class="modal-note">默认跟随系统主题；浅色主题目前仅 Web 端提供。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">浏览器捕获</div>
+      <div class="modal-controls">
+        <select id="captureSelect" onchange="applyCapture()">
+          <option value="1">启用</option>
+          <option value="0">禁用</option>
+        </select>
+      </div>
+      <div class="modal-note">接收浏览器扩展推送的下载/媒体链接，与桌面端“浏览器监控”共享同一份设置。</div>
     </div>
 
     <div class="modal-row">
@@ -1694,6 +1721,9 @@ async function refreshSettings() {
   syncDirInput(res);
   syncSegmentsInput(res);
   syncProxyInputs(res);
+  syncAutoRetryOptions(res);
+  syncSoundOptions(res);
+  syncCaptureInput(res);
   renderFinishStatus(res);
   renderCapabilities(res.capabilities || {});
   renderScheduled(res.scheduled || []);
@@ -1734,6 +1764,85 @@ async function applySegments() {
     { method: "POST", body: JSON.stringify({ segments: value }) });
   if (res && res.success) showToast(`新任务默认线程数已更新为 ${res.default_segments}`);
   else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
+// 失败自动重试 / 完成提示音 / 浏览器捕获：后端早就认识这三个键，
+// 之前只能在桌面端改；档位按后端下发的上限生成，避免两边各写一份可用范围。
+function syncAutoRetryOptions(res) {
+  const sel = document.getElementById("autoRetrySelect");
+  if (!sel) return;
+  const max = typeof res.auto_retry_max === "number" ? res.auto_retry_max : 0;
+  if (sel.dataset.max !== String(max)) {
+    sel.dataset.max = String(max);
+    sel.innerHTML = "";
+    for (let i = 0; i <= max; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = i === 0 ? "关闭" : `${i} 次`;
+      sel.appendChild(opt);
+    }
+  }
+  if (document.activeElement !== sel) sel.value = String(res.auto_retry || 0);
+}
+
+async function applyAutoRetry() {
+  const value = parseInt(document.getElementById("autoRetrySelect").value, 10);
+  const res = await api("/api/settings",
+    { method: "POST", body: JSON.stringify({ auto_retry: value }) });
+  if (res && res.success) {
+    showToast(res.auto_retry
+      ? `失败后将自动重试 ${res.auto_retry} 次`
+      : "已关闭失败自动重试");
+  } else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
+let notifySoundCache = "none";
+
+function syncSoundOptions(res) {
+  const sel = document.getElementById("soundSelect");
+  if (!sel) return;
+  const labels = res.notify_sounds || {};
+  const keys = Object.keys(labels);
+  if (sel.dataset.keys !== keys.join(",")) {
+    sel.dataset.keys = keys.join(",");
+    sel.innerHTML = "";
+    for (const key of keys) {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = labels[key];
+      sel.appendChild(opt);
+    }
+  }
+  notifySoundCache = res.notify_sound || "none";
+  if (document.activeElement !== sel) sel.value = notifySoundCache;
+}
+
+async function applySound() {
+  const value = document.getElementById("soundSelect").value;
+  const res = await api("/api/settings",
+    { method: "POST", body: JSON.stringify({ notify_sound: value }) });
+  if (res && res.success) {
+    notifySoundCache = res.notify_sound || "none";
+    showToast("提示音已更新");
+  } else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
+function syncCaptureInput(res) {
+  const sel = document.getElementById("captureSelect");
+  if (sel) sel.value = res.browser_capture ? "1" : "0";
+}
+
+async function applyCapture() {
+  const value = document.getElementById("captureSelect").value === "1";
+  const res = await api("/api/settings",
+    { method: "POST", body: JSON.stringify({ browser_capture: value }) });
+  if (res && res.success) {
+    showToast(value ? "已启用浏览器捕获"
+                    : "已禁用浏览器捕获");
+  } else showToast((res && res.error) || "设置失败", "error");
   refreshSettings();
 }
 
@@ -1886,6 +1995,61 @@ function failSummaryText(failed) {
 // 新完成任务提示（与桌面端 _notify_complete 对齐）：首帧只记录不提示。
 let _knownDoneIds = null;
 
+// 完成提示音（浏览器侧）：与桌面端 notify_sound 同一份设置。
+// 浏览器限制音频必须先有用户交互，因此在首次点击/按键时解锁；
+// 任何音频异常都必须静默，不能影响下载提示。
+let _audioCtx = null;
+
+function completionSoundKind() {
+  return notifySoundCache || "none";
+}
+
+function unlockCompletionAudio() {
+  if (_audioCtx) {
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    return;
+  }
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  try {
+    _audioCtx = new Ctx();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+  } catch (e) {
+    _audioCtx = null;
+  }
+}
+
+["pointerdown", "keydown"].forEach(ev =>
+  document.addEventListener(ev, unlockCompletionAudio, { once: true }));
+
+function playCompletionTone(freq, when, dur) {
+  const ctx = _audioCtx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = freq;
+  const t0 = ctx.currentTime + when;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(0.15, t0 + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+
+function playCompletionSound() {
+  const kind = completionSoundKind();
+  if (kind === "none" || !_audioCtx) return;
+  try {
+    // beep = 880/660/880 三声短音（与桌面端 winsound 一致）；
+    // system 用一高一低两声来区分
+    const seq = kind === "system" ? [[587.33, 0], [440.0, 0.18]]
+                                   : [[880, 0], [660, 0.16], [880, 0.32]];
+    seq.forEach(([freq, when]) => playCompletionTone(freq, when, 0.12));
+  } catch (e) { /* 音频失败不能影响提示 */ }
+}
+
 function notifyNewCompletions(tasks) {
   const ids = new Set(tasks.filter(t => t.status === "completed").map(t => t.task_id));
   if (_knownDoneIds === null) {
@@ -1899,6 +2063,7 @@ function notifyNewCompletions(tasks) {
   } else if (fresh.length > 1) {
     showToast(`✓ ${fresh.length} 个任务下载完成`, "success");
   }
+  if (fresh.length) playCompletionSound();
 }
 
 function notifyNewFailures(tasks) {
@@ -1947,6 +2112,9 @@ function connectSSE() {
 }
 
 // ===== 初始化 =====
+// 先回读一次设置：defaultSegmentsCache / notifySoundCache 否则会一直是空，
+// 事实上“拖入链接”和“完成提示音”在打开设置面板之前就已经失效。
+refreshSettings();
 connectSSE();
 </script>
 </body>
