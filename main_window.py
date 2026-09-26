@@ -93,6 +93,29 @@ def _step_selection(ordered_ids, current_id, delta):
     return ordered_ids[max(0, min(len(ordered_ids) - 1, nxt))]
 
 
+BATCH_LABELS = {"pause": "暂停", "resume": "继续", "retry": "重试", "remove": "删除"}
+BATCH_STATUS = {
+    "pause": ("downloading",),        # 与 Web 端 BATCH_STATUS 逐字对齐
+    "resume": ("paused",),
+    "retry": ("failed", "cancelled"),
+    "remove": None,                   # 删除不限状态
+}
+
+
+def batch_targets(selected_ids, task_dict, action):
+    """多选集 + 任务快照 -> 该动作真正可执行的 task_id 序列。
+
+    和 Web 端 batchTargets 同一套状态取舍：暂停只点下载中的、继续只点暂停的、
+    重试只点失败/取消的，删除不限；已消失（清理/删除）的勾选项顺带滤掉。
+    """
+    allowed = BATCH_STATUS.get(action)
+    picked = set(selected_ids or ())
+    ids = [tid for tid in task_dict if tid in picked]
+    if allowed is None:
+        return ids
+    return [tid for tid in ids if task_dict.get(tid, {}).get("status") in allowed]
+
+
 def _keyboard_nav_allowed(focus_widget):
     """焦点在输入类控件（输入框/下拉/数字框）上时，让位给控件自身的按键处理。"""
     if focus_widget is None:
@@ -741,6 +764,37 @@ QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:
    纯键盘用户不会知道可以这么用；样式与 Web 端同为 11px 弱化色，不抢筛选芯片的视觉。 */
 QLabel#kbdHint { font-size: 11px; color: $textMuted; }
 
+/* ===== 多选批量操作（与 Web 端 .select-bar 对齐） ===== */
+QWidget#selectBar {
+    background-color: $surface;
+    border-top: 1px solid $border;
+}
+QLabel#selectCount { font-size: 12px; color: $textMuted; }
+QPushButton#selBtn {
+    background-color: $surface2;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 4px 12px;
+    color: $text;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#selBtn:hover { background-color: $hover; border-color: $borderHover; }
+QPushButton#selBtn:disabled { color: $faint; border-color: $border; }
+QPushButton#selBtn:focus { border: 1px solid $accent; background-color: $hover; }
+QPushButton#selBtnDanger {
+    background-color: $surface2;
+    border: 1px solid $red;
+    border-radius: 6px;
+    padding: 4px 12px;
+    color: $red;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#selBtnDanger:hover { background-color: $redSoft; border-color: $red; }
+QPushButton#selBtnDanger:disabled { color: $faint; border-color: $border; }
+QPushButton#selBtnDanger:focus { border: 1px solid $red; background-color: $redSoft; }
+
 /* ===== 键盘焦点环 =====
    QPushButton 全部由 QSS 重画，原生焦点框被吃掉，纯键盘用户完全看不到焦点落在哪。
    这里补一条与 Web 端 :focus-visible 同语义的强调色描边；仅键盘聚焦时显形，鼠标点击不出现。 */
@@ -796,6 +850,7 @@ class TaskCard(QFrame):
     action_triggered = pyqtSignal(str, str)  # action, task_id
     selected = pyqtSignal(str)              # task_id：点击卡片即选中（键盘导航配合）
     activated = pyqtSignal(str)             # task_id：双击卡片（打开任务详情）
+    toggled = pyqtSignal(str, bool)         # task_id, checked：勾选/取消多选
 
     def __init__(self, task_data, parent=None, theme=None):
         super().__init__(parent)
@@ -803,6 +858,7 @@ class TaskCard(QFrame):
         self._theme = theme if theme in THEMES else "dark"
         self._tokens = THEMES[self._theme]
         self._semantic_btns = []  # [(按钮, 语义色键)]：切换主题时按键重刷
+        self._checked = False     # 多选勾选态（批量操作条的作用域）
         self._overflow_btns = []  # [(按钮, action)]：底部操作按钮，窄窗口时收进“···”菜单
         self._hidden_actions = []
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -837,6 +893,10 @@ class TaskCard(QFrame):
                 border: 1px solid {t['accent']};
                 background-color: {t['selected']};
             }}
+            TaskCard[checked="true"] {{
+                border: 1px solid {t['accent2']};
+                background-color: {t['selected']};
+            }}
         """
 
     def _status_qss(self, status):
@@ -851,6 +911,18 @@ class TaskCard(QFrame):
                  "paused": self._tokens["orange"]}.get(status, self._tokens["accent"])
         return (f"QProgressBar{{background:{self._tokens['input']};border:none;border-radius:3px;height:6px;}}"
                 f"QProgressBar::chunk{{background:{chunk};border-radius:3px;}}")
+
+    def _pick_box_qss(self, tokens):
+        """多选勾选框：小方块描边，选中填强调色；焦点环与其它卡片按钮同规格。"""
+        t = tokens
+        return (
+            f"QPushButton{{background:transparent;border:1px solid {t['border']};"
+            f"border-radius:4px;color:{t['textMuted']};font-size:13px;padding:0px;"
+            f"min-width:18px;max-width:18px;min-height:18px;max-height:18px;}}"
+            f"QPushButton:hover{{border-color:{t['borderHover']};color:{t['text']};}}"
+            f"QPushButton:checked{{color:{t['accent']};border-color:{t['accent']};}}"
+            f"QPushButton:focus{{border:1px solid {t['accent']};background-color:{t['hover']};}}"
+        )
 
     def _error_qss(self):
         """失败原因条样式（浅色主题用深红字 + 浅红底，保持可读）。"""
@@ -870,6 +942,7 @@ class TaskCard(QFrame):
         self.speed_label.setStyleSheet(
             f"font-size: 11px; color: {t['accent2']}; font-weight: 600;")
         self.error_label.setStyleSheet(self._error_qss())
+        self.pick_box.setStyleSheet(self._pick_box_qss(self._tokens))
         self.status_label.setStyleSheet(self._status_qss(self._built_status))
         self.progress_bar.setStyleSheet(self._progress_qss(self._built_status))
         for btn, key in self._semantic_btns:
@@ -908,6 +981,30 @@ class TaskCard(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_checked(self, on):
+        """多选态：勾选框 + 强调色边框；由主窗口统一回放，不回发 toggled 信号。"""
+        on = bool(on)
+        if on == self._checked:
+            return
+        # 回放时勾选框状态可能还是旧的（卡片重建过），blockSignals 防止回灌
+        self.pick_box.blockSignals(True)
+        self.pick_box.setChecked(on)
+        self.pick_box.blockSignals(False)
+        self._apply_checked_state(on)
+
+    def _apply_checked_state(self, on):
+        """把勾选态画到自己身上：☐/☑ 字形 + 卡片描边。"""
+        self._checked = bool(on)
+        self.pick_box.setText("☑" if on else "☐")
+        self.setProperty("checked", self._checked)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def _on_pick_toggled(self, on):
+        """用户勾选/取消勾选：先刷自己的视觉态，再转告主窗口维护多选集合。"""
+        self._apply_checked_state(on)
+        self.toggled.emit(self.task_id, bool(on))
+
     def _build_ui(self, task_data):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
@@ -916,6 +1013,22 @@ class TaskCard(QFrame):
         # 第一行：文件名 + 状态
         top = QHBoxLayout()
         top.setSpacing(10)
+
+        # 多选勾选框：与 Web 端卡片左上角的 .task-pick-box 对齐；
+        # Ctrl+点击卡片空白处等效于点它（见 mousePressEvent）
+        self.pick_box = QPushButton("☐")
+        self.pick_box.setObjectName("pickBox")
+        self.pick_box.setCheckable(True)
+        self.pick_box.setChecked(False)
+        # 与其它卡片按钮同一套约定：tooltip == accessibleName（读屏用户也不能少），
+        # 「Ctrl+点击卡片」这类富提示走 accessibleDescription
+        self.pick_box.setToolTip("选择任务")
+        self.pick_box.setAccessibleName("选择任务")
+        self.pick_box.setAccessibleDescription("Ctrl+点击任务卡片也可以勾选；Esc 清空多选")
+        self.pick_box.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pick_box.setStyleSheet(self._pick_box_qss(self._tokens))
+        self.pick_box.toggled.connect(self._on_pick_toggled)
+        top.addWidget(self.pick_box)
 
         name = task_data.get("filename", "unknown")
         self.name_label = QLabel(name)
@@ -1068,12 +1181,18 @@ class TaskCard(QFrame):
 
     # 允许从已完成卡片的文件区域拖出文件（如拖到资源管理器、聊天窗口等）
     def mousePressEvent(self, event):
-        self.selected.emit(self.task_id)
         if (event.button() == Qt.MouseButton.LeftButton
-                and self.filepath and os.path.exists(self.filepath)):
-            self._drag_start_pos = event.pos()
-        else:
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            # Ctrl+点击只切换多选，不触发拖拽（拖文件出门是无修饰键的手势）
+            self.pick_box.click()
             self._drag_start_pos = None
+        else:
+            self.selected.emit(self.task_id)
+            if (event.button() == Qt.MouseButton.LeftButton
+                    and self.filepath and os.path.exists(self.filepath)):
+                self._drag_start_pos = event.pos()
+            else:
+                self._drag_start_pos = None
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
@@ -1840,6 +1959,7 @@ class MainWindow(QMainWindow):
         self._cards = {}  # task_id -> TaskCard
         self._compact = False  # 任务列表紧凑模式
         self._selected_task_id = None  # 键盘/鼠标选中的任务（↑/↓ 导航）
+        self._selected_ids = set()     # 多选勾选的 task_id 集合（批量操作的作用域）
         self._detail_dialog = None    # 打开中的任务详情面板（持引用防被 GC）
         self._search = ""  # 任务搜索关键字（文件名/链接，大小写不敏感）
         self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
@@ -1895,7 +2015,9 @@ class MainWindow(QMainWindow):
             ("Return", lambda: self._open_selected_task()),
             # Esc 关详情面板：和 Web 端保持一致（Web 端 Esc 关详情，设置是模态对话框，
             # Qt 自带默认行为）。没开面板时不做任何事，不和其它功能抢键。
-            ("Escape", self._close_task_detail),
+            # Esc 先清多选，没有再关详情面板；Ctrl+A 全选当前可见任务
+            ("Escape", self._on_escape),
+            ("Ctrl+A", self._select_all_visible),
         ):
             _sc = QShortcut(QKeySequence(_seq), self)
             _sc.activated.connect(_slot)
@@ -1909,6 +2031,13 @@ class MainWindow(QMainWindow):
         # 走 reject() 而不是 hide()：finished 信号释放引用，避免再次打开时挂到旧面板
         dlg.reject()
         dlg.deleteLater()
+
+    def _on_escape(self):
+        """Esc 优先收起多选；没有多选时才关详情面板。"""
+        if self._selected_ids:
+            self._clear_selection()
+            return
+        self._close_task_detail()
 
     def _setup_toolbar(self):
         toolbar = QToolBar("主工具栏")
@@ -2062,10 +2191,14 @@ class MainWindow(QMainWindow):
             fb.addWidget(_b)
         # 键盘导航提示贴着芯片放（Web 端 .kbd-hint 就在筛选按钮后面），
         # 让「↑↓/Enter 能操作任务」这件事在三个界面里都能被发现。
-        self.kbd_hint = QLabel("↑↓ 选择任务 · Enter 打开")
+        self.kbd_hint = QLabel("↑↓ 选择任务 · Enter 打开 · Ctrl+A 全选")
         self.kbd_hint.setObjectName("kbdHint")
-        self.kbd_hint.setToolTip("键盘导航：↑↓ 在可见任务间移动，回车打开文件")
-        self.kbd_hint.setAccessibleName("键盘导航提示：↑↓ 在可见任务间移动，回车打开文件")
+        self.kbd_hint.setToolTip(
+            "键盘导航：↑↓ 在可见任务间移动，回车打开文件；"
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
+        self.kbd_hint.setAccessibleName(
+            "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件；"
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
         fb.addWidget(self.kbd_hint)
         fb.addStretch(1)
         self.sort_combo = QComboBox()
@@ -2095,6 +2228,37 @@ class MainWindow(QMainWindow):
         if self._filter in self._filter_btns:
             self._filter_btns[self._filter].setChecked(True)
         layout.addWidget(filter_bar)
+
+        # 多选操作条：与 Web 端 #selectBar 对齐，有勾选时才出现
+        self.select_bar = QWidget()
+        self.select_bar.setObjectName("selectBar")
+        sb = QHBoxLayout(self.select_bar)
+        sb.setContentsMargins(16, 6, 16, 6)
+        sb.setSpacing(8)
+        self.select_count = QLabel("已选 0 项")
+        self.select_count.setObjectName("selectCount")
+        sb.addWidget(self.select_count)
+        sb.addStretch(1)
+        self._batch_btns = {}
+        for _act, _text, _obj in (("pause", "⏸ 暂停", "selBtn"),
+                                  ("resume", "▶ 继续", "selBtn"),
+                                  ("retry", "↻ 重试", "selBtn"),
+                                  ("remove", "🗑 删除", "selBtnDanger")):
+            _btn = QPushButton(_text)
+            _btn.setObjectName(_obj)
+            _btn.setToolTip(f"对勾选的任务批量{BATCH_LABELS[_act]}")
+            _btn.setAccessibleName(f"批量{BATCH_LABELS[_act]}")
+            _btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            _btn.clicked.connect(lambda _=False, a=_act: self._batch_action(a))
+            self._batch_btns[_act] = _btn
+            sb.addWidget(_btn)
+        self.sel_cancel_btn = QPushButton("取消选择")
+        self.sel_cancel_btn.setObjectName("selBtn")
+        self.sel_cancel_btn.setToolTip("清空多选（Esc 同效）")
+        self.sel_cancel_btn.clicked.connect(self._clear_selection)
+        sb.addWidget(self.sel_cancel_btn)
+        self.select_bar.hide()
+        layout.addWidget(self.select_bar)
 
         # 滚动区域 — 任务列表
         self.scroll = QScrollArea()
@@ -2314,6 +2478,8 @@ class MainWindow(QMainWindow):
 
             if not tasks:
                 self._update_filter_counts({})
+                self._selected_ids = set()
+                self._update_select_bar({})
                 # 清理所有卡片
                 for card in list(self._cards.values()):
                     self.task_layout.removeWidget(card)
@@ -2378,6 +2544,7 @@ class MainWindow(QMainWindow):
                     card.set_compact(self._compact)
                     card.action_triggered.connect(self._handle_action)
                     card.selected.connect(lambda tid: self._select_task(tid))
+                    card.toggled.connect(lambda tid, on: self._toggle_selection(tid, on))
                     card.activated.connect(lambda tid: self._show_task_detail(tid))
                     self._cards[task_id] = card
                     # 插入到布局中（在 stretch 之前）
@@ -2416,7 +2583,11 @@ class MainWindow(QMainWindow):
             else:
                 self.empty_label.hide()
 
+            # 多选集合跟着任务生死走（被清理/删除后不能继续对空气操作），
+            # 时机与 Web 端 pruneSelection 相同
+            self._selected_ids.intersection_update(task_dict)
             self._sync_selection_visual()
+            self._update_select_bar(task_dict)
 
         except Exception as e:
             self.logger.exception("刷新任务列表失败")
@@ -2662,6 +2833,10 @@ class MainWindow(QMainWindow):
 
     def _select_task(self, task_id):
         """选中任务卡片（键盘导航与点击共用）并滚动到可见区域。"""
+        # 普通点击/方向键即单选：收起批量选择（与资源管理器行为一致，
+        # Ctrl+点击走 _toggle_selection，不经过这里）
+        if self._selected_ids:
+            self._selected_ids = set()
         previous = self._selected_task_id
         self._selected_task_id = task_id
         if previous and previous != task_id:
@@ -2677,11 +2852,76 @@ class MainWindow(QMainWindow):
             self.scroll.ensureWidgetVisible(card)
         except Exception:
             pass
+        self._update_select_bar()
 
     def _sync_selection_visual(self):
         """卡片可能因状态变化被重建，按 _selected_task_id 重放选中态。"""
         for tid, card in self._cards.items():
             card.set_selected(tid == self._selected_task_id)
+            card.set_checked(tid in self._selected_ids)
+
+    def _toggle_selection(self, task_id, checked):
+        """勾选/取消勾选单个任务（卡片勾选框与 Ctrl+点击卡片共用）。"""
+        if checked:
+            self._selected_ids.add(task_id)
+            # 勾选即把键盘导航锚点移过来，Ctrl+A / Esc 才有着力点
+            self._selected_task_id = task_id
+        else:
+            self._selected_ids.discard(task_id)
+        self._sync_selection_visual()
+        self._update_select_bar()
+
+    def _select_all_visible(self):
+        """Ctrl+A 选中当前过滤 + 搜索下可见的全部任务。"""
+        if not _keyboard_nav_allowed(QApplication.focusObject()):
+            return
+        ordered = self._ordered_visible_ids()
+        self._selected_ids = set(ordered)
+        if ordered:
+            self._selected_task_id = ordered[-1]
+        self._sync_selection_visual()
+        self._update_select_bar()
+        self.status_bar.showMessage(f"已选中 {len(ordered)} 个任务", 3000)
+
+    def _clear_selection(self):
+        """Esc / 取消选择：清空多选并收起操作条（单选焦点不动）。"""
+        if not self._selected_ids:
+            return
+        self._selected_ids = set()
+        self._sync_selection_visual()
+        self._update_select_bar()
+
+    def _update_select_bar(self, task_dict=None):
+        """按当前多选刷新操作条：计数文案、显隐、四个按钮的可用性。"""
+        if task_dict is None:
+            mgr = self._get_manager()
+            task_dict = {t.task_id: t.to_dict() for t in mgr.get_all_tasks()}
+        n = len(self._selected_ids)
+        self.select_count.setText(f"已选 {n} 项")
+        self.select_bar.setVisible(n > 0)
+        for action, btn in self._batch_btns.items():
+            btn.setEnabled(bool(batch_targets(self._selected_ids, task_dict, action)))
+
+    def _batch_action(self, action):
+        """批量执行动作：状态过滤与 Web 端一致，删除前确认，完成后清空多选。"""
+        mgr = self._get_manager()
+        task_dict = {t.task_id: t.to_dict() for t in mgr.get_all_tasks()}
+        targets = batch_targets(self._selected_ids, task_dict, action)
+        if not targets:
+            self.status_bar.showMessage("勾选的任务都不支持该操作", 3000)
+            return
+        if action == "remove":
+            reply = QMessageBox.question(
+                self, "确认删除", _clear_confirm_text(len(targets)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        for tid in targets:
+            self._handle_action(action, tid)
+        self.status_bar.showMessage(
+            f"已{BATCH_LABELS[action]} {len(targets)} 个任务", 4000)
+        self._clear_selection()
 
     @staticmethod
     def _match_search(data, query):

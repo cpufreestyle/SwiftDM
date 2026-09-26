@@ -90,6 +90,8 @@ def test_keyboard_shortcuts_registered(qt_app):
             self.url_input = QLineEdit()
 
         _close_task_detail = mw.MainWindow._close_task_detail
+        _on_escape = mw.MainWindow._on_escape
+        _select_all_visible = mw.MainWindow._select_all_visible
 
         def _add_download(self):  # pragma: no cover - just a slot target
             pass
@@ -100,6 +102,8 @@ def test_keyboard_shortcuts_registered(qt_app):
     assert "Ctrl+N" in seqs and "Ctrl+F" in seqs, seqs
     # Esc 关详情面板，和 Web 端对齐
     assert "Escape" in seqs, seqs
+    # Ctrl+A 全选可见任务：桌面端多选批量的键盘入口
+    assert "Ctrl+A" in seqs, seqs
 
 
 def test_escape_closes_task_detail(qt_app):
@@ -2014,10 +2018,14 @@ def test_filter_bar_hints_at_the_task_keyboard_shortcuts(qt_app, monkeypatch):
     with _shown_main_window(qt_app, monkeypatch) as win:
         hint = win.kbd_hint
         assert hint.objectName() == "kbdHint"
-        assert hint.text() == "↑↓ 选择任务 · Enter 打开"
-        # 与 Web 端同文案的悬浮说明，读屏用户也要能拿到
+        assert hint.text() == "↑↓ 选择任务 · Enter 打开 · Ctrl+A 全选"
+        # 多选三件套（Ctrl+点击 / Ctrl+A / Esc）也要在悬浮说明里说清
         assert "↑↓" in hint.toolTip() and "回车" in hint.toolTip()
-        assert hint.accessibleName() == "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件"
+        assert "Ctrl" in hint.toolTip() and "Esc" in hint.toolTip()
+        assert "Ctrl" in hint.accessibleName() and "Esc" in hint.accessibleName()
+        assert hint.accessibleName() == (
+            "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件；"
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
 
         # 位置：伸缩位是「左组 / 右组」的分界，addStretch 之前的都跟着芯片在左边
         layout = hint.parentWidget().layout()
@@ -2087,3 +2095,251 @@ def test_filter_chips_stay_exclusive_and_each_reachable_by_tab(qt_app, monkeypat
             k == "completed" for k in chips
         ]
         assert win._filter == "completed"
+
+# ===== 多选批量操作（与 Web 端 #selectBar 对齐） =====
+
+def _fake_batch_task(tid, status):
+    """批量测试用的假任务：只实现 _refresh/_handle_action 会碰到的面。"""
+
+    class _Task:
+        def __init__(self):
+            self.task_id = tid
+            self.status = status
+            self.filename = tid + ".bin"
+            self.url = "http://example.com/" + tid + ".bin"
+            self.filepath = ""
+            self.paused = self.resumed = self.retried = False
+
+        def to_dict(self):
+            return {"task_id": tid, "filename": self.filename, "status": status,
+                    "total_size": 10, "downloaded": 1, "progress": 10, "speed": 0,
+                    "eta": "", "url": self.url, "filepath": "", "protocol": "http"}
+
+        def pause(self):
+            self.paused = True
+
+        def resume(self):
+            self.resumed = True
+
+        def retry(self):
+            self.retried = True
+            return True
+
+        def cancel(self):
+            pass
+
+    return _Task()
+
+
+class _FakeBatchManager:
+    """只回答主窗口问到的几个问题，并记录删除/落盘。"""
+
+    def __init__(self, tasks):
+        self.tasks = list(tasks)
+        self.removed = []
+        self.saved = 0
+
+    def get_all_tasks(self):
+        return list(self.tasks)
+
+    def get_task(self, tid):
+        return next((t for t in self.tasks if t.task_id == tid), None)
+
+    def remove_task(self, tid):
+        self.removed.append(tid)
+        self.tasks = [t for t in self.tasks if t.task_id != tid]
+
+    def save_history(self):
+        self.saved += 1
+
+    def get_stats(self):
+        return {"total_speed": 0.0, "active": 1, "completed": 1, "failed": 1,
+                "paused": 0, "total": len(self.tasks)}
+
+
+@contextlib.contextmanager
+def _batch_window(qt_app, monkeypatch, tasks):
+    """带假任务的主窗口：卡片是真的，manager 是桩。"""
+    import downloader
+
+    mgr = _FakeBatchManager(tasks)
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        monkeypatch.setattr(downloader, "manager", mgr)
+        # 刷新手会触发完成/失败通知（托盘气泡），批量测试不关心，掐掉
+        monkeypatch.setattr(win, "_notify_complete", lambda d: None)
+        monkeypatch.setattr(win, "_notify_failures", lambda items: None)
+        win._refresh()
+        # 本机配置里可能存着其它分段（上一轮用「已完成」关的窗口），
+        # 批量测试要看得见全部卡片：直接改内存态，不动用户的配置文件
+        win._filter = "all"
+        win._refresh()
+        qt_app.processEvents()
+        yield win, mgr
+
+
+def test_batch_targets_matches_the_web_status_rules():
+    """桌面端多选与 Web 端 batchTargets 同一套状态取舍。"""
+    import main_window as mw
+
+    task_dict = {
+        "dl": {"status": "downloading"},
+        "pz": {"status": "paused"},
+        "fl": {"status": "failed"},
+        "cc": {"status": "cancelled"},
+        "ok": {"status": "completed"},
+        "pd": {"status": "pending"},
+    }
+    picked = set(task_dict)
+    assert mw.batch_targets(picked, task_dict, "pause") == ["dl"]
+    assert mw.batch_targets(picked, task_dict, "resume") == ["pz"]
+    assert mw.batch_targets(picked, task_dict, "retry") == ["fl", "cc"]
+    assert mw.batch_targets(picked, task_dict, "remove") == list(task_dict)
+    # 勾选中途任务被删：不对空气下手；没有勾选时全军覆没
+    assert mw.batch_targets(picked | {"ghost"}, task_dict, "remove") == list(task_dict)
+    assert mw.batch_targets(set(), task_dict, "pause") == []
+
+
+def test_task_card_ctrl_click_toggles_multi_select(qt_app):
+    """Ctrl+点击卡片 = 切换多选（等效于点左上角勾选框），普通点击仍是单选。"""
+    import main_window as mw
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    def press(mods):
+        return QMouseEvent(QMouseEvent.Type.MouseButtonPress, QPointF(2, 2),
+                           Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, mods)
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "status": "downloading", "total_size": 10, "downloaded": 1})
+    single, toggles = [], []
+    card.selected.connect(lambda tid: single.append(tid))
+    card.toggled.connect(lambda tid, on: toggles.append((tid, on)))
+
+    card.mousePressEvent(press(Qt.KeyboardModifier.NoModifier))
+    assert single == ["t1"]
+    assert toggles == []
+
+    card.mousePressEvent(press(Qt.KeyboardModifier.ControlModifier))
+    assert single == ["t1"], "Ctrl+点击不该顺带触发单选"
+    assert card.property("checked") is True
+    card.mousePressEvent(press(Qt.KeyboardModifier.ControlModifier))
+    assert card.property("checked") is False
+    assert toggles == [("t1", True), ("t1", False)]
+
+    # 主窗口回放勾选态（刷新/换主题后重放）不能再发信号，否则会来回翻烧饼
+    card.set_checked(True)
+    assert toggles == [("t1", True), ("t1", False)]
+    assert card._checked is True
+
+
+def test_batch_shortcuts_registered_and_escape_prefers_selection(qt_app):
+    """Ctrl+A 全选、Esc 先收起多选：快捷键注册与优先级都要在。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QLineEdit, QWidget
+
+    class _Host(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._shortcuts = []
+            self.url_input = QLineEdit()
+
+        _close_task_detail = mw.MainWindow._close_task_detail
+        _on_escape = mw.MainWindow._on_escape
+        _select_all_visible = mw.MainWindow._select_all_visible
+
+        def _add_download(self):  # pragma: no cover - 只是槽位
+            pass
+
+    host = _Host()
+    mw.MainWindow._setup_shortcuts(host)
+    seqs = sorted(seq for seq, _ in host._shortcuts)
+    assert "Ctrl+A" in seqs and "Escape" in seqs, seqs
+
+    class _Host2:
+        def __init__(self, selected):
+            self._selected_ids = set(selected)
+            self._detail_dialog = None
+            self.cleared = 0
+
+        def _clear_selection(self):
+            self.cleared += 1
+            self._selected_ids = set()
+
+        _close_task_detail = mw.MainWindow._close_task_detail
+
+    host2 = _Host2({"t1"})
+    mw.MainWindow._on_escape(host2)
+    assert host2.cleared == 1 and host2._selected_ids == set()
+
+    host3 = _Host2(set())
+    mw.MainWindow._on_escape(host3)
+    assert host3.cleared == 0, "没有多选时 Esc 应该留给详情面板"
+
+
+def test_batch_bar_drives_checked_tasks_like_the_web_panel(qt_app, monkeypatch):
+    """桌面端补齐 Web 端早有的多选批量：勾选 -> 操作条 -> 按状态批量执行。"""
+    import main_window as mw
+
+    tasks = [_fake_batch_task("dl", "downloading"), _fake_batch_task("pz", "paused"),
+             _fake_batch_task("fl", "failed"), _fake_batch_task("ok", "completed")]
+    with _batch_window(qt_app, monkeypatch, tasks) as (win, mgr):
+        assert set(win._cards) == {"dl", "pz", "fl", "ok"}
+        assert not win.select_bar.isVisible(), "没有勾选时操作条要藏起来"
+
+        # 勾两张卡（走卡片勾选框，与 Ctrl+点击同一条信号）
+        win._cards["dl"].pick_box.click()
+        win._cards["pz"].pick_box.click()
+        qt_app.processEvents()
+        assert win._selected_ids == {"dl", "pz"}
+        assert win.select_count.text() == "已选 2 项"
+        assert win.select_bar.isVisible()
+        # 状态过滤与 Web 端一致：下载中的能暂停、暂停了的能继续、没有失败就禁重试
+        assert win._batch_btns["pause"].isEnabled()
+        assert win._batch_btns["resume"].isEnabled()
+        assert not win._batch_btns["retry"].isEnabled()
+        assert win._batch_btns["remove"].isEnabled()
+
+        win._batch_btns["pause"].click()
+        qt_app.processEvents()
+        assert tasks[0].paused and not tasks[1].paused, "只该暂停下载中的那张"
+        assert win._selected_ids == set(), "批量完成后要清空多选"
+        assert not win.select_bar.isVisible()
+
+        # 删除走确认框；勾失败 + 完成两项，确认后只删勾了的
+        monkeypatch.setattr(
+            mw.QMessageBox, "question",
+            staticmethod(lambda *a, **k: mw.QMessageBox.StandardButton.Yes))
+        win._toggle_selection("fl", True)
+        win._toggle_selection("ok", True)
+        win._batch_action("remove")
+        assert mgr.removed == ["fl", "ok"]
+
+        # 任务被外部清掉后，勾选集要跟着收刈，操作条不能再出現
+        mgr.tasks.clear()
+        win._refresh()
+        assert win._selected_ids == set()
+        assert not win.select_bar.isVisible()
+
+
+def test_ctrl_a_and_escape_drive_the_batch_selection(qt_app, monkeypatch):
+    """Ctrl+A 全选当前可见任务；Esc 收起多选。焦点在输入框里时都要让位。"""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    tasks = [_fake_batch_task("dl", "downloading"), _fake_batch_task("pz", "paused")]
+    with _batch_window(qt_app, monkeypatch, tasks) as (win, mgr):
+        win.search_input.setFocus()
+        QTest.keyClick(win, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        qt_app.processEvents()
+        assert win._selected_ids == set(), "焦点在搜索框里时 Ctrl+A 是全选文字，不能被抢"
+
+        win.scroll.setFocus()
+        QTest.keyClick(win, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        qt_app.processEvents()
+        assert win._selected_ids == {"dl", "pz"}
+        assert win.select_count.text() == "已选 2 项"
+
+        QTest.keyClick(win, Qt.Key.Key_Escape)
+        qt_app.processEvents()
+        assert win._selected_ids == set(), "Esc 要先收起多选"
+        assert not win.select_bar.isVisible()
