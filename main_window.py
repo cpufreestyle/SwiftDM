@@ -85,6 +85,14 @@ def _keyboard_nav_allowed(focus_widget):
     return not isinstance(focus_widget, NAV_INPUT_TYPES)
 
 
+CARD_HEIGHTS = {"default": (120, 140), "compact": (64, 64)}
+
+
+def _card_height_bounds(compact):
+    """任务卡片高度区间（最小,最大）；紧凑模式压到一行摘要的高度。"""
+    return CARD_HEIGHTS["compact"] if compact else CARD_HEIGHTS["default"]
+
+
 TRAY_ICON_STATES = ("idle", "downloading", "attention")
 TRAY_ICON_STYLE = {
     "idle": {"bg": "#6c5ce7", "fg": "#ffffff"},
@@ -431,8 +439,10 @@ class TaskCard(QFrame):
                 background-color: #20202e;
             }
         """)
-        self.setMinimumHeight(120)
-        self._base_max_height = 140
+        self._compact = False
+        self._error_text = ""
+        self.setMinimumHeight(CARD_HEIGHTS["default"][0])
+        self._base_max_height = CARD_HEIGHTS["default"][1]
         self.setMaximumHeight(self._base_max_height)
         self._build_ui(task_data)
 
@@ -641,13 +651,27 @@ class TaskCard(QFrame):
 
     def _apply_error_visibility(self, status, err):
         """失败且有错误信息时显示原因，并解除高度限制以保证完整可见。"""
-        if status == "failed" and err:
+        self._error_text = err or ""
+        if status == "failed" and err and not self._compact:
             self.error_label.setText(f"⚠ 失败原因: {err}")
             self.error_label.show()
             self.setMaximumHeight(16777215)  # 解除上限，完整显示多行错误
         else:
             self.error_label.hide()
             self.setMaximumHeight(self._base_max_height)
+        # 紧凑模式下把失败原因放进工具提示，不占高度
+        self.setToolTip(f"⚠ 失败原因: {self._error_text}"
+                        if self._compact and self._error_text else "")
+
+    def set_compact(self, on):
+        """紧凑模式：压低高度、隐藏次要信息（大小/ETA/失败详情）。"""
+        self._compact = bool(on)
+        lo, hi = _card_height_bounds(self._compact)
+        self._base_max_height = hi
+        self.setMinimumHeight(lo)
+        self.size_label.setVisible(not self._compact)
+        self.eta_label.setVisible(not self._compact)
+        self._apply_error_visibility(self._built_status, self._error_text)
 
     def contextMenuEvent(self, event):
         """右键菜单：按状态提供 暂停/继续/重试/打开/复制链接/删除。"""
@@ -977,6 +1001,7 @@ class MainWindow(QMainWindow):
         self.logger.addHandler(self._log_handler)
         self.log_signal.connect(self._append_log)
         self._cards = {}  # task_id -> TaskCard
+        self._compact = False  # 任务列表紧凑模式
         self._selected_task_id = None  # 键盘/鼠标选中的任务（↑/↓ 导航）
         self._search = ""  # 任务搜索关键字（文件名/链接，大小写不敏感）
         self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
@@ -1146,6 +1171,7 @@ class MainWindow(QMainWindow):
             import config as _cfg
             _saved_sort = _cfg.get("sort")
             self._sort = _saved_sort if _saved_sort in SORT_KEYS else "default"
+            self._compact = bool(_cfg.get("compact"))
         except Exception:
             self._sort = "default"
         self._filter_group = QButtonGroup(self)
@@ -1169,6 +1195,14 @@ class MainWindow(QMainWindow):
         self.sort_combo.setToolTip("任务列表排序方式")
         self.sort_combo.currentIndexChanged.connect(self._set_sort)
         fb.addWidget(self.sort_combo)
+        self.compact_btn = QPushButton("≡ 紧凑")
+        self.compact_btn.setObjectName("filterBtn")
+        self.compact_btn.setCheckable(True)
+        self.compact_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.compact_btn.setChecked(self._compact)
+        self.compact_btn.setToolTip("紧凑模式：隐藏次要信息，一屏看更多任务（可选择会被记住）")
+        self.compact_btn.clicked.connect(self._set_compact)
+        fb.addWidget(self.compact_btn)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("搜索任务…")
         self.search_input.setClearButtonEnabled(True)
@@ -1363,6 +1397,7 @@ class MainWindow(QMainWindow):
                     card.update_data(data)
                 else:
                     card = TaskCard(data)
+                    card.set_compact(self._compact)
                     card.action_triggered.connect(self._handle_action)
                     card.selected.connect(lambda tid: self._select_task(tid))
                     self._cards[task_id] = card
@@ -1514,6 +1549,20 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._refresh()
+
+    def _set_compact(self, checked):
+        """切换任务列表紧凑模式，并持久化便于重启后保持。"""
+        compact = bool(checked)
+        if compact == self._compact:
+            return
+        self._compact = compact
+        try:
+            import config
+            config.set("compact", compact)
+        except Exception:
+            pass
+        for card in self._cards.values():
+            card.set_compact(compact)
 
     def _set_search(self, text):
         """按文件名/链接关键字过滤任务列表。"""

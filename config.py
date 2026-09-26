@@ -25,6 +25,7 @@ _DEFAULTS = {
     "rate_limit": 0,  # 全局下载限速（字节/秒，0 = 不限速）
     "finish_action": "none",  # 全部下载完成后的动作：none/shutdown/suspend/beep
     "notify_sound": "none",  # 完成提示音：none/beep/system
+    "compact": False,  # 任务列表紧凑模式（隐藏次要信息，一屏更多任务）
     "monitor_enabled": True,
 }
 

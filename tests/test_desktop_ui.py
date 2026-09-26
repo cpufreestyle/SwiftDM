@@ -237,6 +237,42 @@ def test_tray_icon_renders_every_state(qt_app):
         assert not icon.isNull()
 
 
+def test_card_height_bounds_for_compact_and_default():
+    import main_window as mw
+
+    assert mw._card_height_bounds(False) == (120, 140)
+    assert mw._card_height_bounds(True) == (64, 64)
+
+
+def test_task_card_compact_hides_secondary_info(qt_app):
+    import main_window as mw
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "status": "downloading", "total_size": 100,
+                        "downloaded": 50, "speed": 1024, "eta": "00:10"})
+    assert card.minimumHeight() == 120 and card.maximumHeight() == 140
+    card.set_compact(True)
+    assert card.minimumHeight() == 64 and card.maximumHeight() == 64
+    assert card.size_label.isHidden() and card.eta_label.isHidden()
+    card.set_compact(False)
+    assert card.maximumHeight() == 140
+    assert not card.size_label.isHidden() and not card.eta_label.isHidden()
+
+
+def test_task_card_compact_keeps_error_in_tooltip(qt_app):
+    import main_window as mw
+
+    card = mw.TaskCard({"task_id": "t2", "filename": "y.bin",
+                        "status": "failed", "error": "连接超时",
+                        "total_size": 10, "downloaded": 0, "speed": 0})
+    card.set_compact(True)
+    assert card.error_label.isHidden()          # 不占高度
+    assert "连接超时" in card.toolTip()   # 原因放工具提示
+    card.set_compact(False)
+    assert not card.error_label.isHidden()
+    assert card.toolTip() == ""
+
+
 def test_settings_dialog_groups_cover_every_row(qt_app):
     import main_window as mw
     from PyQt6.QtWidgets import QGroupBox, QLabel
