@@ -223,6 +223,12 @@ def main():
     # 2.5 下载调度线程：定时开始 + 完成后的动作（不启动则定时永不生效）
     from scheduler import scheduler as dl_scheduler
     dl_scheduler.start()
+    # 恢复上次设置的「全部下载完成后」动作（桌面/Web 两端共用，重启后仍生效）
+    _finish_action = config.get("finish_action")
+    if _finish_action in ("shutdown", "suspend", "beep"):
+        dl_scheduler.set_finish_action(_finish_action)
+        print(f"  [Scheduler] 全部下载完成后动作: {_finish_action}"
+              "（60 秒倒计时内可取消）")
 
     # 4. 启动 Flask Web 服务器（后台线程，独立于 UI，UI 崩溃也不影响服务）
     from app import app as flask_app

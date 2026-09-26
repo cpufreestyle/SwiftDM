@@ -23,6 +23,7 @@ _DEFAULTS = {
     "proxy_mode": "env",
     "segments": 8,
     "rate_limit": 0,  # 全局下载限速（字节/秒，0 = 不限速）
+    "finish_action": "none",  # 全部下载完成后的动作：none/shutdown/suspend/beep
     "monitor_enabled": True,
 }
 

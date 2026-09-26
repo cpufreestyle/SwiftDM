@@ -79,5 +79,28 @@ def test_settings_post_persists_rate_limit(monkeypatch):
     set_rate(0)  # 不把限速泄漏到其它测试
 
 
+def test_settings_post_persists_finish_action(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(appmod.config, "set", lambda k, v: recorded.append((k, v)))
+    appmod.app.config["TESTING"] = True
+    resp = appmod.app.test_client().post("/api/settings",
+                                        json={"finish_action": "shutdown"})
+    assert resp.status_code == 200
+    assert resp.get_json()["finish_action"] == "shutdown"
+    assert ("finish_action", "shutdown") in recorded
+    appmod.scheduler.cancel_finish_action()  # 复位，避免影响其他用例
+
+
+def test_settings_post_coerces_bogus_finish_action(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(appmod.config, "set", lambda k, v: recorded.append((k, v)))
+    appmod.app.config["TESTING"] = True
+    resp = appmod.app.test_client().post("/api/settings",
+                                        json={"finish_action": "does-not-exist"})
+    assert resp.get_json()["finish_action"] == "none"
+    assert ("finish_action", "none") in recorded
+    appmod.scheduler.cancel_finish_action()
+
+
 def test_settings_get_reports_current_rate(page):
     assert "rate_limit" in appmod.app.test_client().get("/api/settings").get_json()

@@ -1576,9 +1576,10 @@ class MainWindow(QMainWindow):
             rl = settings.get("rate_limit") or 0
             set_rate(rl)
             config.set("rate_limit", rl)
-            # 「全部下载完成后」动作：应用到调度器（与 Web 端共用单例；重启后重置为无动作）
+            # 「全部下载完成后」动作：应用并持久化（与 Web 端共用 scheduler 单例，重启后仍生效）
             from scheduler import scheduler as _dl_scheduler
             _dl_scheduler.set_finish_action(settings.get("finish_action", "none"))
+            config.set("finish_action", _dl_scheduler.get_finish_action())
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(

@@ -276,7 +276,8 @@ def settings():
             rl = set_rate(data["rate_limit"])
             config.set("rate_limit", rl)  # 持久化，重启后限速仍生效
         if "finish_action" in data:
-            scheduler.set_finish_action(data["finish_action"])
+            # 持久化，重启后仍生效（与桌面端设置共用同一份配置）
+            config.set("finish_action", scheduler.set_finish_action(data["finish_action"]))
         # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效
         if "download_dir" in data:
             new_dir = str(data["download_dir"]).strip()
