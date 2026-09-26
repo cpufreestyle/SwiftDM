@@ -661,3 +661,75 @@ def test_base_rules_stay_out_of_media_queries(page):
         if depth > 0 and stripped.startswith(base_prefixes):
             pytest.fail("基础规则被 @media 吞了，桌面宽度下不会生效: " + stripped[:70])
         depth += stripped.count("{") - stripped.count("}")
+
+
+def test_no_base_level_selector_declares_the_same_property_twice(page):
+    """同一选择器不得在基础层重复声明同一个属性
+
+    `.modal` 曾有两条基础规则：旧的卡片样式
+    （background/border/width/max-width…）和后来的全屏遮罩规则。
+    后者只覆盖了 background，剩余的 border/box-shadow/width:90%/
+    max-width:440px 全都脆在了遮罩上：遮罩只覆盖屏幕一小条、
+    带着边框和阴影，对话框被压成你宽窄条。
+    媒体查询覆盖基础属性是合理的，因此只扫 depth=0。
+    """
+    css = page[page.index("<style>"):page.index("</style>")]
+    css = re.sub(r"/\*[\s\S]*?\*/", "", css)
+
+    def split_selectors(sel):
+        out, buf, lvl = [], "", 0
+        for ch in sel:
+            if ch in "([":
+                lvl += 1
+            elif ch in ")]":
+                lvl = max(0, lvl - 1)
+            if ch == "," and lvl == 0:
+                out.append(buf.strip())
+                buf = ""
+            else:
+                buf += ch
+        if buf.strip():
+            out.append(buf.strip())
+        return [s for s in out if s]
+
+    def props_of(body):
+        props = set()
+        for decl in body.split(";"):
+            decl = decl.strip()
+            if ":" not in decl:
+                continue
+            name = decl.split(":", 1)[0].strip().lower()
+            if name:
+                props.add(name)
+        return props
+
+    seen = {}
+    depth = 0
+    buf = []
+    stack = []
+    for ch in css:
+        if ch == "{":
+            prelude = "".join(buf).strip()
+            buf = []
+            stack.append((prelude, depth, []))
+            depth += 1
+        elif ch == "}":
+            if stack:
+                prelude, open_depth, parts = stack.pop()
+                if not prelude.startswith("@") and open_depth == 0:
+                    for sel in split_selectors(prelude):
+                        props = props_of("".join(parts))
+                        clash = seen.get(sel, set()) & props
+                        assert not clash, (
+                            "基础规则重复声明 %s 的 %s；"
+                            "后一条会静默马过前一条，"
+                            "依然写在里面的属性会泄露给错误元素"
+                            % (sel, sorted(clash))
+                        )
+                        seen[sel] = seen.get(sel, set()) | props
+            buf = []
+            depth = max(0, depth - 1)
+        else:
+            if stack:
+                stack[-1][2].append(ch)
+            buf.append(ch)
