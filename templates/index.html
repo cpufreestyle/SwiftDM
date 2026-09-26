@@ -10,6 +10,7 @@
   --surface: #1a1a23;
   --surface2: #22222e;
   --surface3: #2b2b3d;
+  --card: #22222e;
   --border: #2a2a3a;
   --border-strong: #3a3a52;
   --text: #e0e0e8;
@@ -42,6 +43,7 @@
   --surface: #ffffff;
   --surface2: #eceef6;
   --surface3: #dfe3ee;
+  --card: #ffffff;
   --border: #d8dce8;
   --border-strong: #c0c6d8;
   --text: #1b1e28;
@@ -1817,7 +1819,7 @@ function createTaskCard(task) {
         <div class="task-filename" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
         <div class="task-url" title="${escapeHtml(task.url)}">${escapeHtml(task.url)}</div>
         <div class="task-meta">${metaHtml}</div>
-        ${task.error ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${escapeHtml(task.error)}${
+        ${task.error && task.status === "failed" ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${escapeHtml(task.error)}${
           task.error_reason && REASON_HINTS[task.error_reason]
             ? `<br><span style="color:var(--text2)">${REASON_HINTS[task.error_reason]}</span>` : ""
         }</div>` : ""}

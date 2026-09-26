@@ -40,7 +40,7 @@ PAIRS = {
 WEB_ONLY = frozenset({
     "text3", "accent-soft", "green-strong", "green-hover", "green-soft",
     "amber", "amber-soft", "blue-strong", "blue-soft",
-    "radius", "radius-sm", "shadow",
+    "radius", "radius-sm", "shadow", "card",
 })
 DESKTOP_ONLY = frozenset({
     "input", "toolbar", "hover", "selected", "textStrong", "faint",

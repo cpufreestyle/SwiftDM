@@ -808,3 +808,32 @@ def test_mobile_task_top_stretches_its_children(page):
     assert task_top, block
     assert "flex-direction: column" in task_top[0], task_top
     assert "align-items: stretch" in task_top[0], task_top
+
+
+def test_every_css_variable_used_is_defined_in_a_theme(page):
+    """`var(--x)` 引用的变量必须在某个 `:root` 块里定义过。
+
+    `.modal-card` 和 `.add-adv` 一直用 `var(--card)` 当背景，但两套主题里从未定义过这个变量；
+    CSS 规则不会报错，`background` 直接变成 transparent，对话框和高级面板其实一直透明（getComputedStyle 量出 rgba(0,0,0,0)），
+    只是蓝了一层遮罩在背后穽道里看不出来。
+    """
+    blocks = re.findall(':root(?:\\[data-theme="[a-z]+"\\])?\\s*\\{[^}]*\\}', page)
+    assert len(blocks) == 2, blocks
+    dark = set(re.findall(r"(--[a-zA-Z0-9-]+)\s*:", blocks[0]))
+    light = dark | set(re.findall(r"(--[a-zA-Z0-9-]+)\s*:", blocks[1]))
+    used = set(re.findall(r"var\((--[a-zA-Z0-9-]+)\)", page))
+    for theme, defined in (("dark", dark), ("light", light)):
+        missing = sorted(used - defined)
+        assert not missing, "%s 主题引用了未定义的 CSS 变量: %s" % (theme, missing)
+
+
+def test_cancelled_cards_do_not_wear_the_red_error_line(page):
+    """已取消的任务卡不再以红色"失败"口预显示原因；与桌面端对齐。
+
+    重启后中断的任务会带上"重启后中断（未自动续传）"的 error 文案，
+    独立的红色行让"已取消"看起来像"失败"。桌面端 TaskCard
+    只在 status == failed 时显示该行；原因仍然可在详情弹窗看到。
+    """
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert 'task.error && task.status === "failed"' in card, card[:4000]
