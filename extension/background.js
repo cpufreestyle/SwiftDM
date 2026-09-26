@@ -364,6 +364,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === 'getSettings') {
+    // 弹窗要跟随应用的主题（与桌面端/Web 端同一份配置），这里只负责取回来
+    getJson('/api/settings').then((res) => {
+      sendResponse(res || {});
+    });
+    return true;
+  }
   if (message.action === 'getTasks') {
     getJson('/api/tasks').then((res) => {
       const payload = res || { tasks: [], stats: {}, ok: false, error: 'SwiftDM 未运行' };

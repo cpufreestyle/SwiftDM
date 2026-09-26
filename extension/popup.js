@@ -2,7 +2,30 @@
 let enabled = true;
 let activeTabId = null;
 
+// 主题跟随应用设置（与 Web 端 / 桌面端共用同一份 theme 设置）：
+// 弹窗上手动切换 data-theme，css 里的 :root / :root[data-theme="light"] 两套调色板切换。
+// 拿不到设置（桌面端没启动）时落到系统偏好，至少和浏览器自己的深色/浅色一致。
+function systemPrefersLight() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+}
+
+function resolveTheme(pref) {
+  if (pref === 'light' || pref === 'dark') return pref;
+  return systemPrefersLight() ? 'light' : 'dark';
+}
+
+function applyTheme(pref) {
+  document.documentElement.dataset.theme = resolveTheme(pref);
+}
+
+function loadTheme() {
+  chrome.runtime.sendMessage({ action: 'getSettings' }, (res) => {
+    applyTheme(res && res.theme);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  loadTheme();
   loadStatus();
   document.getElementById('toggleBtn').addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'toggleEnabled' }, (response) => {

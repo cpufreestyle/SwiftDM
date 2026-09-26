@@ -3,12 +3,57 @@
 <head>
 <meta charset="UTF-8">
 <style>
+/* 主题调色板：与桌面端 THEMES / Web 端 :root 同值同名，
+   popup.js 按应用主题切换 data-theme（跟随系统时回落系统偏好）。
+   改值前先看 tests/test_theme_tokens.py 的登记表。 */
+:root {
+  --surface: #1a1a23;
+  --surface2: #22222e;
+  --surface3: #2b2b3d;
+  --text: #e0e0e8;
+  --text2: #8888a0;
+  --faint: #555555;
+  --border: #2a2a3a;
+  --accent: #6c5ce7;
+  --accent-hover: #7d6ff0;
+  --accent2: #a29bfe;
+  --accent-ink: #ffffff;
+  --accent-soft: #2d2440;
+  --green: #00d2a0;
+  --green-soft: #123a2e;
+  --red: #ff5e7a;
+  --red-soft: #3a1720;
+  --amber: #ffb45c;
+  --amber-soft: #3a2410;
+  --on-green: #06231b;
+}
+:root[data-theme="light"] {
+  --surface: #ffffff;
+  --surface2: #eceef6;
+  --surface3: #dfe3ee;
+  --text: #1b1e28;
+  --text2: #5c6478;
+  --faint: #9aa0b4;
+  --border: #d8dce8;
+  --accent: #6c5ce7;
+  --accent-hover: #5b4bd6;
+  --accent2: #8f80ff;
+  --accent-ink: #ffffff;
+  --accent-soft: #ece9ff;
+  --green: #0a9d7c;
+  --green-soft: #d7f4ec;
+  --red: #df4660;
+  --red-soft: #fbe4e8;
+  --amber: #bd7410;
+  --amber-soft: #fbeed8;
+  --on-green: #06231b;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   width: 260px;
   font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-  background: #1a1a23;
-  color: #e0e0e8;
+  background: var(--surface);
+  color: var(--text);
   padding: 14px;
 }
 .header {
@@ -20,20 +65,20 @@ body {
 .logo {
   width: 32px;
   height: 32px;
-  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
-  color: #fff;
+  color: var(--accent-ink);
 }
-h2 { font-size: 15px; color: #fff; }
+h2 { font-size: 15px; color: var(--text); }
 .status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #22222e;
+  background: var(--surface2);
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -45,8 +90,8 @@ h2 { font-size: 15px; color: #fff; }
   display: inline-block;
   margin-right: 6px;
 }
-.status-dot.active { background: #00d2a0; }
-.status-dot.inactive { background: #ff5e7a; }
+.status-dot.active { background: var(--green); }
+.status-dot.inactive { background: var(--red); }
 .btn {
   padding: 6px 14px;
   border: none;
@@ -56,71 +101,71 @@ h2 { font-size: 15px; color: #fff; }
   cursor: pointer;
 }
 .btn-toggle {
-  background: #6c5ce7;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
-.btn-toggle:hover { background: #7d6ff0; }
+.btn-toggle:hover { background: var(--accent-hover); }
 .stats {
   font-size: 11px;
-  color: #8888a0;
+  color: var(--text2);
   margin-bottom: 12px;
   line-height: 1.6;
 }
 .footer {
   font-size: 10px;
-  color: #555;
+  color: var(--faint);
   text-align: center;
-  border-top: 1px solid #2a2a3a;
+  border-top: 1px solid var(--border);
   padding-top: 10px;
   margin-top: 10px;
 }
 .btn-reset {
   background: transparent;
-  color: #ff5e7a;
-  border: 1px solid #ff5e7a;
+  color: var(--red);
+  border: 1px solid var(--red);
   font-size: 10px;
   padding: 3px 8px;
   border-radius: 3px;
   cursor: pointer;
 }
-.btn-reset:hover { background: #ff5e7a22; }
+.btn-reset:hover { background: var(--red-soft); }
 .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
 .tab {
   flex: 1; padding: 6px 0; border: none; border-radius: 4px; cursor: pointer;
-  background: #22222e; color: #8888a0; font-size: 12px; font-weight: 600;
+  background: var(--surface2); color: var(--text2); font-size: 12px; font-weight: 600;
 }
-.tab.active { background: #6c5ce7; color: #fff; }
+.tab.active { background: var(--accent); color: var(--accent-ink); }
 .badge {
   display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px;
-  background: #00d2a0; color: #06231b; font-size: 10px;
+  background: var(--green-soft); color: var(--green); font-size: 10px;
 }
-.badge.warn { background: #ff5e7a; color: #2a0a12; }
+.badge.warn { background: var(--red-soft); color: var(--red); }
 .tasks-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 11px; color: #8888a0; margin-bottom: 6px;
+  font-size: 11px; color: var(--text2); margin-bottom: 6px;
 }
 .hidden { display: none !important; }
-.media-head { font-size: 11px; color: #8888a0; margin-bottom: 6px; }
+.media-head { font-size: 11px; color: var(--text2); margin-bottom: 6px; }
 .ellipsis { display: block; max-width: 232px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-list { max-height: 220px; overflow-y: auto; }
 .media-item {
   display: flex; align-items: center; gap: 6px; padding: 7px 8px;
-  border-radius: 5px; background: #22222e; margin-bottom: 6px;
+  border-radius: 5px; background: var(--surface2); margin-bottom: 6px;
 }
 .media-kind {
   font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 3px;
-  background: #2d2440; color: #a29bfe; text-transform: uppercase;
+  background: var(--accent-soft); color: var(--accent2); text-transform: uppercase;
 }
-.media-kind.video { background: #123a2e; color: #00d2a0; }
-.media-kind.dash { background: #3a2410; color: #ffb45c; }
-.media-kind.mse { background: #3a1720; color: #ff5e7a; }
+.media-kind.video { background: var(--green-soft); color: var(--green); }
+.media-kind.dash { background: var(--amber-soft); color: var(--amber); }
+.media-kind.mse { background: var(--red-soft); color: var(--red); }
 .media-name { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.media-sub { font-size: 10px; color: #666680; }
-.btn-dl { background: #00d2a0; color: #06231b; border: none; border-radius: 3px;
+.media-sub { font-size: 10px; color: var(--text2); }
+.btn-dl { background: var(--green); color: var(--on-green); border: none; border-radius: 3px;
   font-size: 11px; font-weight: 700; padding: 4px 8px; cursor: pointer; }
-.btn-dl.secondary { background: #6c5ce7; color: #fff; }
-.btn-dl[disabled] { background: #2f2d3d; color: #55556a; cursor: not-allowed; }
-.media-empty { font-size: 11px; color: #55556a; text-align: center; padding: 16px 0; }
+.btn-dl.secondary { background: var(--accent); color: var(--accent-ink); }
+.btn-dl[disabled] { background: var(--surface3); color: var(--faint); cursor: not-allowed; }
+.media-empty { font-size: 11px; color: var(--text2); text-align: center; padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -130,11 +175,11 @@ h2 { font-size: 15px; color: #fff; }
 </div>
 
 <div class="stats">
-  <div>下载中: <strong style="color:#a29bfe" id="liveActive">0</strong>
-    · 速度: <span style="color:#00d2a0" id="liveSpeed">0 B/s</span>
-    · 失败: <strong style="color:#ff5e7a" id="liveFailed">0</strong></div>
-  <div>已捕获下载: <strong style="color:#a29bfe" id="sentCount">0</strong> 次</div>
-  <div>服务器: <span style="color:#888" id="serverAddr">检测中...</span></div>
+  <div>下载中: <strong style="color:var(--accent2)" id="liveActive">0</strong>
+    · 速度: <span style="color:var(--green)" id="liveSpeed">0 B/s</span>
+    · 失败: <strong style="color:var(--red)" id="liveFailed">0</strong></div>
+  <div>已捕获下载: <strong style="color:var(--accent2)" id="sentCount">0</strong> 次</div>
+  <div>服务器: <span style="color:var(--text2)" id="serverAddr">检测中...</span></div>
   <div style="margin-top:6px">
     <button class="btn-reset" id="resetBtn">清零计数</button>
   </div>

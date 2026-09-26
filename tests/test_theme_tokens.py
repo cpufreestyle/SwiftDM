@@ -48,20 +48,56 @@ DESKTOP_ONLY = frozenset({
     "orangeSoft", "orangeHover", "redText",
 })
 
-# 扩展 popup 只有一套深色皮肤，逐条断言它复用桌面 THEMES["dark"] 的同名令牌。
-# 值是 linear-gradient / 1px solid 这类简写时，按颜色出现顺序对应多个令牌。
-POPUP_MAP = {
-    "body": [("background", "surface"), ("color", "text")],
-    ".logo": [("background", ("accent", "accent2"))],
-    ".status-row": [("background", "surface2")],
-    ".status-dot.active": [("background", "green")],
-    ".status-dot.inactive": [("background", "red")],
-    ".stats": [("color", "textMuted")],
-    ".footer": [("color", "faint"), ("border-top", "border")],
-    ".btn-toggle": [("background", "accent")],
-    ".btn-toggle:hover": [("background", "accentHover")],
-    ".btn-reset": [("color", "red"), ("border", "red")],
-    ".tab.active": [("background", "accent")],
+# 扩展 popup 的调色板：变量名与 Web 端 :root 同名，
+# 值必须与桌面 THEMES / Web CSS 变量逐个相同（None 表示那一端没有对应令牌）。
+POPUP_TOKENS = {
+    "surface": ("surface", "surface"),
+    "surface2": ("surface2", "surface2"),
+    "surface3": ("surface3", "surface3"),
+    "text": ("text", "text"),
+    "text2": ("text2", "textMuted"),
+    "faint": (None, "faint"),
+    "border": ("border", "border"),
+    "accent": ("accent", "accent"),
+    "accent-hover": ("accent-hover", "accentHover"),
+    "accent2": ("accent2", "accent2"),
+    "accent-ink": ("accent-ink", "onAccent"),
+    "accent-soft": ("accent-soft", None),
+    "green": ("green", "green"),
+    "green-soft": ("green-soft", None),
+    "red": ("red", "red"),
+    "red-soft": ("red-soft", "redSoft"),
+    "amber": ("amber", None),
+    "amber-soft": ("amber-soft", None),
+    # 只有 popup 才有的令牌：值显式写在 POPUP_ONLY，改它必须同时改测试
+    "on-green": (None, None),
+}
+
+# popup 独有令牌的取值（深色 / 浅色）。写在这里是为了让「改颜色」
+# 变成一次显式决定，而不是悄悄漂移。
+POPUP_ONLY = {
+    "on-green": {"dark": "#06231b", "light": "#06231b"},
+}
+
+# 正文 / 按钮字色 -> 它站在哪个背景上。两套主题都要达到 4.5:1（WCAG AA）。
+# 类型标签（柔色底 + 饱和字）不在其中：那些值是从 Web 调色板整套继承来的，
+# 要改就在那边改，popup 自动跟着变。
+POPUP_TEXT_PAIRS = [
+    ("accent-ink", "accent"),
+    ("on-green", "green"),
+    ("text", "surface"),
+    ("text2", "surface"),
+    ("text2", "surface2"),
+]
+
+# 类型标签 / 角标必须走「柔色底 + 饱和字」，且柔色来自共享令牌。
+POPUP_CHIP_TINTS = {
+    ".media-kind": ("--accent-soft", "--accent2"),
+    ".media-kind.video": ("--green-soft", "--green"),
+    ".media-kind.dash": ("--amber-soft", "--amber"),
+    ".media-kind.mse": ("--red-soft", "--red"),
+    ".badge": ("--green-soft", "--green"),
+    ".badge.warn": ("--red-soft", "--red"),
 }
 
 
@@ -89,6 +125,8 @@ def _py_block(src, theme):
 
 def _style_rules(html, close_tag="</style>"):
     css = html[html.index("<style>") + 7:html.index(close_tag)]
+    # 注释同样不含花括号，不削掉就会被算进前一条规则的选择器名里
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     return {sel.strip(): body.strip() for sel, body in
             re.findall(r"([^{}]+)\{([^{}]*)\}", css)}
 
@@ -101,17 +139,18 @@ def _decl(rule, prop):
     return None
 
 
-def _colors(value):
-    """从声明值里抠出颜色并归一成 6 位小写，#555 -> #555555。"""
-    out = []
-    for hexcode in re.findall(r"#[0-9a-fA-F]{3,6}\b", value):
-        hexcode = hexcode.lower()
-        if len(hexcode) == 4:
-            hexcode = "#" + hexcode[1] * 2 + hexcode[2] * 2 + hexcode[3] * 2
-        out.append(hexcode)
-    return out
+def _lum(hexcode):
+    """WCAG 相对亮度（#rrggbb）。"""
+    channels = [int(hexcode[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+           for c in channels]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
 
 
+def _contrast(a, b):
+    """两个颜色的对比度，无关顺序。"""
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 def _call_span(src, match):
     """取从匹配到的左括号到与之配对的右括号之间的文本。
 
@@ -128,7 +167,6 @@ def _call_span(src, match):
             depth -= 1
         i += 1
     return src[start:i]
-
 
 def test_no_hardcoded_colors_in_desktop_stylesheets():
     """Web 端早就禁止在 CSS 里写死颜色，桌面端也要守住同一条线。
@@ -176,6 +214,15 @@ def popup_rules():
     return _style_rules(_read(os.path.join("extension", "popup.html")))
 
 
+@pytest.fixture(scope="module")
+def popup():
+    # popup 的两套调色板 + 原文（查「还有没有写死的颜色」时要用）
+    html = _read(os.path.join("extension", "popup.html"))
+    return {"html": html,
+            "dark": _css_block(html, ":root {"),
+            "light": _css_block(html, ':root[data-theme="light"] {')}
+
+
 @pytest.mark.parametrize("theme", ["dark", "light"])
 def test_shared_tokens_agree_on_value(web, desktop, theme):
     for web_key, desk_key in PAIRS.items():
@@ -202,41 +249,71 @@ def test_no_token_regressed_to_transparent_or_black(web, desktop, theme):
         for key, value in tokens.items():
             assert value != "#000000", (side, theme, key)
 
-# 扩展 popup 的媒体类型标签色：和 Web 端同名语义的染料必须同值，
-# 否则同一个 HLS 视频在侧边栏和网页里看起来不一样。
-POPUP_KIND_TINTS = {
-    ".media-kind": ("accent-soft", "accent2"),
-    ".media-kind.video": ("green-soft", "green"),
-    ".media-kind.dash": ("amber-soft", "amber"),
-    ".media-kind.mse": ("red-soft", "red"),
-}
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_popup_palette_matches_shared_themes(popup, web, desktop, theme):
+    """popup 的每个变量都必须与 Web / 桌面的同义令牌同值。"""
+    for var, (web_key, desk_key) in POPUP_TOKENS.items():
+        assert var in popup[theme], f"{theme}: popup 缺少 --{var}"
+        if web_key:
+            assert var in web[theme], f"{theme}: web 缺少 --{web_key}"
+            assert popup[theme][var] == web[theme][web_key], (
+                theme, var, popup[theme][var], web_key, web[theme][web_key])
+        if desk_key:
+            assert desk_key in desktop[theme], f"{theme}: 桌面缺少 {desk_key}"
+            assert popup[theme][var] == desktop[theme][desk_key], (
+                theme, var, popup[theme][var], desk_key, desktop[theme][desk_key])
+        if var in POPUP_ONLY:
+            assert popup[theme][var] == POPUP_ONLY[var][theme], (
+                theme, var, popup[theme][var], POPUP_ONLY[var][theme])
 
 
-def test_extension_popup_kind_chips_match_web(popup_rules, web):
-    dark = web["dark"]
-    for selector, (bg_key, fg_key) in POPUP_KIND_TINTS.items():
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_popup_declares_only_registered_tokens(popup, theme):
+    """新增 popup 变量必须登记进 POPUP_TOKENS，不允许悄悄只改弹窗。"""
+    unknown = sorted(set(popup[theme]) - set(POPUP_TOKENS))
+    assert not unknown, "popup 新变量未登记: %s" % unknown
+
+
+def test_popup_has_no_literal_colors(popup):
+    """调色板之外不允许再出现写死的颜色（Web 端早就这么做）。"""
+    html = popup["html"]
+    # 先扮掉 HTML 实体（&#11015; 这类数字实体含 #，不是颜色）
+    html = re.sub(r"&[a-zA-Z#0-9]+;", "", html)
+    css = html[html.index("<style>") + 7:html.index("</style>")]
+    css = re.sub(r":root[^{]*\{[^}]*\}", "", css)
+    assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", css), (
+        "popup 规则里还有写死的颜色")
+    assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", html[html.index("</style>"):]), (
+        "popup 页面里还有写死的颜色")
+
+
+def test_popup_chips_use_shared_tints(popup_rules, popup):
+    """类型标签 / 角标必须走共享的柔色底 + 饱和字。"""
+    for selector, (bg, fg) in POPUP_CHIP_TINTS.items():
         rule = popup_rules.get(selector)
         assert rule is not None, f"popup 里找不到 {selector} 规则"
-        background, color = _decl(rule, "background"), _decl(rule, "color")
-        assert background and color, f"{selector} 缺 background/color 声明"
-        assert _colors(background) == [dark[bg_key]], (
-            selector, "background", background, bg_key, dark[bg_key])
-        assert _colors(color) == [dark[fg_key]], (
-            selector, "color", color, fg_key, dark[fg_key])
+        assert _decl(rule, "background") == "var(%s)" % bg, (
+            selector, _decl(rule, "background"), bg)
+        assert _decl(rule, "color") == "var(%s)" % fg, (
+            selector, _decl(rule, "color"), fg)
+    for bg, fg in POPUP_CHIP_TINTS.values():
+        for var in (bg, fg):
+            assert var[2:] in popup["dark"], var
 
 
-def test_extension_popup_reuses_dark_palette(popup_rules, desktop):
-    dark = desktop["dark"]
-    for selector, decls in POPUP_MAP.items():
-        rule = popup_rules.get(selector)
-        assert rule is not None, f"popup 里找不到 {selector} 规则"
-        for prop, tokens in decls:
-            want = (tokens,) if isinstance(tokens, str) else tokens
-            value = _decl(rule, prop)
-            assert value is not None, f"{selector} 的 {prop} 属性丢了"
-            got = _colors(value)
-            assert len(got) == len(want), f"{selector} {prop} 的颜色数量变了: {value}"
-            for token, color in zip(want, got):
-                assert token in dark, f"桌面 THEMES[dark] 没有 {token}"
-                assert color == dark[token], (
-                    selector, prop, token, color, dark[token])
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_popup_text_keeps_contrast(popup, theme):
+    """同色背景配同色字比单级难看更严重：两套主题都要达到 4.5:1。"""
+    for ink, ground in POPUP_TEXT_PAIRS:
+        ratio = _contrast(popup[theme][ink], popup[theme][ground])
+        assert ratio >= 4.5, (theme, ink, ground, round(ratio, 2))
+
+
+def test_popup_theme_follows_the_app_setting():
+    """popup 必须真的去问应用要主题，并且背景脚本要有 getSettings 分支。"""
+    popup_js = _read(os.path.join("extension", "popup.js"))
+    assert "document.documentElement.dataset.theme" in popup_js
+    assert "'getSettings'" in popup_js, "popup.js 没有发 getSettings 消息"
+    background = _read(os.path.join("extension", "background.js"))
+    assert "message.action === 'getSettings'" in background
+    assert "getJson('/api/settings')" in background

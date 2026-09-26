@@ -1,6 +1,7 @@
 // popup.js「任务」页测试：失败任务筛选/渲染 + 一键重试的消息往返。
 // popup.js 依赖 chrome.* 与 DOM，这里用最小桩件在 vm 里跑真实源码，
 // 覆盖纯函数（failedTasksOf）与消息接线（retryTask / retryAllTasks）。
+// 并覆盖主题跟随：getSettings 的 theme 决定 data-theme，auto/掉线回落系统偏好。
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -39,13 +40,15 @@ function makeEl(tag) {
   };
 }
 
-function makeSandbox(handler) {
+function makeSandbox(handler, opts = {}) {
   const elements = {};
   const messages = [];
   const intervals = [];
   let domReady = null;
   const sandbox = {
     console,
+    // 主题跟随：matchMedia 决定 auto 时落到哪一套调色板
+    window: { matchMedia: (q) => ({ matches: !!opts.systemLight, media: q }) },
     setTimeout,
     clearTimeout,
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
@@ -63,6 +66,7 @@ function makeSandbox(handler) {
       addEventListener(type, fn) { if (type === 'DOMContentLoaded') domReady = fn; },
       getElementById(id) { return elements[id] || (elements[id] = makeEl("div#" + id)); },
       createElement: (tag) => makeEl(tag),
+      documentElement: { dataset: {} },
     },
   };
   sandbox.globalThis = sandbox;
@@ -262,7 +266,8 @@ console.log("popup.js tasks panel OK");
     return undefined;
   });
   openPopup();
-  assert.deepStrictEqual(messages.map((m) => m.action).slice(0, 2), ['getStatus', 'getTasks']);
+  // 主题在最前：先把 data-theme 定下来，其余两个轮询后面贴
+  assert.deepStrictEqual(messages.map((m) => m.action).slice(0, 2), ['getSettings', 'getStatus']);
   assert.strictEqual(elements.serverAddr.textContent, '127.0.0.1:5000');
 }
 
@@ -270,4 +275,35 @@ console.log("popup.js tasks panel OK");
 {
   const { sandbox } = makeSandbox();
   assert.strictEqual(sandbox.serverBaseOf({ tasks: [], ok: false, error: 'SwiftDM 未运行' }), '');
+}
+
+// 弹窗主题跟随应用设置（与 Web / 桌面端共用同一份 theme 配置）
+{
+  const light = makeSandbox((m) => (m.action === "getSettings" ? { theme: "light" } : undefined));
+  light.sandbox.applyTheme("light");
+  assert.strictEqual(light.sandbox.document.documentElement.dataset.theme, "light");
+  const dark = makeSandbox((m) => (m.action === "getSettings" ? { theme: "dark" } : undefined));
+  dark.sandbox.applyTheme("dark");
+  assert.strictEqual(dark.sandbox.document.documentElement.dataset.theme, "dark");
+  // auto / 连不上桌面端：回落系统偏好，至少别和浏览器自己的深浅色相反
+  const sysLight = makeSandbox(null, { systemLight: true });
+  assert.strictEqual(sysLight.sandbox.resolveTheme("auto"), "light");
+  assert.strictEqual(sysLight.sandbox.resolveTheme(undefined), "light");
+  const sysDark = makeSandbox(null, { systemLight: false });
+  assert.strictEqual(sysDark.sandbox.resolveTheme("auto"), "dark");
+  assert.strictEqual(sysDark.sandbox.resolveTheme("乱写"), "dark");
+  assert.strictEqual(sysDark.sandbox.resolveTheme("light"), "light");
+}
+
+// 打开弹窗先把主题问清楚，再拉状态（否则首屏先是默认深色）
+{
+  const { messages, openPopup } = makeSandbox((m) => {
+    if (m.action === "getSettings") return { theme: "light" };
+    if (m.action === "getTasks") return { tasks: [], stats: {}, __base: "" };
+    return undefined;
+  });
+  openPopup();
+  assert.strictEqual(messages[0].action, "getSettings", "首屏第一条消息应是取主题");
+  assert.strictEqual(messages.filter((m) => m.action === "getSettings").length, 1,
+    "主题只在开弹窗时取一次，不跟着轮询反复问");
 }
