@@ -736,6 +736,11 @@ QPushButton#filterBtn {
 QPushButton#filterBtn:hover { color:$text; border-color:$borderHover; }
 QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:$onAccent; }
 
+/* 键盘导航提示：与 Web 端 .kbd-hint 同文案、同色阶（textMuted 与 Web 端 --text2 同值）。
+   ↑↓/Enter 的快捷键早就接好了（见 _setup_shortcuts），但桌面端此前没有任何地方提到它，
+   纯键盘用户不会知道可以这么用；样式与 Web 端同为 11px 弱化色，不抢筛选芯片的视觉。 */
+QLabel#kbdHint { font-size: 11px; color: $textMuted; }
+
 /* ===== 键盘焦点环 =====
    QPushButton 全部由 QSS 重画，原生焦点框被吃掉，纯键盘用户完全看不到焦点落在哪。
    这里补一条与 Web 端 :focus-visible 同语义的强调色描边；仅键盘聚焦时显形，鼠标点击不出现。 */
@@ -2018,6 +2023,13 @@ class MainWindow(QMainWindow):
             _b.clicked.connect(lambda _=False, k=_key: self._set_filter(k))
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
+        # 键盘导航提示贴着芯片放（Web 端 .kbd-hint 就在筛选按钮后面），
+        # 让「↑↓/Enter 能操作任务」这件事在三个界面里都能被发现。
+        self.kbd_hint = QLabel("↑↓ 选择任务 · Enter 打开")
+        self.kbd_hint.setObjectName("kbdHint")
+        self.kbd_hint.setToolTip("键盘导航：↑↓ 在可见任务间移动，回车打开文件")
+        self.kbd_hint.setAccessibleName("键盘导航提示：↑↓ 在可见任务间移动，回车打开文件")
+        fb.addWidget(self.kbd_hint)
         fb.addStretch(1)
         self.sort_combo = QComboBox()
         for _key in SORT_KEYS:

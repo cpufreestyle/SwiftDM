@@ -1956,6 +1956,51 @@ def test_desktop_tab_order_walks_the_window_in_reading_order(qt_app, monkeypatch
             _tab_to(win, qt_app, prev, nxt)
 
 
+def test_filter_bar_hints_at_the_task_keyboard_shortcuts(qt_app, monkeypatch):
+    """↑↓/Enter  shortcuts 早就接好了，但桌面上从前没有任何地方提到。
+
+    Web 端筛选栏里一直挂着一行 .kbd-hint「↑↓ 选择任务 · Enter 打开」，
+    桌面端能力相同却只字未提，纯键盘用户不会去试。这里补上同一行提示，
+    并要求它贴着一排筛选芯片（而不是漂到右上角跟排序/搜索混在一起）。
+    """
+    import io as _io
+
+    import main_window as mw
+
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        hint = win.kbd_hint
+        assert hint.objectName() == "kbdHint"
+        assert hint.text() == "↑↓ 选择任务 · Enter 打开"
+        # 与 Web 端同文案的悬浮说明，读屏用户也要能拿到
+        assert "↑↓" in hint.toolTip() and "回车" in hint.toolTip()
+        assert hint.accessibleName() == "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件"
+
+        # 位置：伸缩位是「左组 / 右组」的分界，addStretch 之前的都跟着芯片在左边
+        layout = hint.parentWidget().layout()
+        chips = [layout.indexOf(win._filter_btns[k])
+                 for k in ("all", "active", "completed", "failed")]
+        stretch_slots = [i for i in range(layout.count()) if layout.stretch(i) > 0]
+        assert stretch_slots, "筛选栏要留一段伸缩，把右侧控件推到边上"
+        assert max(chips) < layout.indexOf(hint), "提示要贴着筛选芯片放"
+        assert layout.indexOf(hint) < min(stretch_slots),             "提示该和芯片同组，不该漂到排序/紧凑那一侧"
+
+    # 样式走令牌：和 Web 端 .kbd-hint 同为 11px + textMuted（#8888a0）
+    qss = _io.open(mw.__file__, encoding="utf-8").read()
+    assert "QLabel#kbdHint { font-size: 11px; color: $textMuted; }" in qss
+    web = _io.open(os.path.join(os.path.dirname(mw.__file__), "templates", "index.html"),
+                   encoding="utf-8").read()
+    assert web.count("kbd-hint") >= 2, "Web 端的提示样式/节点都还在，别只改一边"
+
+    # 真的离屏渲染一次，确认提示文字可见且不是零尺寸
+    from PyQt6.QtWidgets import QLabel
+
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        hint = win.kbd_hint
+        hint.show()
+        qt_app.processEvents()
+        assert hint.size().width() > 0 and hint.size().height() > 0, hint.text()
+
+
 def test_filter_chips_stay_exclusive_and_each_reachable_by_tab(qt_app, monkeypatch):
     """四颗筛选芯片每颗都能 Tab 到，同时保持互斥。
 
