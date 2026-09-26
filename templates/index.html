@@ -952,6 +952,45 @@ document.addEventListener("drop", async e => {
   showToast(ok > 1 ? `已添加 ${ok} 个下载任务` : "已添加下载任务");
 });
 
+// ===== 快捷键（与桌面端一致）=====
+// Ctrl/⌘+N 聚焦链接输入框并全选，Ctrl/⌘+F 聚焦搜索框，Esc 关闭详情/设置弹窗。
+// 纯函数 shortcutAction 决定「该做什么」，runShortcut 只负责执行，便于单测。
+function shortcutAction(e) {
+  if (!e) return null;
+  const key = String(e.key || "").toLowerCase();
+  if (key === "escape") {
+    const detail = document.getElementById("detailModal");
+    if (detail && detail.classList.contains("open")) return "close_detail";
+    const settings = document.getElementById("settingsModal");
+    if (settings && settings.classList.contains("open")) return "close_settings";
+    return null;
+  }
+  if (!(e.ctrlKey || e.metaKey)) return null;
+  if (key === "n") return "focus_url";
+  if (key === "f") return "focus_search";
+  return null;
+}
+
+function runShortcut(e) {
+  const action = shortcutAction(e);
+  if (!action) return;
+  // 焦点类快捷键要抢掉浏览器默认行为（Ctrl+F 是页面查找，会抢焦点）
+  if (action === "focus_url" || action === "focus_search") e.preventDefault();
+  if (action === "focus_url") {
+    const el = document.getElementById("urlInput");
+    if (el) { el.focus(); el.select(); }
+  } else if (action === "focus_search") {
+    const el = document.getElementById("searchInput");
+    if (el) el.focus();
+  } else if (action === "close_detail") {
+    closeDetail();
+  } else if (action === "close_settings") {
+    closeSettings();
+  }
+}
+
+document.addEventListener("keydown", runShortcut);
+
 function extractDropUrls(dt) {
   const out = [];
   const push = s => {

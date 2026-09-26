@@ -377,3 +377,14 @@ def test_web_detail_modal_wired_to_cards(page):
     assert "syncDetailModal();" in page
     # 详情值一律转义，防文件名/链接注入
     assert "escapeHtml(String(v))" in seg_src
+
+
+def test_web_keyboard_shortcuts_match_desktop(page):
+    assert "function shortcutAction" in page
+    assert 'document.addEventListener("keydown", runShortcut);' in page
+    # Esc 关弹窗要详情优先于设置；焦点类快捷键必须 preventDefault
+    body = page[page.index("function shortcutAction"):
+                page.index("function extractDropUrls")]
+    assert body.index("detailModal") < body.index("settingsModal")
+    assert "preventDefault" in page
+    assert '"focus_url"' in page and '"focus_search"' in page
