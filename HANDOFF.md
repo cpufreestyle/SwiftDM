@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `00cb89e`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 21 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `8b6975e`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 22 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -81,7 +81,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作，最后把批量操作的键盘入口补到 Web 端、并修正桌面端 Ctrl+F 的指向；最后让定时等待中的任务在三端都能「取消定时」。
 
-本轮共 21 个 commit（HEAD = `00cb89e`，`git status -sb` 与 origin/main 0/0）：
+本轮共 22 个 commit（HEAD = `8b6975e`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -324,11 +324,36 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      `.catch` 里 `process.exit(1)`）才确定；③ `assert.deepStrictEqual` 把 `{a:1,b:undefined}`
      与 `{a:1}` 视为不等，断言里写 `method: undefined` 就要求被测代码真的把这个键塞进对象。
 
+21. **定时下载重启即失效、设置面板被裁掉、失败口径两头打架**（`8b6975e`）：上一轮把「取消定时」做完后，
+    用 Playwright 无头 Chromium 真机渲染 Web UI 做走查，发现三个都在真机上才暴露的问题。
+   - **重启丢定时任务（数据丢失级）**：`_reconstruct_task` 把所有 `pending` 任务一律当成
+     「重启后中断」改成 `cancelled`，而 `scheduler.restore()` 只恢复状态仍是 `pending` 的任务——
+     于是定时任务重启后先被标成已取消、调度条目再被当失效条目清掉，定时下载凭空消失。
+     现在先查持久化的调度表（`config["scheduled"]`），登记在册的 `pending` 不算中断；
+     到点的任务照旧交给 `scan()` 拉起。
+   - **设置面板被裁掉（可用性）**：`.modal-card` 既没有 `max-height` 也没有 `overflow`，
+     1280x900 下「定时任务 / 链路自检 / 依赖检测」整块在视口外且无法滚动，上一轮新做的
+     「取消定时」入口在小窗口上根本点不到。改为 `max-height: calc(100vh - 96px)` + 自带滚动条。
+   - **失败口径两头打架（观感）**：顶栏统计卡「失败 4」只算真失败，筛选芯片「失败 211」把已取消也算进去，
+     同一个界面两个「失败」对不上。两端芯片统一改名「失败/取消」并补 tooltip，
+     桌面端同步改（`_update_filter_counts` 里的 labels 字典也要改，否则刷新时被覆盖回去）。
+   - **测试会冲掉用户真实配置（数据丢失级）**：`Scheduler._persist()` 把整张调度表写回共享配置，
+     而 `test_scheduler.py` 里有几个用例没走 `_fake_config` 就调 `schedule()`，跑一次 pytest
+     就把用户 `~/.swiftdm/config.json` 的定时表冲成测试数据。
+     现在 `tests/conftest.py` 用 autouse fixture 给 `config.get/set` 套一层内存覆写
+     （读仍走真实配置，写只进覆写层），并加了 `test_shared_config_writes_never_reach_the_real_file`
+     守卫。注意这会改变「测试能改全局配置」的旧习惯，但没有任何测试断言值真的落到了磁盘上。
+   - 踩坑记录：① Jinja 模板在 debug=False 下有缓存，改了 `templates/index.html` 后
+     **必须重启** 正在跑的 Web 进程，否则 Playwright 截到的还是旧页面（白查半天）；
+     ② `assert.deepStrictEqual` 之外的坑：`config.get(key)` 的真实签名只收一个参数，
+     conftest 里的替身写成 `(key, default=None)` 再把 default 传给真身就直接 TypeError。
+
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
 - （已关账）批量操作的键盘入口：Web 端 Ctrl+A 全选可见、Esc 先清多选、Ctrl+点击卡片切换勾选；桌面端 Ctrl+F 已从「聚焦链接框」改回「聚焦搜索框」（与 Web 端及通用约定一致）。
+- （已关账）定时下载的「重启存活」：调度表在册的 pending 不再被当中断取消，见第 21 项。
 - （已关账）定时任务的取消入口：桌面端 pending 卡片按钮 + 右键菜单「取消定时」，Web 端卡片
   与设置面板定时列表每行一个「取消」，删除/取消都会先清调度表，幽灵条目不再出现。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
