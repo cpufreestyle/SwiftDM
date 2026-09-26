@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `4d863b6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 5 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `b1309a1`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 6 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -52,6 +52,7 @@ IDM 风格的多线程下载管理器：
 ### 3.5 Shell 是 PowerShell
 - 不支持 heredoc（`<<EOF` 报错）；多行 git 提交信息需写临时文件后 `git commit -F <file>`。
 - 读文件/命令未指定 encoding 可能被拦截，注意 `-Encoding UTF8`。
+- 核对中文不要用 `Get-Content`（按 GBK 解码显示乱码）：先 `[Console]::OutputEncoding=[Text.Encoding]::UTF8` 再用 `Select-String -Path <f> -Pattern <关键词>`；python `print` 中文到管道可能触发 `UnicodeEncodeError`，用码点校验最稳。
 
 ---
 
@@ -80,7 +81,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
 
-本轮共 5 个 commit（HEAD = `4d863b6`，`git status -sb` 与 origin/main 0/0）：
+本轮共 6 个 commit（HEAD = `b1309a1`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -99,11 +100,18 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 4. **`create_task` 默认值随设置：不传参即读共享设置，与传 None 语义统一；传 0 与显式值不变。**
 
-验证：全量 pytest 334 passed / 1 skipped；11 个 node 测试全绿；
-`build_exe.py` 重建 + `test_binary.py` 全过（`app.py`/`downloader.py` 参与打包）。
+5. **空闲速率显示 0 B/s 而非「未知/s」**（`b1309a1`）：`format_speed` 原先复用 `format_size`，而 `format_size(0)` 的语义是「大小未知」，空闲时桌面状态栏与 Web 顶栏都显示「未知/s」；扩展 popup 的 `formatSpeed(0)` 本就是 `0 B/s`，本案让三端语义统一：
+   - `main_window.py`：`format_speed` 对 falsy/非正值直接返回 `"0 B/s"`；
+   - `templates/index.html`：`formatSpeed` 加同样的零值守卫；
+   - `extension/popup.js`：`formatSize` 单位表补 TB，与 Web/桌面单位表一致；
+   - 测试：桌面零速用例、新增 `tests/test_web_format.js`（vm 提取 index.html 的 `formatSize`/`formatSpeed` 做行为断言，并校验 popup 单位表含 TB）、`tests/test_extension_panel.js` 补 TB 断言。
+
+验证：全量 pytest 335 passed / 1 skipped；12 个 node 测试全绿；
+`build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）。
 
 剩余候选：
-- 托盘“失败数”角标 16px 可读性差（优先级低）。
+- （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
+- 桌面 QSS 可补「THEMES 之外无硬编码颜色」守卫测试（对齐 Web 端 `test_no_stray_hardcoded_colors_in_css`，保险性质）。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 
