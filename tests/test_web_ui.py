@@ -328,7 +328,8 @@ def test_web_has_task_sorting(page):
     assert "function sortTasks" in page
     assert "localStorage.getItem(\"swiftdm.sort\")" in page
     assert "localStorage.setItem(\"swiftdm.sort\"" in page
-    body = page[page.index("function renderTasks"):][:1600]
+    body = page[page.index("function renderTasks"):]
+    body = body[:body.index("function createEmptyState")]
     assert "sortTasks(view.filter(t => t.status === \"downloading\"))" in body
 
 
