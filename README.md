@@ -107,7 +107,8 @@ SwiftDM 可监控浏览器下载，需安装 Chrome 扩展（Windows / macOS / L
 扩展支持：
 - `chrome.downloads` 监听浏览器下载事件
 - `webRequest` 拦截响应头，检测文件下载（Content-Disposition / Content-Type / 扩展名）
-- 弹出面板可暂停监控、查看已捕获次数
+- 弹出面板可暂停监控、查看已捕获次数、浏览嗅探到的流媒体（可一键下载 / 解析本页）
+- 弹出面板「任务」页列出最近的失败任务，可单个或一键全部重试（角标实时显示失败数）
 
 ## 📁 项目结构
 

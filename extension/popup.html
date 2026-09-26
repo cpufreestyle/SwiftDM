@@ -94,6 +94,11 @@ h2 { font-size: 15px; color: #fff; }
   display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px;
   background: #00d2a0; color: #06231b; font-size: 10px;
 }
+.badge.warn { background: #ff5e7a; color: #2a0a12; }
+.tasks-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: #8888a0; margin-bottom: 6px;
+}
 .hidden { display: none !important; }
 .media-head { font-size: 11px; color: #8888a0; margin-bottom: 6px; }
 .ellipsis { display: block; max-width: 232px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -135,6 +140,7 @@ h2 { font-size: 15px; color: #fff; }
 <div class="tabs">
   <button class="tab active" id="tabCapture">捕获</button>
   <button class="tab" id="tabMedia">媒体 <span class="badge" id="mediaCount">0</span></button>
+  <button class="tab" id="tabTasks">任务 <span class="badge warn hidden" id="taskFailCount">0</span></button>
 </div>
 
 <div id="panelCapture">
@@ -153,6 +159,16 @@ h2 { font-size: 15px; color: #fff; }
   </div>
   <div class="media-list" id="mediaList">
     <div class="media-empty">未嗅探到媒体资源</div>
+  </div>
+</div>
+
+<div id="panelTasks" class="hidden">
+  <div class="tasks-head">
+    <span>失败的下载任务（可一键重试）</span>
+    <button class="btn-dl secondary" id="retryAllBtn" title="重试全部失败/已取消任务">全部重试</button>
+  </div>
+  <div class="media-list" id="taskList">
+    <div class="media-empty">没有失败的下载任务</div>
   </div>
 </div>
 

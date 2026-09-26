@@ -39,7 +39,9 @@ const sandbox = {
     fetchCalls.push({ url, opt });
     const body = url.indexOf("/api/media/list") >= 0
       ? { ok: true, items: [{ url: "https://cdn.site/hls/1080p/index.m3u8", kind: "hls" }] }
-      : { success: true, ok: true, added: 1, task: { filename: "index.mp4" } };
+      : url.indexOf("/api/tasks") >= 0
+        ? { tasks: [{ task_id: "a1", filename: "old.iso", status: "failed", error: "404" }], stats: {} }
+        : { success: true, ok: true, added: 1, task: { filename: "index.mp4" } };
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   },
 };
@@ -122,6 +124,40 @@ vm.runInContext(EXT("sniff.js") + "\n" +
   await new Promise((r) => setTimeout(r, 30));
   const domPost = fetchCalls.filter((c) => c.url.indexOf("/api/media/discover") >= 0).pop();
   assert.deepStrictEqual(JSON.parse(domPost.opt.body).items, domItems);
+
+  // ⑦ popup「任务」页：拉任务列表（GET，不带 body）
+  let tasksResponse = null;
+  handler({ action: 'getTasks' }, {}, (r) => { tasksResponse = r; });
+  await new Promise((r) => setTimeout(r, 30));
+  const tasksGet = fetchCalls.find((c) => c.url.indexOf('/api/tasks') >= 0);
+  assert.ok(tasksGet, 'getTasks 应请求 /api/tasks');
+  assert.strictEqual(tasksGet.opt.method, undefined, '/api/tasks 是 GET');
+  assert.ok(tasksResponse && Array.isArray(tasksResponse.tasks), 'getTasks 应回传 tasks 数组');
+
+  // ⑧ 一键重试 / 全部重试：taskId 必须 URL 编码（真实 id 可能带空格等字符）
+  let retryResponse = null;
+  handler({ action: 'retryTask', taskId: 'dl 12/x' }, {}, (r) => { retryResponse = r; });
+  await new Promise((r) => setTimeout(r, 30));
+  const retryPost = fetchCalls.filter((c) => c.url.indexOf('/api/retry/') >= 0).pop();
+  assert.ok(retryPost, 'retryTask 应请求 /api/retry/<id>');
+  assert.strictEqual(decodeURIComponent(retryPost.url.split('/api/retry/')[1]), 'dl 12/x');
+  assert.strictEqual(retryPost.opt.method, 'POST');
+  assert.ok(retryResponse && retryResponse.success === true);
+
+  // ⑨ 缺 taskId 直接拒绝，不发请求
+  const beforeRetry = fetchCalls.length;
+  let badRetry = null;
+  handler({ action: 'retryTask' }, {}, (r) => { badRetry = r; });
+  assert.strictEqual(fetchCalls.length, beforeRetry, '缺 taskId 不该发请求');
+  assert.ok(badRetry && badRetry.success === false && badRetry.error);
+
+  // ⑩ 全部重试
+  let allResponse = null;
+  handler({ action: 'retryAllTasks' }, {}, (r) => { allResponse = r; });
+  await new Promise((r) => setTimeout(r, 30));
+  const retryAll = fetchCalls.filter((c) => c.url.indexOf('/api/retry_all') >= 0).pop();
+  assert.ok(retryAll, 'retryAllTasks 应请求 /api/retry_all');
+  assert.ok(allResponse && allResponse.success === true);
 
   console.log("background.js wiring OK");
 })().catch((e) => { console.error(e); process.exit(1); });

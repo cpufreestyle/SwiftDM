@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('tabCapture').addEventListener('click', () => showPanel('capture'));
   document.getElementById('tabMedia').addEventListener('click', () => showPanel('media'));
+  document.getElementById('tabTasks').addEventListener('click', () => showPanel('tasks'));
+  document.getElementById('retryAllBtn').addEventListener('click', retryAllTasks);
+  loadTasks();  // 打开弹窗即刷新失败角标，不用点进「任务」页
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs && tabs[0];
     if (!tab) return;
@@ -31,6 +34,7 @@ function showPanel(which) {
   document.getElementById('panelCapture').className = which === 'capture' ? '' : 'hidden';
   document.getElementById('panelMedia').className = which === 'media' ? '' : 'hidden';
   if (which === 'media') loadMedia();
+  if (which === 'tasks') loadTasks();
 }
 
 function loadStatus() {
@@ -82,6 +86,91 @@ function loadMedia() {
     }
     box.innerHTML = '';
     items.forEach((item, idx) => box.appendChild(renderItem(item, idx, res.page_url)));
+  });
+}
+
+// 「任务」页：失败/已取消任务列表 + 一键重试（数据来自 /api/tasks，
+// 后端按创建顺序返回，所以倒序取即可得到"最近的失败"）
+const TASK_RETRYABLE = ['failed', 'cancelled'];
+const MAX_TASK_ROWS = 8;
+
+function failedTasksOf(payload) {
+  const tasks = (payload && payload.tasks) || [];
+  return tasks.filter((t) => TASK_RETRYABLE.indexOf(t.status) >= 0)
+              .slice(-MAX_TASK_ROWS)
+              .reverse();
+}
+
+function loadTasks() {
+  chrome.runtime.sendMessage({ action: 'getTasks' }, (res) => {
+    const box = document.getElementById('taskList');
+    const badge = document.getElementById('taskFailCount');
+    const retryAll = document.getElementById('retryAllBtn');
+    const failed = failedTasksOf(res);
+    badge.textContent = String(failed.length);
+    badge.className = 'badge warn' + (failed.length ? '' : ' hidden');
+    retryAll.style.visibility = failed.length > 1 ? 'visible' : 'hidden';
+    if (!res) {
+      box.innerHTML = '<div class="media-empty">连不上 SwiftDM，确认桌面端已启动</div>';
+      return;
+    }
+    if (!failed.length) {
+      box.innerHTML = '<div class="media-empty">没有失败的下载任务</div>';
+      return;
+    }
+    box.innerHTML = '';
+    failed.forEach((task) => box.appendChild(taskRow(task)));
+  });
+}
+
+function taskRow(task) {
+  const row = document.createElement('div');
+  row.className = 'media-item';
+  const label = document.createElement('div');
+  label.className = 'media-name';
+  const sub = (task.error || '').trim() || (task.status === 'cancelled' ? '已取消' : '未知原因');
+  label.innerHTML = '<div>' + escapeHtml(task.filename || '未命名任务') + '</div>' +
+                    '<div class="media-sub">' + escapeHtml(sub) + '</div>';
+  row.appendChild(label);
+  row.appendChild(retryBtn(task));
+  return row;
+}
+
+function retryBtn(task) {
+  const btn = document.createElement('button');
+  btn.className = 'btn-dl';
+  btn.textContent = '重试';
+  btn.title = '重试该任务（失败任务会从已有分片续传）';
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = '重试中';
+    chrome.runtime.sendMessage({ action: 'retryTask', taskId: task.task_id }, (res) => {
+      if (res && res.success) {
+        btn.textContent = '已重试';
+        setTimeout(loadTasks, 1200);  // 重试后多半又变成下载中，稍后刷新列表
+      } else {
+        btn.disabled = false;
+        btn.textContent = '重试';
+        btn.title = (res && res.error) || '重试失败';
+      }
+    });
+  });
+  return btn;
+}
+
+function retryAllTasks() {
+  const btn = document.getElementById('retryAllBtn');
+  btn.disabled = true;
+  btn.textContent = '重试中';
+  chrome.runtime.sendMessage({ action: 'retryAllTasks' }, (res) => {
+    if (res && res.success) {
+      btn.textContent = '已重试 ' + (res.retried || 0);
+      setTimeout(loadTasks, 1200);
+    } else {
+      btn.disabled = false;
+      btn.textContent = '全部重试';
+      btn.title = (res && res.error) || '重试失败';
+    }
   });
 }
 

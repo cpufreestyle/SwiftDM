@@ -78,26 +78,24 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-26，已推送）
 
-主题：桌面浅色主题落地（QSS 全面 token 化）。每项改动均跑过
-全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后提交。
+主题：扩展 popup 补上「任务」页 —— 最近的失败任务 + 一键重试（含单个 / 全部）。
+每项改动均跑过 node 测试 + 全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后提交。
 
-1. **桌面深/浅双主题**：`main_window.py` 新增 `THEMES = {"dark": {...}, "light": {...}}`
-   （键集完全一致，色值与 Web 端 `:root[data-theme=...]` token 对齐）；全局 QSS 改为
-   `string.Template` 模板 + `_qss_for(theme)` 渲染，`MainWindow._apply_theme()` 切换时
-   重刷全局样式表、任务卡片与日志面板。
-2. **任务卡片主题化**：`TaskCard.apply_theme(theme)` 把外壳、状态徽标、进度条、失败原因条、
-   操作按钮按 token 整体重刷；操作按钮改走语义色键（orange/red/green/blue/accent2），
-   状态语义色由 `_status_colors(tokens)` 统一派生（与 Web 端同色）。
-3. **设置 → 外观 → 界面主题**：深色/浅色下拉，改动即时预览；保存后写 `config.py` 新键
-   `theme`，重启后仍是该主题；新建下载对话框跟随当前主题。
-4. **监控状态标签改用动态属性**（`on="true"/"false"`）驱动颜色，切主题自动跟随；
-   头部信息栏与空状态提示改走 objectName + 全局样式表。
-5. **修掉一个只在浅色主题才暴露的渲染问题**：原全局 `QWidget{background-color}` 会给每个
-   标签/按钮盒单独铺底色，浅色下变成灰块；现在页面底色只铺 `QWidget#appCentral`，
-   通用 `QWidget` 规则只留 color/font（`tests/test_desktop_ui.py` 有断言守着防回归）。
-6. **文档同步**：README 主题条目改为「桌面端支持深色 / 浅色」。
+1. **popup 第三页「任务」**：`extension/popup.html` 新增页签与面板；失败/已取消任务按
+   「创建顺序倒序」取最近 8 条，每行显示文件名 + 错误原因 + 重试按钮。
+   - 打开弹窗就刷新失败角标（不用点进页签也能看到有几条失败），≥2 条时才显示「全部重试」。
+2. **重试接线**：`extension/background.js` 在同一 `onMessage` handler 内新增
+   `getTasks`（GET `/api/tasks`）、`retryTask`（POST `/api/retry/<id>`，`taskId` 走
+   `encodeURIComponent`）、`retryAllTasks`（POST `/api/retry_all`）；缺 `taskId` 直接拒绝、不发请求。
+3. **失败反馈闭环**：重试成功后按钮变「已重试」并在 1.2s 后刷新列表；失败则按钮恢复可点并把
+   后端原因回填到 `title`；连不上 SwiftDM 时面板给提示而不是空白。
+4. **测试**：新增 `tests/test_extension_panel.js`（vm + 最小 DOM 桩跑真实 popup.js：
+   `failedTasksOf` 筛选/排序/上限、行渲染与 HTML 转义、点重试的消息往返、失败与掉线路径）；
+   `tests/test_background_load.js` 扩到 ⑩ 条断言（GET 无 body、taskId 编码、缺参不发请求）。
+5. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
+   设置「外观 → 界面主题」、`config.py` 新键 `theme`）。
 
-剩余候选：扩展 popup 显示失败任务/重试（需用户重载 Chrome 扩展验证）。
+剩余候选：无（待用户反馈后再定）。
 
 ---
 
@@ -142,6 +140,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 **测试命令：**
 ```bash
 python -m pytest tests -q          # 218 passed, 1 skipped
+node tests/test_extension_panel.js   # popup「任务」页：失败筛选/渲染/重试消息
 node tests/test_sniff.js
 node tests/test_background_load.js
 node --check extension/sniff.js extension/background.js extension/content.js extension/popup.js

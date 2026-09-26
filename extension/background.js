@@ -362,6 +362,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === 'getTasks') {
+    getJson('/api/tasks').then((res) => {
+      sendResponse(res || { tasks: [], stats: {}, ok: false, error: 'SwiftDM 未运行' });
+    });
+    return true;
+  }
+  if (message.action === 'retryTask') {
+    const taskId = String(message.taskId || '');
+    if (!taskId) { sendResponse({ success: false, error: '缺少任务 ID' }); return true; }
+    postJson('/api/retry/' + encodeURIComponent(taskId), {}).then((res) => {
+      sendResponse(res || { success: false, error: 'SwiftDM 未运行' });
+    });
+    return true;
+  }
+  if (message.action === 'retryAllTasks') {
+    postJson('/api/retry_all', {}).then((res) => {
+      sendResponse(res || { success: false, error: 'SwiftDM 未运行' });
+    });
+    return true;
+  }
   if (message.action === 'downloadMedia') {
     addMediaTask(message).then((res) => sendResponse(res));
     return true;
