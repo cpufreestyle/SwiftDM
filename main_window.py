@@ -490,7 +490,7 @@ THEMES = {
         "orangeSoft": "#3d3320",
         "orangeHover": "#4d3f28",
         "red": "#ff5e7a",
-        "redSoft": "#2a1620",
+        "redSoft": "#3a1720",
         "redText": "#ffb3c0",
         "blue": "#4da6ff",
     },
