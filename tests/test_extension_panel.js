@@ -190,6 +190,7 @@ function makeSandbox(handler) {
   assert.deepStrictEqual({ ...sandbox.liveStatsOf(null) }, { active: 0, failed: 0, speed: 0 });
   assert.strictEqual(sandbox.formatSpeed(0), "0 B/s");
   assert.strictEqual(sandbox.formatSpeed(1536), "1.5 KB/s");
+  assert.strictEqual(sandbox.formatSize(1099511627776), "1.0 TB");
 }
 
 // ⑧ loadLive：一次请求同时写实时状态与失败角标

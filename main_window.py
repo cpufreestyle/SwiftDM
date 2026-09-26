@@ -39,6 +39,10 @@ def format_size(bytes_val):
 
 
 def format_speed(bps):
+    # a rate is zero when idle, never "unknown" (format_size(0) means that);
+    # the extension popup already reports 0 B/s, so match it here too
+    if not bps or bps <= 0:
+        return "0 B/s"
     return format_size(bps) + "/s"
 
 

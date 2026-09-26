@@ -911,6 +911,9 @@ function formatSize(bytes) {
 }
 
 function formatSpeed(bps) {
+  // a rate is zero when idle, never "unknown" (formatSize(0) means exactly
+  // that); the desktop and the extension popup both report 0 B/s
+  if (!bps || bps <= 0) return "0 B/s";
   return formatSize(bps) + "/s";
 }
 

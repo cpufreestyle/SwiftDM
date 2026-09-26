@@ -1716,3 +1716,17 @@ def test_self_test_worker_reports_backend_result(monkeypatch, qt_app):
     got.clear()
     worker.run()
     assert len(got) == 1 and got[0][0] is False and "connection refused" in got[0][1], got
+
+
+def test_zero_speed_reads_as_zero_not_unknown():
+    """format_size(0) is "unknown size"; a speed of 0 is simply idle.
+
+    format_speed used to defer to format_size, so an idle window showed
+    "unknown/s" in the status bar and the tray tooltip could too.
+    """
+    import main_window as mw
+    assert mw.format_size(0) == "未知"
+    assert mw.format_speed(0) == "0 B/s"
+    assert mw.format_speed(None) == "0 B/s"
+    assert mw.format_speed(1536) == "1.5 KB/s"
+    assert mw.format_speed(1048576) == "1.0 MB/s"
