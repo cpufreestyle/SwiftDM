@@ -11,7 +11,7 @@
 
 IDM 风格的多线程下载管理器：
 
-- **桌面 UI**：PyQt6（暗色主题、IDM 风格任务卡片）
+- **桌面 UI**：PyQt6（深色 / 浅色双主题、IDM 风格任务卡片）
 - **Web UI**：Flask（端口默认 5000，备用访问方式）
 - **浏览器扩展**：Chrome MV3（`extension/` 目录，需用户手动加载）
 - **BT / PT 下载**：基于 libtorrent（磁力链接 + `.torrent` 种子，含私有 Tracker / PT 合规做种）
@@ -78,23 +78,26 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-26，已推送）
 
-主题：逐项边缘场景补全 + 两个真实 bug 修复。每项改动均跑过
-全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后揘交。
+主题：桌面浅色主题落地（QSS 全面 token 化）。每项改动均跑过
+全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后提交。
 
-1. **失败通知聚合（桌面 + Web 对齐）**：多任务同时失败时不再相互覆盖，状态栏/托盘气泡/Web toast
-   各显示一条聚合文案（`main_window._fail_summary_text`，Web 端 `failSummaryText` 同算法）。
-   - 首帧不补弹历史账；重试后再失败会再提示；无变化不重复弹。
-2. **托盘菜单新增「全部暂停/全部恢复」**；托盘 tooltip 附带失败数与完成动作倒计时。
-3. **网页端完成/定时列表实时化**：SSE payload 增带 `scheduled`；新完成任务弹 toast。
-4. **桌面定时下载闭环补全**：添加对话框新增「定时开始」；卡片显示「⏰ 定时等待」 + 开始时间。
-5. **定时任务超越重启持久化**：`scheduler.schedule/unschedule/scan` 落盘到配置
-   （`config.py` 新键 `scheduled`）；启动时 `restore()` 恢复仍处于 pending 的条目，到点交给 scan() 拉起。
-6. **两个真实 bug 修复**：
-   - `downloader.resume()` 未失效 `to_dict()` 缓存：暂停后 UI/SSE 读取会缓存 `paused` 快照，
-     导致 `/api/resume` 返回旧状态（二进制冒演里间歇性复现）。
-   - 失败卡片缺失可操作提示：现在显示 `media._MEDIA_HINTS` 对应的下一步提示（与 Web 端同源）。
+1. **桌面深/浅双主题**：`main_window.py` 新增 `THEMES = {"dark": {...}, "light": {...}}`
+   （键集完全一致，色值与 Web 端 `:root[data-theme=...]` token 对齐）；全局 QSS 改为
+   `string.Template` 模板 + `_qss_for(theme)` 渲染，`MainWindow._apply_theme()` 切换时
+   重刷全局样式表、任务卡片与日志面板。
+2. **任务卡片主题化**：`TaskCard.apply_theme(theme)` 把外壳、状态徽标、进度条、失败原因条、
+   操作按钮按 token 整体重刷；操作按钮改走语义色键（orange/red/green/blue/accent2），
+   状态语义色由 `_status_colors(tokens)` 统一派生（与 Web 端同色）。
+3. **设置 → 外观 → 界面主题**：深色/浅色下拉，改动即时预览；保存后写 `config.py` 新键
+   `theme`，重启后仍是该主题；新建下载对话框跟随当前主题。
+4. **监控状态标签改用动态属性**（`on="true"/"false"`）驱动颜色，切主题自动跟随；
+   头部信息栏与空状态提示改走 objectName + 全局样式表。
+5. **修掉一个只在浅色主题才暴露的渲染问题**：原全局 `QWidget{background-color}` 会给每个
+   标签/按钮盒单独铺底色，浅色下变成灰块；现在页面底色只铺 `QWidget#appCentral`，
+   通用 `QWidget` 规则只留 color/font（`tests/test_desktop_ui.py` 有断言守着防回归）。
+6. **文档同步**：README 主题条目改为「桌面端支持深色 / 浅色」。
 
-剩余候选（需用户目视确认）：桌面浅色主题（第二套 QSS token）、扩展 popup 显示失败任务/重试。
+剩余候选：扩展 popup 显示失败任务/重试（需用户重载 Chrome 扩展验证）。
 
 ---
 
@@ -138,7 +141,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 **测试命令：**
 ```bash
-python -m pytest tests -q          # 133 passed, 1 skipped
+python -m pytest tests -q          # 218 passed, 1 skipped
 node tests/test_sniff.js
 node tests/test_background_load.js
 node --check extension/sniff.js extension/background.js extension/content.js extension/popup.js

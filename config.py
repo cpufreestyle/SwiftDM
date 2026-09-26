@@ -27,6 +27,7 @@ _DEFAULTS = {
     "notify_sound": "none",  # 完成提示音：none/beep/system
     "compact": False,  # 任务列表紧凑模式（隐藏次要信息，一屏更多任务）
     "monitor_enabled": True,
+    "theme": "dark",  # 桌面端界面主题：dark / light
     "scheduled": {},  # 定时任务表 {task_id: start_at epoch 秒}，重启后按原计划启动
 }
 

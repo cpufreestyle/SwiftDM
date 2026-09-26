@@ -304,7 +304,7 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
 
     dlg = mw.SettingsDialog()
     groups = dlg.findChildren(QGroupBox)
-    assert [g.title() for g in groups] == ["下载", "网络", "完成后"]
+    assert [g.title() for g in groups] == ["下载", "网络", "完成后", "外观"]
 
     def row_labels(group):
         return {lbl.text() for lbl in group.findChildren(QLabel)
@@ -314,6 +314,7 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
     assert by_title["下载"] == {"下载目录:", "下载线程数:", "下载限速:"}
     assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:"}
     assert by_title["完成后"] == {"全部下载完成后:", "完成提示音:"}
+    assert by_title["外观"] == {"界面主题:"}
 
 
 def test_settings_dialog_get_settings_still_complete(qt_app):
@@ -322,7 +323,7 @@ def test_settings_dialog_get_settings_still_complete(qt_app):
     dlg = mw.SettingsDialog()
     settings = dlg.get_settings()
     for key in ("dir", "segments", "monitor", "proxy_mode",
-                "rate_limit", "finish_action", "notify_sound"):
+                "rate_limit", "finish_action", "notify_sound", "theme"):
         assert key in settings, key
 
 
@@ -587,4 +588,114 @@ def test_add_dialog_exposes_schedule_option(qt_app):
     assert data["start_at"] == float(when.toSecsSinceEpoch())
     # 未来时间才算定时；过去时间视为立即下载
     dlg.sched_time.setDateTime(QDateTime.currentDateTime().addSecs(-60))
+    assert dlg.get_data()["start_at"] is None
+
+
+def test_theme_tokens_cover_same_keys(qt_app):
+    import main_window as mw
+    assert set(mw.THEMES) == {"dark", "light"}
+    assert set(mw.THEMES["dark"]) == set(mw.THEMES["light"])
+    # 两套主题不能完全同色，否则切换没有意义
+    assert mw.THEMES["dark"] != mw.THEMES["light"]
+
+
+def test_qss_for_theme_renders_every_token(qt_app):
+    import main_window as mw
+    for theme, tokens in mw.THEMES.items():
+        qss = mw._qss_for(theme)
+        assert "$" not in qss, f"{theme} 有未解析占位符"
+        for key in ("bg", "surface", "border", "text", "accent"):
+            assert tokens[key] in qss, (theme, key)
+    # 页面底色只铺窗口/中央区：通用 QWidget 规则不能带背景色，
+    # 否则浅色主题下每个标签/按钮盒都会被刷成灰块
+    for theme, tokens in mw.THEMES.items():
+        qss = mw._qss_for(theme)
+        assert "QWidget#appCentral" in qss
+        widget_rule = qss.split("QWidget {", 1)[1].split("}", 1)[0]
+        assert "background" not in widget_rule, theme
+    # 未知主题回退暗色，不会渲染出空样式表
+    assert mw._qss_for("neon") == mw._qss_for("dark")
+
+
+def test_apply_theme_switches_stylesheet_and_cards(qt_app):
+    import main_window as mw
+
+    class _Card:
+        def __init__(self):
+            self.seen = []
+
+        def apply_theme(self, theme):
+            self.seen.append(theme)
+
+    class _Host:
+        def __init__(self):
+            self._cards = {"t1": _Card()}
+            self.sheet = None
+
+        def setStyleSheet(self, sheet):
+            self.sheet = sheet
+
+    host = _Host()
+    mw.MainWindow._apply_theme(host, "light")
+    assert host._theme == "light"
+    assert host._cards["t1"].seen == ["light"]
+    assert mw.THEMES["light"]["bg"] in host.sheet
+    # 非法主题安全回退暗色
+    mw.MainWindow._apply_theme(host, "bogus")
+    assert host._theme == "dark"
+    assert host._cards["t1"].seen == ["light", "dark"]
+    assert mw.THEMES["dark"]["bg"] in host.sheet
+
+
+def test_task_card_restyles_on_theme_switch(qt_app):
+    import main_window as mw
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "status": "downloading",
+                        "total_size": 1024, "downloaded": 256, "speed": 2048},
+                       theme="dark")
+    assert mw.THEMES["dark"]["surface"] in card.styleSheet()
+    assert mw.THEMES["dark"]["textMuted"] in card.size_label.styleSheet()
+
+    card.apply_theme("light")
+    light = mw.THEMES["light"]
+    assert light["surface"] in card.styleSheet()
+    assert light["textStrong"] in card.name_label.styleSheet()
+    assert light["textMuted"] in card.size_label.styleSheet()
+    assert light["accent2"] in card.speed_label.styleSheet()
+    assert light["accent"] in card.progress_bar.styleSheet()
+    assert light["accent2"] in card.status_label.styleSheet()
+    # 操作按钮（下载中=暂停/取消）也按键重刷
+    assert card._semantic_btns
+    assert all(light[key] in btn.styleSheet() for btn, key in card._semantic_btns)
+    # 非法主题被忽略，不影响当前外观
+    card.apply_theme("neon")
+    assert card.styleSheet() == card._card_qss()
+
+    # 失败卡片：原因条用浅色主题的「深字浅底」
+    failed = mw.TaskCard({"task_id": "t2", "filename": "y.bin", "status": "failed",
+                          "total_size": 0, "downloaded": 0, "error": "boom"},
+                         theme="light")
+    assert light["redText"] in failed.error_label.styleSheet()
+    assert light["redSoft"] in failed.error_label.styleSheet()
+    failed.apply_theme("dark")
+    assert mw.THEMES["dark"]["redText"] in failed.error_label.styleSheet()
+
+
+def test_settings_dialog_theme_option_and_preview(qt_app):
+    import main_window as mw
+
+    dlg = mw.SettingsDialog()
+    assert dlg.theme_combo.count() == 2
+    assert [dlg.theme_combo.itemData(i) for i in range(2)] == ["dark", "light"]
+    assert dlg.get_settings()["theme"] in ("dark", "light")
+    dlg.theme_combo.setCurrentIndex(1)  # 触发即时预览
+    assert dlg._theme == "light"
+    assert mw.THEMES["light"]["surface"] in dlg.styleSheet()
+    dlg.apply_theme("bogus")  # 忽略非法主题
+    assert dlg._theme == "light"
+
+
+def test_add_dialog_follows_theme(qt_app):
+    import main_window as mw
+    dlg = mw.AddDialog(theme="light")
+    assert mw.THEMES["light"]["surface"] in dlg.styleSheet()
     assert dlg.get_data()["start_at"] is None

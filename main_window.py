@@ -8,6 +8,7 @@ import csv
 import time
 import logging
 import re
+import string
 import subprocess
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -327,91 +328,157 @@ def open_in_system(path):
 
 
 # ==================== 样式表 ====================
-QSS = """
+THEMES = {
+    "dark": {
+        "bg": "#0f0f14",
+        "surface": "#1a1a23",
+        "surface2": "#22222e",
+        "surface3": "#2b2b3d",
+        "input": "#1a1a26",
+        "toolbar": "#16161f",
+        "hover": "#2e2e3e",
+        "selected": "#20202e",
+        "border": "#2a2a3a",
+        "borderHover": "#3a3a52",
+        "text": "#e0e0e8",
+        "textMuted": "#8888a0",
+        "textStrong": "#ffffff",
+        "faint": "#555555",
+        "scroll": "#0f0f14",
+        "scrollHandle": "#2a2a3a",
+        "scrollHover": "#3a3a4a",
+        "logBg": "#0a0a0f",
+        "logFg": "#cfcfe0",
+        "accent": "#6c5ce7",
+        "accentHover": "#7d6ff0",
+        "accent2": "#a29bfe",
+        "green": "#00d2a0",
+        "orange": "#ffa502",
+        "orangeSoft": "#3d3320",
+        "orangeHover": "#4d3f28",
+        "red": "#ff5e7a",
+        "redSoft": "#2a1620",
+        "redText": "#ffb3c0",
+        "blue": "#4da6ff",
+    },
+    "light": {
+        "bg": "#f4f5fa",
+        "surface": "#ffffff",
+        "surface2": "#eceef6",
+        "surface3": "#dfe3ee",
+        "input": "#ffffff",
+        "toolbar": "#ffffff",
+        "hover": "#e4e7f0",
+        "selected": "#ece9ff",
+        "border": "#d8dce8",
+        "borderHover": "#c0c6d8",
+        "text": "#1b1e28",
+        "textMuted": "#5c6478",
+        "textStrong": "#11132a",
+        "faint": "#9aa0b4",
+        "scroll": "#f4f5fa",
+        "scrollHandle": "#c9cddb",
+        "scrollHover": "#aab0c4",
+        "logBg": "#f7f8fc",
+        "logFg": "#232838",
+        "accent": "#6c5ce7",
+        "accentHover": "#5b4bd6",
+        "accent2": "#8f80ff",
+        "green": "#0a9d7c",
+        "orange": "#d97a00",
+        "orangeSoft": "#fbeed8",
+        "orangeHover": "#f6dfb4",
+        "red": "#df4660",
+        "redSoft": "#fbe4e8",
+        "redText": "#c22947",
+        "blue": "#2b7fd4",
+    },
+}
+
+QSS_TEMPLATE = string.Template("""
 QMainWindow {
-    background-color: #0f0f14;
+    background-color: $bg;
 }
 QWidget {
-    background-color: #0f0f14;
-    color: #e0e0e8;
+    color: $text;
     font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 13px;
 }
 QToolBar {
-    background-color: #16161f;
-    border-bottom: 1px solid #2a2a3a;
+    background-color: $toolbar;
+    border-bottom: 1px solid $border;
     padding: 6px 10px;
     spacing: 8px;
 }
 QToolBar QPushButton {
-    background-color: #22222e;
-    border: 1px solid #2a2a3a;
+    background-color: $surface2;
+    border: 1px solid $border;
     border-radius: 6px;
     padding: 7px 16px;
-    color: #e0e0e8;
+    color: $text;
     font-weight: 600;
     font-size: 12px;
 }
 QToolBar QPushButton:hover {
-    background-color: #2e2e3e;
-    border-color: #6c5ce7;
+    background-color: $hover;
+    border-color: $accent;
 }
 QToolBar QPushButton#btnAdd {
-    background-color: #6c5ce7;
+    background-color: $accent;
     color: #fff;
     border: none;
 }
 QToolBar QPushButton#btnAdd:hover {
-    background-color: #7d6ff0;
+    background-color: $accentHover;
 }
 QToolBar QPushButton#btnFinishCountdown {
-    background-color: #3d3320;
-    color: #ffa502;
-    border: 1px solid #ffa502;
+    background-color: $orangeSoft;
+    color: $orange;
+    border: 1px solid $orange;
 }
 QToolBar QPushButton#btnFinishCountdown:hover {
-    background-color: #4d3f28;
+    background-color: $orangeHover;
 }
 QLineEdit {
-    background-color: #1a1a26;
-    border: 1px solid #2a2a3a;
+    background-color: $input;
+    border: 1px solid $border;
     border-radius: 6px;
     padding: 8px 14px;
-    color: #e0e0e8;
+    color: $text;
     font-size: 13px;
-    selection-background-color: #6c5ce7;
+    selection-background-color: $accent;
 }
 QLineEdit:focus {
-    border-color: #6c5ce7;
+    border-color: $accent;
 }
 QScrollArea {
     border: none;
     background-color: transparent;
 }
 QScrollBar:vertical {
-    background: #0f0f14;
+    background: $scroll;
     width: 8px;
     border-radius: 4px;
 }
 QScrollBar::handle:vertical {
-    background: #2a2a3a;
+    background: $scrollHandle;
     border-radius: 4px;
     min-height: 40px;
 }
 QScrollBar::handle:vertical:hover {
-    background: #3a3a4a;
+    background: $scrollHover;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
 }
 QStatusBar {
-    background-color: #16161f;
-    border-top: 1px solid #2a2a3a;
-    color: #8888a0;
+    background-color: $toolbar;
+    border-top: 1px solid $border;
+    color: $textMuted;
     font-size: 12px;
 }
 QProgressBar {
-    background-color: #1a1a26;
+    background-color: $input;
     border: none;
     border-radius: 3px;
     height: 6px;
@@ -419,66 +486,118 @@ QProgressBar {
     font-size: 0px;
 }
 QProgressBar::chunk {
-    background-color: #6c5ce7;
+    background-color: $accent;
     border-radius: 3px;
 }
 QMenu {
-    background-color: #1a1a23;
-    border: 1px solid #2a2a3a;
+    background-color: $surface;
+    border: 1px solid $border;
     border-radius: 6px;
     padding: 4px;
 }
 QMenu::item {
     padding: 8px 30px;
     border-radius: 4px;
+    color: $text;
 }
 QMenu::item:selected {
-    background-color: #2e2e3e;
+    background-color: $hover;
 }
+QMenu::separator { height:1px; background:$border; margin:4px 10px; }
 QLabel#titleLabel {
     font-size: 16px;
     font-weight: 700;
-    color: #fff;
+    color: $textStrong;
 }
 QLabel#speedLabel {
-    color: #a29bfe;
+    color: $accent2;
     font-weight: 700;
     font-size: 13px;
 }
-QDialog {
-    background-color: #1a1a23;
+QLabel#overallLabel {
+    font-size: 12px;
+    color: $textMuted;
+    margin-left: 14px;
 }
-QSpinBox, QComboBox {
-    background-color: #22222e;
-    border: 1px solid #2a2a3a;
+QLabel#statsLabel {
+    font-size: 12px;
+    color: $textMuted;
+}
+QLabel#emptyLabel {
+    font-size: 15px;
+    color: $faint;
+    padding: 60px;
+}
+QLabel#monitorLabel {
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#monitorLabel[on="true"] { color: $green; }
+QLabel#monitorLabel[on="false"] { color: $red; }
+QWidget#appHeader {
+    background-color: $toolbar;
+    border-bottom: 1px solid $border;
+}
+QWidget#appCentral {
+    background-color: $bg;
+}
+QDialog {
+    background-color: $surface;
+}
+QSpinBox, QComboBox, QDateTimeEdit {
+    background-color: $surface2;
+    border: 1px solid $border;
     border-radius: 4px;
     padding: 5px 8px;
-    color: #e0e0e8;
+    color: $text;
 }
-QSpinBox:focus, QComboBox:focus {
-    border-color: #6c5ce7;
+QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
+    border-color: $accent;
 }
 QComboBox QAbstractItemView {
-    background-color: #1a1a23;
-    border: 1px solid #2a2a3a;
-    selection-background-color: #2e2e3e;
+    background-color: $surface;
+    border: 1px solid $border;
+    selection-background-color: $hover;
+    color: $text;
 }
 QHeaderView::section {
-    background-color: #16161f;
+    background-color: $toolbar;
     border: none;
-    border-bottom: 1px solid #2a2a3a;
+    border-bottom: 1px solid $border;
     padding: 6px;
-    color: #8888a0;
+    color: $textMuted;
     font-weight: 600;
 }
 QPushButton#filterBtn {
-    background:#1a1a26; border:1px solid #2a2a3a; border-radius:13px;
-    padding:4px 14px; color:#8888a0; font-size:12px; font-weight:600;
+    background:$input; border:1px solid $border; border-radius:13px;
+    padding:4px 14px; color:$textMuted; font-size:12px; font-weight:600;
 }
-QPushButton#filterBtn:hover { color:#e0e0e8; border-color:#3a3a52; }
-QPushButton#filterBtn:checked { background:#6c5ce7; border-color:#6c5ce7; color:#fff; }
-QMenu::separator { height:1px; background:#2a2a3a; margin:4px 10px; }
-"""
+QPushButton#filterBtn:hover { color:$text; border-color:$borderHover; }
+QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:#fff; }
+QToolTip {
+    background-color: $surface2;
+    color: $text;
+    border: 1px solid $border;
+    padding: 4px;
+}
+""")
+
+
+def _qss_for(theme):
+    """按主题渲染全局样式表；未知主题名回退暗色。"""
+    return QSS_TEMPLATE.substitute(THEMES.get(theme, THEMES["dark"]))
+
+
+def _status_colors(tokens):
+    """任务状态 -> 语义色（与 Web 端同名 token 同色，亮/暗两套）。"""
+    return {
+        "downloading": tokens["accent2"],
+        "paused": tokens["orange"],
+        "completed": tokens["green"],
+        "failed": tokens["red"],
+        "pending": tokens["textMuted"],
+        "cancelled": tokens["textMuted"],
+    }
 
 
 class TaskCard(QFrame):
@@ -486,30 +605,19 @@ class TaskCard(QFrame):
     action_triggered = pyqtSignal(str, str)  # action, task_id
     selected = pyqtSignal(str)              # task_id：点击卡片即选中（键盘导航配合）
 
-    def __init__(self, task_data, parent=None):
+    def __init__(self, task_data, parent=None, theme=None):
         super().__init__(parent)
         self.task_id = task_data["task_id"]
+        self._theme = theme if theme in THEMES else "dark"
+        self._tokens = THEMES[self._theme]
+        self._semantic_btns = []  # [(按钮, 语义色键)]：切换主题时按键重刷
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.filepath = task_data.get("filepath", "")
         self._drag_start_pos = None
         self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
         self.url = task_data.get("url", "")
         self.setObjectName("taskCard")
-        self.setStyleSheet("""
-            TaskCard {
-                background-color: #1a1a23;
-                border: 1px solid #2a2a3a;
-                border-radius: 8px;
-                padding: 2px;
-            }
-            TaskCard:hover {
-                border-color: #3a3a52;
-            }
-            TaskCard[selected="true"] {
-                border: 1px solid #6c5ce7;
-                background-color: #20202e;
-            }
-        """)
+        self.setStyleSheet(self._card_qss())
         self._compact = False
         self._error_text = ""
         self._error_reason = ""
@@ -517,6 +625,78 @@ class TaskCard(QFrame):
         self._base_max_height = CARD_HEIGHTS["default"][1]
         self.setMaximumHeight(self._base_max_height)
         self._build_ui(task_data)
+
+    def _card_qss(self):
+        """卡片外壳样式（背景/边框/选中态全部取自主题 token）。"""
+        t = self._tokens
+        return f"""
+            TaskCard {{
+                background-color: {t['surface']};
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                padding: 2px;
+            }}
+            TaskCard:hover {{
+                border-color: {t['borderHover']};
+            }}
+            TaskCard[selected="true"] {{
+                border: 1px solid {t['accent']};
+                background-color: {t['selected']};
+            }}
+        """
+
+    def _status_qss(self, status):
+        """状态徽标样式：文字 + 22 alpha 同色底，保证亮/暗都协调。"""
+        color = _status_colors(self._tokens).get(status, self._tokens["textMuted"])
+        return (f"font-size: 11px; font-weight: 600; color: {color}; "
+                f"background-color: {color}22; border-radius: 10px; padding: 2px 10px;")
+
+    def _progress_qss(self, status):
+        """进度条样式：完成=绿、暂停=橙、其余=主题强调色。"""
+        chunk = {"completed": self._tokens["green"],
+                 "paused": self._tokens["orange"]}.get(status, self._tokens["accent"])
+        return (f"QProgressBar{{background:{self._tokens['input']};border:none;border-radius:3px;height:6px;}}"
+                f"QProgressBar::chunk{{background:{chunk};border-radius:3px;}}")
+
+    def _error_qss(self):
+        """失败原因条样式（浅色主题用深红字 + 浅红底，保持可读）。"""
+        t = self._tokens
+        return (f"font-size: 11px; color: {t['redText']}; background-color: {t['redSoft']}; "
+                f"border: 1px solid {t['red']}55; border-radius: 6px; padding: 6px 8px; margin-top: 2px;")
+
+    def _restyle_labels(self):
+        """按当前主题重刷卡片内所有内联样式（建卡与切换主题共用）。"""
+        t = self._tokens
+        self.name_label.setStyleSheet(
+            f"font-size: 13px; font-weight: 600; color: {t['textStrong']};")
+        self.prog_label.setStyleSheet(
+            f"font-size: 12px; font-weight: 700; color: {t['textStrong']}; min-width: 42px;")
+        self.size_label.setStyleSheet(f"font-size: 11px; color: {t['textMuted']};")
+        self.eta_label.setStyleSheet(f"font-size: 11px; color: {t['textMuted']};")
+        self.speed_label.setStyleSheet(
+            f"font-size: 11px; color: {t['accent2']}; font-weight: 600;")
+        self.error_label.setStyleSheet(self._error_qss())
+        self.status_label.setStyleSheet(self._status_qss(self._built_status))
+        self.progress_bar.setStyleSheet(self._progress_qss(self._built_status))
+        for btn, key in self._semantic_btns:
+            btn.setStyleSheet(self._btn_style(t[key]))
+
+    def _add_action_btn(self, layout, text, color_key, action):
+        """新增卡片操作按钮；color_key 指向主题 token，切主题时按键重刷。"""
+        btn = QPushButton(text)
+        btn.setStyleSheet(self._btn_style(self._tokens[color_key]))
+        btn.clicked.connect(lambda: self.action_triggered.emit(action, self.task_id))
+        layout.addWidget(btn)
+        self._semantic_btns.append((btn, color_key))
+
+    def apply_theme(self, theme):
+        """切换主题：外壳 + 内部标签/按钮一起刷新，状态语义色不变。"""
+        if theme not in THEMES:
+            return
+        self._theme = theme
+        self._tokens = THEMES[theme]
+        self.setStyleSheet(self._card_qss())
+        self._restyle_labels()
 
     def set_selected(self, on):
         """选中态：高亮边框；配合 dynamic property 重算样式。"""
@@ -535,7 +715,6 @@ class TaskCard(QFrame):
 
         name = task_data.get("filename", "unknown")
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #fff;")
         self.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.name_label.setToolTip(name)
         top.addWidget(self.name_label, 1)
@@ -546,17 +725,7 @@ class TaskCard(QFrame):
             "completed": "✓ 完成", "failed": "✗ 失败",
             "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
         }
-        status_color = {
-            "downloading": "#a29bfe", "paused": "#ffa502",
-            "completed": "#00d2a0", "failed": "#ff5e7a",
-            "pending": "#8888a0", "cancelled": "#8888a0"
-        }
         self.status_label = QLabel(_card_status_text(status, task_data.get("scheduled_at")))
-        self.status_label.setStyleSheet(
-            f"font-size: 11px; font-weight: 600; color: {status_color.get(status, '#8888a0')}; "
-            f"background-color: {status_color.get(status, '#8888a0')}22; "
-            f"border-radius: 10px; padding: 2px 10px;"
-        )
         top.addWidget(self.status_label)
         layout.addLayout(top)
 
@@ -567,28 +736,10 @@ class TaskCard(QFrame):
         self.progress_bar.setValue(int(prog))
         self.progress_bar.setTextVisible(False)
 
-        color = status_color.get(status, "#6c5ce7")
-        if status == "completed":
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#00d2a0;border-radius:3px;}"
-            )
-        elif status == "paused":
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#ffa502;border-radius:3px;}"
-            )
-        else:
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#6c5ce7;border-radius:3px;}"
-            )
-
         prog_layout = QHBoxLayout()
         prog_layout.setSpacing(8)
         prog_layout.addWidget(self.progress_bar, 1)
         self.prog_label = QLabel(f"{prog:.1f}%")
-        self.prog_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #fff; min-width: 42px;")
         self.prog_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         prog_layout.addWidget(self.prog_label)
         layout.addLayout(prog_layout)
@@ -611,75 +762,42 @@ class TaskCard(QFrame):
             info_text += f"  🌱 {seeds}  👥 {peers}"
         info_text += _scheduled_suffix(task_data.get("scheduled_at"))
         self.size_label = QLabel(info_text)
-        self.size_label.setStyleSheet("font-size: 11px; color: #8888a0;")
         bottom.addWidget(self.size_label)
 
         self.speed_label = QLabel(f"⚡ {format_speed(speed)}" if speed > 0 else "")
-        self.speed_label.setStyleSheet("font-size: 11px; color: #a29bfe; font-weight: 600;")
         bottom.addWidget(self.speed_label)
 
         self.eta_label = QLabel(f"⏱ {eta}" if eta else "")
-        self.eta_label.setStyleSheet("font-size: 11px; color: #8888a0;")
         bottom.addWidget(self.eta_label)
 
         bottom.addStretch(1)
 
         # 操作按钮
         if status == "downloading":
-            btn_pause = QPushButton("⏸ 暂停")
-            btn_pause.setStyleSheet(self._btn_style("#ffa502"))
-            btn_pause.clicked.connect(lambda: self.action_triggered.emit("pause", self.task_id))
-            bottom.addWidget(btn_pause)
-
-            btn_cancel = QPushButton("✕ 取消")
-            btn_cancel.setStyleSheet(self._btn_style("#ff5e7a"))
-            btn_cancel.clicked.connect(lambda: self.action_triggered.emit("cancel", self.task_id))
-            bottom.addWidget(btn_cancel)
+            self._add_action_btn(bottom, "⏸ 暂停", "orange", "pause")
+            self._add_action_btn(bottom, "✕ 取消", "red", "cancel")
 
         elif status == "paused":
-            btn_resume = QPushButton("▶ 继续")
-            btn_resume.setStyleSheet(self._btn_style("#00d2a0"))
-            btn_resume.clicked.connect(lambda: self.action_triggered.emit("resume", self.task_id))
-            bottom.addWidget(btn_resume)
-
-            btn_cancel = QPushButton("✕ 取消")
-            btn_cancel.setStyleSheet(self._btn_style("#ff5e7a"))
-            btn_cancel.clicked.connect(lambda: self.action_triggered.emit("cancel", self.task_id))
-            bottom.addWidget(btn_cancel)
+            self._add_action_btn(bottom, "▶ 继续", "green", "resume")
+            self._add_action_btn(bottom, "✕ 取消", "red", "cancel")
 
         elif status in ("failed", "cancelled", "completed"):
             if status in ("failed", "cancelled"):
-                btn_retry = QPushButton("↻ 重试")
-                btn_retry.setStyleSheet(self._btn_style("#4da6ff"))
-                btn_retry.clicked.connect(lambda: self.action_triggered.emit("retry", self.task_id))
-                bottom.addWidget(btn_retry)
-
-            btn_remove = QPushButton("🗑 删除")
-            btn_remove.setStyleSheet(self._btn_style("#ff5e7a"))
-            btn_remove.clicked.connect(lambda: self.action_triggered.emit("remove", self.task_id))
-            bottom.addWidget(btn_remove)
+                self._add_action_btn(bottom, "↻ 重试", "blue", "retry")
+            self._add_action_btn(bottom, "🗑 删除", "red", "remove")
 
         if status == "completed" and task_data.get("total_size", 0) > 0:
-            btn_open = QPushButton("📂 打开文件")
-            btn_open.setStyleSheet(self._btn_style("#4da6ff"))
-            btn_open.clicked.connect(lambda: self.action_triggered.emit("open", self.task_id))
-            bottom.addWidget(btn_open)
-
-            btn_open_folder = QPushButton("🗁 打开文件夹")
-            btn_open_folder.setStyleSheet(self._btn_style("#a29bfe"))
-            btn_open_folder.clicked.connect(lambda: self.action_triggered.emit("open_folder", self.task_id))
-            bottom.addWidget(btn_open_folder)
+            self._add_action_btn(bottom, "📂 打开文件", "blue", "open")
+            self._add_action_btn(bottom, "🗁 打开文件夹", "accent2", "open_folder")
 
         layout.addLayout(bottom)
 
         # 失败原因（默认隐藏，失败且有错误信息时显示）
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet(
-            "font-size: 11px; color: #ffb3c0; background-color: #2a1620; "
-            "border: 1px solid #ff5e7a55; border-radius: 6px; padding: 6px 8px; margin-top: 2px;"
-        )
         layout.addWidget(self.error_label)
+        # 所有内联样式按当前主题统一刷一遍（切主题时也走这里）
+        self._restyle_labels()
         self._apply_error_visibility(status, task_data.get("error", ""),
                                      task_data.get("error_reason", ""))
 
@@ -794,34 +912,11 @@ class TaskCard(QFrame):
             "completed": "✓ 完成", "failed": "✗ 失败",
             "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
         }
-        status_color = {
-            "downloading": "#a29bfe", "paused": "#ffa502",
-            "completed": "#00d2a0", "failed": "#ff5e7a",
-            "pending": "#8888a0", "cancelled": "#8888a0"
-        }
-        color = status_color.get(status, "#8888a0")
         self.status_label.setText(_card_status_text(status, task_data.get("scheduled_at")))
-        self.status_label.setStyleSheet(
-            f"font-size: 11px; font-weight: 600; color: {color}; "
-            f"background-color: {color}22; border-radius: 10px; padding: 2px 10px;"
-        )
+        self.status_label.setStyleSheet(self._status_qss(status))
 
         self.progress_bar.setValue(int(prog))
-        if status == "completed":
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#00d2a0;border-radius:3px;}"
-            )
-        elif status == "paused":
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#ffa502;border-radius:3px;}"
-            )
-        else:
-            self.progress_bar.setStyleSheet(
-                "QProgressBar{background:#1a1a26;border:none;border-radius:3px;height:6px;}"
-                "QProgressBar::chunk{background:#6c5ce7;border-radius:3px;}"
-            )
+        self.progress_bar.setStyleSheet(self._progress_qss(status))
         self.prog_label.setText(f"{prog:.1f}%")
 
         info = f"📦 {format_size(downloaded)}"
@@ -844,23 +939,12 @@ class TaskCard(QFrame):
 
 class SettingsDialog(QDialog):
     """设置对话框"""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme=None):
         super().__init__(parent)
+        self._theme = theme if theme in THEMES else "dark"
         self.setWindowTitle("⚙ 设置")
         self.setMinimumWidth(460)
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1a23; border: 1px solid #2a2a3a; border-radius: 10px; }
-            QLabel { font-size: 13px; color: #ccc; }
-            QGroupBox {
-                border: 1px solid #2a2a3a; border-radius: 8px;
-                margin-top: 12px; padding: 10px 10px 8px 10px;
-                font-size: 12px; font-weight: 700; color: #8f8fa3;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin; subcontrol-position: top left;
-                left: 10px; padding: 0 4px;
-            }
-        """)
+        self.setStyleSheet(self._qss())
 
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
@@ -982,11 +1066,56 @@ class SettingsDialog(QDialog):
         form.addRow("完成提示音:", self.sound_combo)
         layout.addWidget(done_box)
 
+        # —— 外观 ——
+        look_box = QGroupBox("外观")
+        form = QFormLayout(look_box)
+        form.setSpacing(12)
+        form.setContentsMargins(10, 6, 10, 6)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("深色", "dark")
+        self.theme_combo.addItem("浅色", "light")
+        self.theme_combo.setCurrentIndex(
+            1 if config.get("theme") == "light" else 0)
+        self.theme_combo.setToolTip("切换桌面端界面主题（浅色更适合明亮环境）")
+        self.theme_combo.currentIndexChanged.connect(self._preview_theme)
+        form.addRow("界面主题:", self.theme_combo)
+        layout.addWidget(look_box)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         btns.setStyleSheet("QPushButton{padding:6px 18px;border-radius:4px;}")
         layout.addWidget(btns)
+
+    def _qss(self):
+        """对话框样式按主题渲染（组框/标签颜色都走 token）。"""
+        t = THEMES.get(getattr(self, "_theme", "dark"), THEMES["dark"])
+        return f"""
+            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}
+            QLabel {{ font-size: 13px; color: {t['text']}; }}
+            QGroupBox {{
+                border: 1px solid {t['border']}; border-radius: 8px;
+                margin-top: 12px; padding: 10px 10px 8px 10px;
+                font-size: 12px; font-weight: 700; color: {t['textMuted']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin; subcontrol-position: top left;
+                left: 10px; padding: 0 4px;
+            }}
+        """
+
+    def apply_theme(self, theme):
+        """切换主题（设置里改下拉可立即预览，不用重开对话框）。"""
+        if theme not in THEMES:
+            return
+        self._theme = theme
+        self.setStyleSheet(self._qss())
+
+    def _preview_theme(self):
+        self.apply_theme(self.theme_combo.currentData() or "dark")
 
     def _browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择下载目录")
@@ -1009,19 +1138,18 @@ class SettingsDialog(QDialog):
             "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
             "finish_action": self.finish_combo.currentData() or "none",
             "notify_sound": self.sound_combo.currentData() or "none",
+            "theme": self.theme_combo.currentData() or "dark",
         }
 
 
 class AddDialog(QDialog):
     """添加下载对话框"""
-    def __init__(self, parent=None, url=""):
+    def __init__(self, parent=None, url="", theme=None):
         super().__init__(parent)
+        self._theme = theme if theme in THEMES else "dark"
         self.setWindowTitle("📥 新建下载任务")
         self.setMinimumWidth(520)
-        self.setStyleSheet("""
-            QDialog { background-color: #1a1a23; border: 1px solid #2a2a3a; border-radius: 10px; }
-            QLabel { font-size: 13px; color: #ccc; }
-        """)
+        self.setStyleSheet(self._qss())
 
         layout = QFormLayout(self)
         layout.setSpacing(14)
@@ -1065,6 +1193,14 @@ class AddDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
+
+    def _qss(self):
+        """对话框样式按主题渲染。"""
+        t = THEMES.get(getattr(self, "_theme", "dark"), THEMES["dark"])
+        return f"""
+            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}
+            QLabel {{ font-size: 13px; color: {t['text']}; }}
+        """
 
     def _browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择下载目录")
@@ -1117,8 +1253,11 @@ class MainWindow(QMainWindow):
         if not _restore_window_geometry(self, _window_settings()):
             self.resize(860, 640)  # 无历史记录时的默认尺寸
 
-        # 暗色主题
-        self.setStyleSheet(QSS)
+        # 主题：样式表需在建控件前生效，控件级主题在搭建完成后统一刷一遍
+        import config as _cfg_theme
+        _saved_theme = _cfg_theme.get("theme")
+        self._theme = _saved_theme if _saved_theme in THEMES else "dark"
+        self.setStyleSheet(_qss_for(self._theme))
         self.setAcceptDrops(True)  # 支持把链接/磁力拖入窗口即新建下载
 
         self._setup_log_panel()
@@ -1127,6 +1266,9 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
         self._setup_tray()
         self._setup_shortcuts()
+
+        # 头部/日志面板等控件级样式跟随主题
+        self._apply_theme(self._theme)
 
         # 定时刷新
         self._timer = QTimer(self)
@@ -1217,7 +1359,12 @@ class MainWindow(QMainWindow):
 
         # 浏览器监控状态
         self.monitor_label = QLabel("  🌐 监控已启用")
-        self.monitor_label.setStyleSheet("font-size: 11px; color: #00d2a0; font-weight: 600;")
+        self.monitor_label.setObjectName("monitorLabel")
+        try:
+            import config as _cfg_mon
+            self._set_monitor_state(bool(_cfg_mon.get("monitor_enabled")))
+        except Exception:
+            self._set_monitor_state(True)
         toolbar.addWidget(self.monitor_label)
 
         # 「全部下载完成后」倒计时：仅倒计时进行中显示，点击取消
@@ -1231,6 +1378,7 @@ class MainWindow(QMainWindow):
 
     def _setup_central(self):
         central = QWidget()
+        central.setObjectName("appCentral")  # 页面底色只铺中央区，标签/按钮盒保持透明
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1238,7 +1386,7 @@ class MainWindow(QMainWindow):
 
         # 头部信息栏
         header = QWidget()
-        header.setStyleSheet("background-color: #16161f; border-bottom: 1px solid #2a2a3a;")
+        header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(16, 8, 16, 8)
 
@@ -1247,13 +1395,13 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.total_speed_label)
 
         self.overall_label = QLabel("")
-        self.overall_label.setStyleSheet("font-size: 12px; color:#8888a0; margin-left: 14px;")
+        self.overall_label.setObjectName("overallLabel")
         header_layout.addWidget(self.overall_label)
 
         header_layout.addStretch()
 
         self.stats_label = QLabel("下载中: 0  |  已完成: 0  |  失败: 0  |  总计: 0")
-        self.stats_label.setStyleSheet("font-size: 12px; color: #8888a0;")
+        self.stats_label.setObjectName("statsLabel")
         header_layout.addWidget(self.stats_label)
 
         layout.addWidget(header)
@@ -1334,13 +1482,40 @@ class MainWindow(QMainWindow):
         # 空状态
         self.empty_label = QLabel("📥\n\n还没有下载任务\n粘贴链接或从浏览器捕获下载")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("font-size: 15px; color: #555; padding: 60px;")
+        self.empty_label.setObjectName("emptyLabel")
         self.task_layout.addWidget(self.empty_label)
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("就绪  |  下载目录: ~/Downloads/IDM_Downloads")
+
+    def _apply_theme(self, theme):
+        """切换主题：全局样式表 + 任务卡片 + 日志面板等控件级样式。"""
+        if theme not in THEMES:
+            theme = "dark"
+        self._theme = theme
+        self.setStyleSheet(_qss_for(theme))
+        t = THEMES[theme]
+        for card in getattr(self, "_cards", {}).values():
+            card.apply_theme(theme)
+        dock = getattr(self, "log_dock", None)
+        if dock is not None:
+            dock.setStyleSheet(
+                f"QDockWidget::title{{background:{t['toolbar']};"
+                f"color:{t['textMuted']};padding:4px 10px;}}")
+        log_edit = getattr(self, "log_edit", None)
+        if log_edit is not None:
+            log_edit.setStyleSheet(
+                f"QPlainTextEdit{{background:{t['logBg']};color:{t['logFg']};"
+                f"font-family:'Consolas','Menlo','Courier New',monospace;"
+                f"font-size:12px;border:none;}}")
+
+    def _set_monitor_state(self, on):
+        """监控启停：颜色由主题样式表按动态属性 on 决定，切主题自动跟随。"""
+        self.monitor_label.setProperty("on", bool(on))
+        self.monitor_label.style().unpolish(self.monitor_label)
+        self.monitor_label.style().polish(self.monitor_label)
 
     def _setup_log_panel(self):
         """底部可展开的运行日志面板"""
@@ -1506,7 +1681,7 @@ class MainWindow(QMainWindow):
                 if card is not None:
                     card.update_data(data)
                 else:
-                    card = TaskCard(data)
+                    card = TaskCard(data, theme=self._theme)
                     card.set_compact(self._compact)
                     card.action_triggered.connect(self._handle_action)
                     card.selected.connect(lambda tid: self._select_task(tid))
@@ -1579,7 +1754,7 @@ class MainWindow(QMainWindow):
 
     def _add_download(self):
         url = self.url_input.text().strip()
-        dlg = AddDialog(self, url)
+        dlg = AddDialog(self, url, theme=self._theme)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
             if not data["url"]:
@@ -2005,9 +2180,7 @@ class MainWindow(QMainWindow):
             self.monitor_label.setText(
                 "  🌐 监控已启用" if settings["monitor"] else "  🌐 监控已禁用"
             )
-            self.monitor_label.setStyleSheet(
-                f"font-size: 11px; color: {'#00d2a0' if settings['monitor'] else '#ff5e7a'}; font-weight: 600;"
-            )
+            self._set_monitor_state(settings["monitor"])
             # 同步开关到 Flask 捕获端点：禁用时连 5000 端口也不会接管浏览器下载
             try:
                 import app as _flask_app
@@ -2032,6 +2205,11 @@ class MainWindow(QMainWindow):
             import notify_sound as _notify_sound
             _notify_sound.set_sound(settings.get("notify_sound", "none"))
             config.set("notify_sound", _notify_sound.get_sound())
+            # 界面主题：立即生效并持久化（重启后仍是该主题）
+            _theme = settings.get("theme", "dark")
+            if _theme in THEMES:
+                config.set("theme", _theme)
+                self._apply_theme(_theme)
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(
