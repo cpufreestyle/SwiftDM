@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `b1309a1`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 6 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `3b7d9fc`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 7 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -81,7 +81,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
 
-本轮共 6 个 commit（HEAD = `b1309a1`，`git status -sb` 与 origin/main 0/0）：
+本轮共 7 个 commit（HEAD = `3b7d9fc`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -106,14 +106,20 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - `extension/popup.js`：`formatSize` 单位表补 TB，与 Web/桌面单位表一致；
    - 测试：桌面零速用例、新增 `tests/test_web_format.js`（vm 提取 index.html 的 `formatSize`/`formatSpeed` 做行为断言，并校验 popup 单位表含 TB）、`tests/test_extension_panel.js` 补 TB 断言。
 
-验证：全量 pytest 335 passed / 1 skipped；12 个 node 测试全绿；
+6. **强调按钮文字色改为主题令牌 `onAccent` / `--accent-ink`**（`3b7d9fc`）：此前桌面 QSS 两处与 Web 六处规则把「强调色背景上的文字」写死 `#fff`，换主题时这块颜色不随主题走。两端各加一个令牌（桌面 `THEMES.*.onAccent`、Web `:root --accent-ink`，值均为 `#ffffff`），并登记进跨端映射表 `PAIRS`：
+   - `main_window.py`：`#btnAdd` 与 `#filterBtn:checked` 改用 `$onAccent`；
+   - `templates/index.html`：6 条 `color: #fff` 规则改用 `var(--accent-ink)`；
+   - `tests/test_desktop_ui.py`：新增更严的桌面守卫——QSS_TEMPLATE 里一个十六进制色值都不允许有（白色也得走令牌），已用「塞回 #fff / #abcdef」验证会红；
+   - `tests/test_web_ui.py`：Web 端守卫去掉 `#fff` 白名单，与桌面同标准；`tests/test_theme_tokens.py` 登记 `accent-ink ↔ onAccent`，改任一端值即红。
+
+验证：全量 pytest 336 passed / 1 skipped；12 个 node 测试全绿；
 `build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
-- 桌面 QSS 可补「THEMES 之外无硬编码颜色」守卫测试（对齐 Web 端 `test_no_stray_hardcoded_colors_in_css`，保险性质）。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
+- 扩展 popup 的 CSS 只有 10 条选择器纳入令牌守护（POPUP_MAP），其余规则可逐条补齐。
 
 ---
 
