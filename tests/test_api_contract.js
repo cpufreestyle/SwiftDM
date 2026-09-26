@@ -52,4 +52,28 @@ assert.deepStrictEqual(jsKeys.slice().sort(), pyKeys.slice().sort(),
   "Web 端 REASON_HINTS 与 media._MEDIA_HINTS 键不一致");
 console.log("REASON_HINTS in sync:", jsKeys.join(", "));
 
+
+// 设置契约：后端 /api/settings POST 接受的每个键，Web 端都得真的发出去。
+// 曾经后端支持了 download_dir / proxy_mode，而 Web 端没有入口，
+// 结果这两个设置只能在桌面端改。
+const appSrc = fs.readFileSync(path.join(__dirname, "..", "app.py"), "utf8");
+const setStart = appSrc.indexOf('@app.route("/api/settings"');
+const setFn = appSrc.slice(setStart, appSrc.indexOf("@app.route(", setStart + 10));
+const accepted = [...setFn.matchAll(/^\s+if \"([a-z_]+)\" in data:/gm)].map(m => m[1]);
+assert.ok(accepted.length >= 4, "app.py 里找不到 settings 的受盘键: " + accepted);
+
+// 取每个 POST /api/settings 调用前后的窗口：请求体既可能写在
+// JSON.stringify({...}) 里，也可能先赋值给 body 变量（限速就是这样）。
+const windows = [];
+for (const m of web.matchAll(/api\("\/api\/settings",\s*\{[^}]*method:\s*"POST"/g)) {
+  windows.push(web.slice(Math.max(0, m.index - 400), m.index + 400));
+}
+assert.ok(windows.length > 0, "Web 端没有 POST /api/settings 的调用");
+const sentKeys = new Set();
+for (const w of windows) for (const k of w.matchAll(/([a-z_]+)\s*:/g)) sentKeys.add(k[1]);
+const unwired = accepted.filter(k => !sentKeys.has(k));
+assert.deepStrictEqual(unwired, [],
+  "\u540e\u7aef\u63a5\u53d7\u4f46 Web \u7aef\u6ca1\u6709\u53d1\u51fa\u53bb\u7684\u8bbe\u7f6e\u952e: " + unwired.join(", "));
+console.log("settings keys wired:", accepted.join(", "));
+
 console.log("api + hints: all ok");

@@ -156,6 +156,39 @@ def test_web_has_compact_mode_toggle(page):
     assert 'classList.toggle("compact"' in body
 
 
+def test_web_settings_cover_directory_and_proxy(page):
+    """桌面端能改的下载目录/代理，Web 端也得能改。
+
+    后端 /api/settings 一直接受这两个键，之前只有桌面端有入口，
+    HEADLESS 部署时想改目录或换代理只能手改配置文件。
+    """
+    for needle in ('id="dirInput"', 'id="applyDir"', 'id="proxySelect"', 'id="proxyInput"',
+                   'id="applyProxy"'):
+        assert needle in page, needle
+    for fn in ("function applyDir", "function applyProxy", "function applyProxyMode",
+               "function syncDirInput", "function syncProxyInputs",
+               "function onProxyModeChange"):
+        assert fn in page, fn
+    # 代理选项和桌面端一致：系统 / 直连 / 自定义
+    block = page[page.index('id="proxySelect"'):page.index('id="proxyInput"')]
+    assert 'value="env"' in block and 'value="direct"' in block and 'value="custom"' in block
+    # 自定义代理没填地址时不能静默通过
+    body = page[page.index("async function applyProxy()"):][:400]
+    assert "请填写代理地址" in body
+    body = page[page.index("async function applyDir()"):][:260]
+    assert "请填写下载目录" in body
+
+
+def test_web_settings_rows_stay_in_download_group(page):
+    """新增的两行必须留在「下载」分组，否则添到界面分组会砸块。"""
+    dl = page.index('<div class="modal-section">下载</div>')
+    ui = page.index('<div class="modal-section">界面与诊断</div>')
+    for needle in ('id="dirInput"', 'id="proxySelect"', 'id="finishAction"'):
+        assert dl < page.index(needle) < ui, needle
+    # 共享配置的说明要写清楚，免得用户以为只影响 Web
+    assert "与桌面端、浏览器捕获共用同一份配置" in page
+
+
 def test_web_settings_modal_is_grouped(page):
     assert '<div class="modal-section">下载</div>' in page
     assert '<div class="modal-section">界面与诊断</div>' in page

@@ -759,6 +759,29 @@ body {
     </div>
 
     <div class="modal-row">
+      <div class="modal-label">下载目录</div>
+      <div class="modal-controls">
+        <input type="text" id="dirInput" style="width:100%;max-width:260px" placeholder="如 D:/Downloads">
+        <button class="btn btn-primary btn-sm" id="applyDir" onclick="applyDir()">应用</button>
+      </div>
+      <div class="modal-note">与桌面端、浏览器捕获共用同一份配置，修改后对新任务生效。</div>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">下载代理</div>
+      <div class="modal-controls">
+        <select id="proxySelect" onchange="onProxyModeChange(this.value)">
+          <option value="env">系统代理</option>
+          <option value="direct">直连</option>
+          <option value="custom">自定义</option>
+        </select>
+        <input type="text" id="proxyInput" style="width:100%;max-width:180px" placeholder="如 http://127.0.0.1:7890">
+        <button class="btn btn-primary btn-sm" id="applyProxy" onclick="applyProxy()">应用</button>
+      </div>
+      <div class="modal-note">系统代理继承 HTTP_PROXY/HTTPS_PROXY；自定义需填完整地址，支持 http:// 与 socks5://。</div>
+    </div>
+
+    <div class="modal-row">
       <div class="modal-label">全部下载完成后</div>
       <div class="modal-controls">
         <select id="finishAction" onchange="onFinishActionChange(this.value)">
@@ -1658,6 +1681,8 @@ async function refreshSettings() {
     document.getElementById("rateInput").value = B2KB(res.rate_limit);
   }
   document.getElementById("finishAction").value = res.finish_action || "none";
+  syncDirInput(res);
+  syncProxyInputs(res);
   renderFinishStatus(res);
   renderCapabilities(res.capabilities || {});
   renderScheduled(res.scheduled || []);
@@ -1669,6 +1694,60 @@ async function applyRate() {
                          : { rate_limit: KB2B(document.getElementById("rateInput").value) };
   const res = await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
   if (res && res.success) showToast(unlimited ? "已取消限速" : `限速 ${B2KB(res.rate_limit)} KB/s`);
+  else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
+// 下载目录 / 代理：后端 /api/settings 早就支持，只是 Web 端没有入口，
+// 结果 HEADLESS 时想改目录或换代理只能去手改配置文件。
+const PROXY_PRESETS = ["env", "direct"];
+
+function isPresetProxyMode(mode) {
+  return PROXY_PRESETS.indexOf(mode) >= 0;
+}
+
+function syncDirInput(res) {
+  const box = document.getElementById("dirInput");
+  if (box && document.activeElement !== box) box.value = res.download_dir || "";
+}
+
+function syncProxyInputs(res) {
+  const mode = res.proxy_mode || "env";
+  const sel = document.getElementById("proxySelect");
+  const box = document.getElementById("proxyInput");
+  if (sel) sel.value = isPresetProxyMode(mode) ? mode : "custom";
+  if (box && document.activeElement !== box) box.value = isPresetProxyMode(mode) ? "" : mode;
+}
+
+function onProxyModeChange(value) {
+  // 选自定义时先把焦点放到地址框，避免用户忘了填
+  if (value !== "custom") return applyProxyMode(value);
+  const box = document.getElementById("proxyInput");
+  if (box) box.focus();
+}
+
+async function applyDir() {
+  const dir = document.getElementById("dirInput").value.trim();
+  if (!dir) { showToast("请填写下载目录", "error"); return; }
+  const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ download_dir: dir }) });
+  if (res && res.success) showToast("下载目录已更新");
+  else showToast((res && res.error) || "目录不存在或不可写", "error");
+  refreshSettings();
+}
+
+async function applyProxy() {
+  const mode = document.getElementById("proxySelect").value;
+  const value = mode === "custom" ? document.getElementById("proxyInput").value.trim() : mode;
+  if (mode === "custom" && !value) {
+    showToast("请填写代理地址，如 http://127.0.0.1:7890", "error");
+    return;
+  }
+  applyProxyMode(value);
+}
+
+async function applyProxyMode(mode) {
+  const res = await api("/api/settings", { method: "POST", body: JSON.stringify({ proxy_mode: mode }) });
+  if (res && res.success) showToast("下载代理已更新");
   else showToast((res && res.error) || "设置失败", "error");
   refreshSettings();
 }
