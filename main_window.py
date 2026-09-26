@@ -3,6 +3,8 @@ SwiftDM 主窗口 —— PyQt6 原生桌面 UI（IDM 风格）
 """
 import os
 import sys
+import io
+import csv
 import time
 import logging
 import re
@@ -117,6 +119,30 @@ def _tray_icon(icon_state):
         painter.drawEllipse(20, 20, 9, 9)               # 右下角提示点
     painter.end()
     return QIcon(pixmap)
+
+
+def _links_text(urls):
+    """把任务链接拼成剪贴板文本（每行一个，去空去重保序）。"""
+    seen, out = set(), []
+    for u in urls:
+        u = (u or "").strip()
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return "\n".join(out)
+
+
+def _tasks_export_text(task_dict, ordered_ids):
+    """把任务导出为 CSV 文本（按给定顺序）；无任务时仍有表头。"""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["文件名", "链接", "状态", "总大小", "已下载", "速度"])
+    for tid in ordered_ids:
+        d = task_dict.get(tid) or {}
+        writer.writerow([d.get("filename", ""), d.get("url", ""),
+                         d.get("status", ""), d.get("total_size", 0),
+                         d.get("downloaded", 0), d.get("speed", 0)])
+    return buf.getvalue()
 
 
 def _finish_countdown_text(action, remaining):
@@ -982,6 +1008,16 @@ class MainWindow(QMainWindow):
         btn_open_dir.clicked.connect(self._open_download_dir)
         toolbar.addWidget(btn_open_dir)
 
+        btn_copy_links = QPushButton("🔗 复制链接")
+        btn_copy_links.setToolTip("复制当前可见任务（含过滤/搜索）的下载链接")
+        btn_copy_links.clicked.connect(self._copy_task_links)
+        toolbar.addWidget(btn_copy_links)
+
+        btn_export = QPushButton("💾 导出列表")
+        btn_export.setToolTip("将当前可见任务导出为 CSV（文件名/链接/状态/大小）")
+        btn_export.clicked.connect(self._export_task_list)
+        toolbar.addWidget(btn_export)
+
         toolbar.addSeparator()
 
         self.btn_log = QPushButton("📜 日志")
@@ -1424,15 +1460,51 @@ class MainWindow(QMainWindow):
         self._search = q
         self._refresh()
 
-    def _ordered_visible_ids(self):
-        """当前过滤 + 排序下可见的任务 id 序列（键盘导航的移动域）。"""
+    def _visible_tasks_snapshot(self):
+        """当前过滤 + 排序下的任务字典与 id 序列（导航/复制/导出共用）。"""
         mgr = self._get_manager()
         task_dict = {d["task_id"]: d
                      for d in (t.to_dict() for t in mgr.get_all_tasks())}
-        ordered = _sorted_task_ids(task_dict, self._sort)
-        return [tid for tid in ordered
-                if self._match_filter(task_dict[tid])
-                and self._match_search(task_dict[tid], self._search)]
+        ordered = [tid for tid in _sorted_task_ids(task_dict, self._sort)
+                   if self._match_filter(task_dict[tid])
+                   and self._match_search(task_dict[tid], self._search)]
+        return task_dict, ordered
+
+    def _ordered_visible_ids(self):
+        """当前过滤 + 排序下可见的任务 id 序列（键盘导航的移动域）。"""
+        _, ordered = self._visible_tasks_snapshot()
+        return ordered
+
+    def _copy_task_links(self):
+        """复制当前可见任务的下载链接到剪贴板（去重、保序）。"""
+        task_dict, ordered = self._visible_tasks_snapshot()
+        text = _links_text(task_dict[t].get("url", "") for t in ordered)
+        if not text:
+            self.status_bar.showMessage("没有可复制的链接", 3000)
+            return
+        QApplication.clipboard().setText(text)
+        self.status_bar.showMessage(
+            f"已复制 {len(ordered)} 个任务的链接到剪贴板", 4000)
+
+    def _export_task_list(self):
+        """导出当前可见任务列表为 CSV（默认落到下载目录）。"""
+        task_dict, ordered = self._visible_tasks_snapshot()
+        if not ordered:
+            self.status_bar.showMessage("没有可导出的任务", 3000)
+            return
+        default_path = os.path.join(self.download_dir, "swiftdm-tasks.csv")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出任务列表", default_path, "CSV 文件 (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(_tasks_export_text(task_dict, ordered))
+        except OSError as e:
+            QMessageBox.warning(self, "导出失败", f"无法写入文件: {e}")
+            return
+        self.status_bar.showMessage(
+            f"已导出 {len(ordered)} 个任务到 {path}", 5000)
 
     def _move_selection(self, delta):
         """↑/↓ 在可见任务间移动选中项；焦点在输入控件上时让位。"""

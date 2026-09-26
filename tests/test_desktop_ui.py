@@ -195,6 +195,30 @@ def test_finish_countdown_text_tolerates_junk_remaining():
     assert mw._finish_countdown_text("shutdown", "abc") is None
 
 
+def test_links_text_dedupes_and_skips_blank():
+    import main_window as mw
+
+    assert mw._links_text(["a", " b ", "a", "", None]) == "a\nb"
+    assert mw._links_text([]) == ""
+    assert mw._links_text(["only"]) == "only"
+
+
+def test_tasks_export_text_has_header_and_rows_in_order():
+    import main_window as mw
+
+    tasks = {
+        "t1": {"filename": "a.iso", "url": "http://x/a", "status": "completed",
+               "total_size": 10, "downloaded": 10, "speed": 0},
+        "t2": {"filename": "b.iso", "url": "http://x/b", "status": "downloading",
+               "total_size": 20, "downloaded": 5, "speed": 1024},
+    }
+    lines = mw._tasks_export_text(tasks, ["t2", "t1"]).strip().splitlines()
+    assert lines[0] == "文件名,链接,状态,总大小,已下载,速度"
+    assert "b.iso" in lines[1] and "downloading" in lines[1]
+    assert "a.iso" in lines[2] and "completed" in lines[2]
+    assert mw._tasks_export_text({}, []).strip() == lines[0]
+
+
 def test_tray_icon_state_priority():
     import main_window as mw
 
