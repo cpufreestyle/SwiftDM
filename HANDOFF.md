@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `240a4d7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 4 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `4d863b6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 5 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -80,7 +80,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
 
-本轮共 4 个 commit（HEAD = `240a4d7`，`git status -sb` 与 origin/main 0/0）：
+本轮共 5 个 commit（HEAD = `4d863b6`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -97,11 +97,12 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 3. **删除死接口 `/api/clipboard`**（`240a4d7`）：写入的 `_clipboard_url` 全仓库无人读取，三个端也都没有调用方；
    剪贴板功能实际由 `browser_monitor.py` 的系统剪贴板监听实现。
 
-验证：全量 pytest 333 passed / 1 skipped；11 个 node 测试全绿；
-`build_exe.py` 重建 + `test_binary.py` 全过（`app.py` 参与打包）。
+4. **`create_task` 默认值随设置：不传参即读共享设置，与传 None 语义统一；传 0 与显式值不变。**
+
+验证：全量 pytest 334 passed / 1 skipped；11 个 node 测试全绿；
+`build_exe.py` 重建 + `test_binary.py` 全过（`app.py`/`downloader.py` 参与打包）。
 
 剩余候选：
-- `downloader.create_task` 的 `segments=8` 形参默认值可改为 None + 内部读 config，让“不传参”与“传 None”语义统一（当前所有调用点已显式传值，属防御性改动）。
 - 托盘“失败数”角标 16px 可读性差（优先级低）。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
