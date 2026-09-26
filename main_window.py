@@ -197,6 +197,33 @@ def _fail_summary_text(items):
     return f"✗ {len(items)} 个任务下载失败（{shown}）"
 
 
+def _card_status_text(status, scheduled_at=None):
+    """任务卡片状态文案；定时等待中的 pending 显示「⏰ 定时等待」而非「等待中」。"""
+    if status == "pending" and scheduled_at:
+        return "⏰ 定时等待"
+    return {
+        "downloading": "● 下载中", "paused": "⏸ 已暂停",
+        "completed": "✓ 完成", "failed": "✗ 失败",
+        "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
+    }.get(status, status)
+
+
+def _scheduled_suffix(scheduled_at):
+    """定时任务的「⏰ MM-DD HH:MM 开始」后缀；未定时返回空串。"""
+    if not scheduled_at:
+        return ""
+    return "  ⏰ " + time.strftime("%m-%d %H:%M", time.localtime(scheduled_at)) + " 开始"
+
+
+def _scheduled_at(task_id):
+    """任务定时启动时间（epoch 秒）；未定时返回 None。与 Web 端 _with_schedule 同源。"""
+    try:
+        from scheduler import scheduler as _dl_scheduler
+        return _dl_scheduler.pending_at(task_id)
+    except Exception:
+        return None
+
+
 def _finish_countdown_text(action, remaining):
     """「全部下载完成后动作」工具栏文案；无动作/已到点/非法值返回 None 表示隐藏按钮。"""
     if not action or action == "none":
@@ -523,7 +550,7 @@ class TaskCard(QFrame):
             "completed": "#00d2a0", "failed": "#ff5e7a",
             "pending": "#8888a0", "cancelled": "#8888a0"
         }
-        self.status_label = QLabel(status_text.get(status, status))
+        self.status_label = QLabel(_card_status_text(status, task_data.get("scheduled_at")))
         self.status_label.setStyleSheet(
             f"font-size: 11px; font-weight: 600; color: {status_color.get(status, '#8888a0')}; "
             f"background-color: {status_color.get(status, '#8888a0')}22; "
@@ -581,6 +608,7 @@ class TaskCard(QFrame):
             seeds = task_data.get("seeds", 0)
             peers = task_data.get("peers", 0)
             info_text += f"  🌱 {seeds}  👥 {peers}"
+        info_text += _scheduled_suffix(task_data.get("scheduled_at"))
         self.size_label = QLabel(info_text)
         self.size_label.setStyleSheet("font-size: 11px; color: #8888a0;")
         bottom.addWidget(self.size_label)
@@ -771,7 +799,7 @@ class TaskCard(QFrame):
             "pending": "#8888a0", "cancelled": "#8888a0"
         }
         color = status_color.get(status, "#8888a0")
-        self.status_label.setText(status_text.get(status, status))
+        self.status_label.setText(_card_status_text(status, task_data.get("scheduled_at")))
         self.status_label.setStyleSheet(
             f"font-size: 11px; font-weight: 600; color: {color}; "
             f"background-color: {color}22; border-radius: 10px; padding: 2px 10px;"
@@ -802,6 +830,7 @@ class TaskCard(QFrame):
             seeds = task_data.get("seeds", 0)
             peers = task_data.get("peers", 0)
             info += f"  🌱 {seeds}  👥 {peers}"
+        info += _scheduled_suffix(task_data.get("scheduled_at"))
         self.size_label.setText(info)
 
         self.speed_label.setText(f"⚡ {format_speed(speed)}" if speed > 0 and status == "downloading" else "")
@@ -1414,6 +1443,7 @@ class MainWindow(QMainWindow):
             task_dict = {}
             for t in tasks:
                 d = t.to_dict()
+                d["scheduled_at"] = _scheduled_at(d["task_id"])
                 task_dict[d["task_id"]] = d
 
             if self._first_refresh:

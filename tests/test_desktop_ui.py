@@ -531,3 +531,40 @@ def test_failed_card_shows_actionable_reason_hint(qt_app):
                          "status": "failed", "total_size": 0,
                          "downloaded": 0, "error": "HTTP 404"})
     assert card2.error_label.text() == "⚠ 失败原因: HTTP 404"
+
+
+def test_card_status_text_marks_scheduled_pending():
+    import main_window as mw
+    assert mw._card_status_text("pending") == "⏳ 等待中"
+    assert mw._card_status_text("pending", 1770000000) == "⏰ 定时等待"
+    assert mw._card_status_text("downloading", 1770000000) == "● 下载中"
+    assert mw._card_status_text("completed", None) == "✓ 完成"
+    assert mw._card_status_text("weird") == "weird"
+
+
+def test_scheduled_suffix_formats_local_time():
+    import main_window as mw
+    assert mw._scheduled_suffix(None) == ""
+    assert mw._scheduled_suffix(0) == ""
+    text = mw._scheduled_suffix(1770000000)
+    assert text.startswith("  ⏰ ") and text.endswith(" 开始"), text
+
+
+def test_task_card_marks_scheduled_pending(qt_app):
+    import main_window as mw
+    card = mw.TaskCard({"task_id": "s1", "filename": "later.bin",
+                        "status": "pending", "total_size": 0, "downloaded": 0,
+                        "scheduled_at": 1770000000})
+    assert card.status_label.text() == "⏰ 定时等待"
+    assert "⏰" in card.size_label.text()
+    # 非定时的 pending 不加标记
+    plain = mw.TaskCard({"task_id": "s2", "filename": "now.bin",
+                         "status": "pending", "total_size": 0, "downloaded": 0})
+    assert plain.status_label.text() == "⏳ 等待中"
+    assert "⏰" not in plain.size_label.text()
+    # 更新路径同样生效
+    card.update_data({"task_id": "s1", "filename": "later.bin",
+                      "status": "pending", "total_size": 0, "downloaded": 0,
+                      "scheduled_at": None})
+    assert card.status_label.text() == "⏳ 等待中"
+    assert "⏰" not in card.size_label.text()
