@@ -546,6 +546,7 @@ body {
     <div class="batch-actions">
       <button class="btn btn-secondary btn-sm" onclick="pauseAll()">&#10074;&#10074; 全部暂停</button>
       <button class="btn btn-secondary btn-sm" onclick="resumeAll()">&#9654; 全部恢复</button>
+      <button class="btn btn-secondary btn-sm" onclick="retryAllFailed()">&#8635; 重试失败</button>
       <button class="btn btn-danger btn-sm" onclick="clearCompleted()">&#128465; 清除已完成</button>
     </div>
   </div>
@@ -831,6 +832,14 @@ async function pauseAll() {
 async function resumeAll() {
   await api("/api/resume_all", { method: "POST" });
   showToast("已恢复全部下载");
+}
+
+async function retryAllFailed() {
+  const failed = _lastTasks.filter(t => t.status === "failed" || t.status === "cancelled");
+  if (!failed.length) { showToast("没有需要重试的任务"); return; }
+  if (!confirm(`确定重试 ${failed.length} 个失败/已取消任务吗？`)) return;
+  const r = await api("/api/retry_all", { method: "POST" });
+  showToast(`已重新开始 ${(r && r.retried) || failed.length} 个任务`);
 }
 
 async function clearCompleted() {

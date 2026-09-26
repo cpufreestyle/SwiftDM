@@ -788,6 +788,10 @@ class MainWindow(QMainWindow):
         btn_resume_all.clicked.connect(self._resume_all)
         toolbar.addWidget(btn_resume_all)
 
+        btn_retry_failed = QPushButton("↻ 重试失败")
+        btn_retry_failed.clicked.connect(self._retry_all_failed)
+        toolbar.addWidget(btn_retry_failed)
+
         btn_clear = QPushButton("🗑 清除已完成")
         btn_clear.clicked.connect(self._clear_completed)
         toolbar.addWidget(btn_clear)
@@ -1275,6 +1279,19 @@ class MainWindow(QMainWindow):
                 t.resume()
         mgr.save_history()
         self.status_bar.showMessage("已恢复全部下载")
+
+    def _retry_all_failed(self):
+        """批量重试全部失败/已取消任务（失败任务从分片断点续传）。"""
+        mgr = self._get_manager()
+        failed = [t for t in mgr.get_all_tasks() if t.status in ("failed", "cancelled")]
+        if not failed:
+            self.status_bar.showMessage("没有需要重试的任务", 3000)
+            return
+        for t in failed:
+            t.retry()
+        mgr.save_history()
+        self._refresh()
+        self.status_bar.showMessage(f"已重新开始 {len(failed)} 个任务")
 
     def _clear_completed(self):
         mgr = self._get_manager()

@@ -159,6 +159,16 @@ def retry_task(task_id):
     return jsonify({"success": True, "task": task.to_dict()})
 
 
+@app.route("/api/retry_all", methods=["POST"])
+def retry_all_tasks():
+    """批量重试全部失败/已取消任务，返回重试成功数量。"""
+    n = 0
+    for t in manager.get_all_tasks():
+        if t.status in ("failed", "cancelled") and t.retry():
+            n += 1
+    return jsonify({"success": True, "retried": n})
+
+
 @app.route("/api/open/<task_id>", methods=["POST"])
 def open_file(task_id):
     """用系统默认程序打开已下载的文件（跨平台）"""

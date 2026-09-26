@@ -99,3 +99,40 @@ def test_clear_completed_asks_confirmation_with_count(page):
     assert "confirm(" in body
     assert "不可恢复" in body
     assert "_lastTasks" in body
+
+
+class _FakeTask:
+    def __init__(self, status, ok=True):
+        self.status = status
+        self._ok = ok
+        self.calls = 0
+
+    def retry(self):
+        self.calls += 1
+        return self._ok
+
+
+def test_retry_all_route_retries_only_failed_and_cancelled(monkeypatch):
+    class FakeManager:
+        def __init__(self):
+            self.tasks = [_FakeTask("failed"), _FakeTask("cancelled"),
+                          _FakeTask("completed"), _FakeTask("downloading")]
+
+        def get_all_tasks(self):
+            return self.tasks
+
+    fm = FakeManager()
+    monkeypatch.setattr(appmod, "manager", fm)
+    appmod.app.config["TESTING"] = True
+    resp = appmod.app.test_client().post("/api/retry_all")
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["retried"] == 2
+    assert fm.tasks[2].calls == 0 and fm.tasks[3].calls == 0
+
+
+def test_web_has_retry_all_failed_action(page):
+    assert 'onclick="retryAllFailed()"' in page
+    body = page[page.index("async function retryAllFailed"):][:700]
+    assert "/api/retry_all" in body
+    assert "confirm(" in body
