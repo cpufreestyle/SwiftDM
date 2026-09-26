@@ -733,3 +733,78 @@ def test_no_base_level_selector_declares_the_same_property_twice(page):
             if stack:
                 stack[-1][2].append(ch)
             buf.append(ch)
+
+
+def test_css_selectors_do_not_reference_classes_that_never_exist(page):
+    """样式表里每个 class/id 名字必须在页面里真实存在
+
+    上一轮删掉的 `.modal-overlay` 就是一个类似的死规则：选择器写着好看，
+    但 HTML/JS 里根本没有对应元素，消费者修的时候还以为它生效。
+    标签选择器（div/button/input …）和伪类都不参与判断。
+    """
+    css = page[page.index("<style>"):page.index("</style>")]
+    css = re.sub(r"/\*[\s\S]*?\*/", "", css)
+
+    prelude_parts = []
+    stack, buf, depth = [], [], 0
+    for ch in css:
+        if ch == "{":
+            prelude = "".join(buf).strip(); buf = []
+            stack.append((prelude, depth, [])); depth += 1
+        elif ch == "}":
+            if stack:
+                prelude, open_depth, parts = stack.pop()
+                if not prelude.startswith("@"):
+                    prelude_parts.append(prelude)
+            buf = []; depth = max(0, depth - 1)
+        else:
+            if stack:
+                stack[-1][2].append(ch)
+            buf.append(ch)
+
+    without_css = re.sub(r"(?s)<style[^>]*>.*?</style>", "", page)
+    tokens = set(re.findall(r"[A-Za-z0-9_-]+", without_css))
+    pseudo = re.compile(
+        r"::[a-zA-Z-]+|:(focus-visible|focus-within|hover|focus|active|checked|"
+        r"disabled|enabled|last-child|first-child|only-child|root|before|after|"
+        r"placeholder-shown|nth-child\([^)]*\)|nth-of-type\([^)]*\)|not\([^)]*\))"
+    )
+    tag = re.compile(
+        r"(^|[\s>+~])(html|body|div|span|button|input|select|textarea|label|a|h1|h2|"
+        r"h3|h4|p|ul|li|table|tr|td|th|img|svg|path|small|strong|code|pre|br|hr)"
+        r"(?=[\s>+~:.#,\[]|$)"
+    )
+    missing = set()
+    for prelude in prelude_parts:
+        for sel in prelude.split(","):
+            probe = re.sub(r"\[[^\]]*\]", "", pseudo.sub("", sel))
+            probe = tag.sub("", probe)
+            for name in re.findall(r"[.#]([A-Za-z0-9_-]+)", probe):
+                if name not in tokens:
+                    missing.add((sel.strip(), name))
+    assert not missing, "\u9009\u62e9\u5668\u5F15\u7528\u4E86\u9875\u9762\u91CC\u4E0D\u5B58\u5728\u7684 class/id: %s" % sorted(missing)
+
+
+def test_mobile_task_top_stretches_its_children(page):
+    """≤600px 时任务卡的文件名/链接必须被卡片宽度截断，不能把整个页面撑出横向滚动。
+
+    实测 390px 视口：媒体查询只把 `.task-top` 改成 column，而基础规则的
+    `align-items: flex-start` 在列方向下让子元素收缩到 max-content；
+    `.task-filename`/`.task-url` 都是 nowrap，结果 `.task-info` 量出 560px，
+    整页 scrollWidth 变成 627px。补上 `align-items: stretch` 后子元素回到卡片内宽（332px）。
+    """
+    start = page.index("@media (max-width: 600px)")
+    depth, end = 0, len(page)
+    for i in range(start, len(page)):
+        if page[i] == "{":
+            depth += 1
+        elif page[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    block = page[start:end]
+    task_top = [line for line in block.splitlines() if ".task-top" in line]
+    assert task_top, block
+    assert "flex-direction: column" in task_top[0], task_top
+    assert "align-items: stretch" in task_top[0], task_top
