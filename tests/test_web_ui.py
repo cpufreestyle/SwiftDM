@@ -172,3 +172,38 @@ def test_open_download_dir_endpoint_creates_and_reveals(monkeypatch, tmp_path):
     assert data["path"] == target
     assert _os.path.isdir(target)          # 目录不存在时先创建，不能直接报错
     assert revealed == [target]
+
+
+def _css_block(page, selector):
+    start = page.index(selector)
+    start = page.index("{", start)
+    end = page.index("}", start)
+    return page[start + 1:end]
+
+
+def test_light_theme_defines_every_token(page):
+    dark = _css_block(page, ":root {")
+    light = _css_block(page, ':root[data-theme="light"]')
+    dark_tokens = set(re.findall(r"--([a-zA-Z0-9-]+)\s*:", dark))
+    light_tokens = set(re.findall(r"--([a-zA-Z0-9-]+)\s*:", light))
+    assert dark_tokens, "dark theme block lost its tokens"
+    assert dark_tokens == light_tokens, sorted(dark_tokens ^ light_tokens)
+
+
+def test_theme_controls_are_wired(page):
+    assert 'id="themeSelect"' in page and 'id="themeBtn"' in page
+    assert 'onclick="toggleTheme()"' in page
+    assert "function applyTheme" in page and "function setTheme" in page
+    assert 'localStorage.getItem("swiftdm.theme")' in page
+    assert 'localStorage.setItem("swiftdm.theme"' in page
+    assert '(prefers-color-scheme: light)' in page
+
+
+def test_no_stray_hardcoded_colors_in_css(page):
+    # 除白色（用于带色背景的按钮/标频）外，SS 不应再出现硬编码颜色
+    css = page[:page.index("</style>")]
+    css = css[css.index("<style>"):]
+    css = re.sub(r':root(\[data-theme="light"\])? \{[\s\S]*?\}', '', css)
+    css = re.sub(r"/\*[\s\S]*?\*/", "", css)
+    leftovers = [c for c in re.findall(r"#[0-9a-fA-F]{3,6}\b", css) if c != "#fff"]
+    assert not leftovers, leftovers

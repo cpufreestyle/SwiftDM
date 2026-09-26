@@ -9,18 +9,62 @@
   --bg: #0f0f14;
   --surface: #1a1a23;
   --surface2: #22222e;
+  --surface3: #2b2b3d;
   --border: #2a2a3a;
+  --border-strong: #3a3a52;
   --text: #e0e0e8;
   --text2: #8888a0;
+  --text3: #a9a9d0;
   --accent: #6c5ce7;
   --accent2: #a29bfe;
+  --accent-hover: #7d6ff0;
+  --accent-soft: #2d2440;
   --green: #00d2a0;
+  --green-strong: #00a67d;
+  --green-hover: #00b88d;
+  --green-soft: #123a2e;
   --red: #ff5e7a;
+  --red-soft: #3a1720;
   --orange: #ffa502;
+  --amber: #ffb45c;
+  --amber-soft: #3a2410;
   --blue: #4da6ff;
+  --blue-strong: #4cc2ff;
+  --blue-soft: #102f45;
   --radius: 10px;
   --radius-sm: 6px;
   --shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f5fa;
+  --surface: #ffffff;
+  --surface2: #eceef6;
+  --surface3: #dfe3ee;
+  --border: #d8dce8;
+  --border-strong: #c0c6d8;
+  --text: #1b1e28;
+  --text2: #5c6478;
+  --text3: #6f7690;
+  --accent: #6c5ce7;
+  --accent2: #8f80ff;
+  --accent-hover: #5b4bd6;
+  --accent-soft: #ece9ff;
+  --green: #0a9d7c;
+  --green-strong: #0a8a6c;
+  --green-hover: #0bb191;
+  --green-soft: #d7f4ec;
+  --red: #df4660;
+  --red-soft: #fbe4e8;
+  --orange: #d97a00;
+  --amber: #bd7410;
+  --amber-soft: #fbeed8;
+  --blue: #2b7fd4;
+  --blue-strong: #1f6fbf;
+  --blue-soft: #dcecfb;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 2px 12px rgba(20,24,40,0.08);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -55,7 +99,7 @@ body {
 .logo {
   width: 40px;
   height: 40px;
-  background: linear-gradient(135deg, var(--accent), #a29bfe);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -96,7 +140,7 @@ body {
 }
 
 .stat-item .icon { font-size: 16px; }
-.stat-item .value { font-weight: 700; color: #fff; }
+.stat-item .value { font-weight: 700; color: var(--text); }
 .stat-item .label { color: var(--text2); }
 .stat-item.speed .value { color: var(--accent2); }
 .stat-item.active .value { color: var(--blue); }
@@ -142,17 +186,17 @@ body {
   background: var(--accent);
   color: #fff;
 }
-.btn-primary:hover { background: #7d6ff0; transform: translateY(-1px); }
+.btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
 
 .btn-secondary {
   background: var(--surface2);
   color: var(--text);
   border: 1px solid var(--border);
 }
-.btn-secondary:hover { background: #2a2a3a; }
+.btn-secondary:hover { background: var(--surface3); }
 
-.btn-success { background: #00a67d; color: #fff; }
-.btn-success:hover { background: #00b88d; }
+.btn-success { background: var(--green-strong); color: #fff; }
+.btn-success:hover { background: var(--green-hover); }
 
 .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
 .btn-danger:hover { background: rgba(255,94,122,0.1); }
@@ -192,7 +236,7 @@ body {
   box-shadow: var(--shadow);
 }
 
-.task-card:hover { border-color: #3a3a52; }
+.task-card:hover { border-color: var(--border-strong); }
 
 .task-card.completed { border-color: rgba(0,210,160,0.3); }
 .task-card.failed { border-color: rgba(255,94,122,0.3); }
@@ -210,7 +254,7 @@ body {
 .task-filename {
   font-size: 14px;
   font-weight: 600;
-  color: #fff;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -291,7 +335,7 @@ body {
 .progress-text {
   font-size: 13px;
   font-weight: 700;
-  color: #fff;
+  color: var(--text);
   min-width: 42px;
   text-align: right;
 }
@@ -320,7 +364,7 @@ body {
 
 .empty-state h3 {
   font-size: 18px;
-  color: #ccc;
+  color: var(--text);
   margin-bottom: 6px;
 }
 
@@ -348,7 +392,7 @@ body {
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
 }
 
-.modal h3 { font-size: 16px; margin-bottom: 16px; color: #fff; }
+.modal h3 { font-size: 16px; margin-bottom: 16px; color: var(--text); }
 
 .modal .form-group { margin-bottom: 14px; }
 
@@ -426,11 +470,11 @@ body {
 .unit { font-size: 12px; color: var(--text2); }
 .chip {
   padding: 2px 8px; border-radius: 10px; font-size: 11px;
-  background: #2b2b3d; color: #a9a9d0;
+  background: var(--surface3); color: var(--text3);
 }
-.chip.ok { background: #123a2e; color: #3ddc97; }
-.chip.bad { background: #3a1720; color: #ff7a90; }
-.finish-status { font-size: 12px; color: #ffb45c; }
+.chip.ok { background: var(--green-soft); color: var(--green); }
+.chip.bad { background: var(--red-soft); color: var(--red); }
+.finish-status { font-size: 12px; color: var(--amber); }
 .sched-list { font-size: 12px; color: var(--text2); }
 
 /* ===== 动画 ===== */
@@ -465,11 +509,11 @@ body {
     display: inline-block; padding: 1px 6px; margin-right: 6px; border-radius: 4px;
     font-size: 10px; font-weight: 700; vertical-align: 2px;
   }
-  .kind-badge { background: #2b2b3d; color: #a9a9d0; }
-  .kind-badge.hls { background: #123a2e; color: #3ddc97; }
-  .kind-badge.dash { background: #102f45; color: #4cc2ff; }
-  .kind-badge.video_page { background: #3a2410; color: #ffb45c; }
-  .sched-badge { background: #2d2440; color: #b79cff; }
+  .kind-badge { background: var(--surface3); color: var(--text3); }
+  .kind-badge.hls { background: var(--green-soft); color: var(--green); }
+  .kind-badge.dash { background: var(--blue-soft); color: var(--blue-strong); }
+  .kind-badge.video_page { background: var(--amber-soft); color: var(--amber); }
+  .sched-badge { background: var(--accent-soft); color: var(--accent2); }
   .batch-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
 }
 /* 状态分段过滤（与桌面端一致） */
@@ -479,7 +523,7 @@ body {
   display:inline-flex; align-items:center; gap:6px; transition: all .15s ease; }
 .filter-btn:hover { color: var(--text); border-color: var(--accent2); }
 .filter-btn.active { background: var(--accent); border-color: var(--accent); color:#fff; }
-.filter-btn .fc { font-size:11px; opacity:.85; background: rgba(255,255,255,.12); border-radius:8px; padding:0 6px; }
+.filter-btn .fc { font-size:11px; opacity:.85; background: rgba(127,127,127,0.18); border-radius:8px; padding:0 6px; }
 .search-input { margin-left:auto; background: var(--surface2); border:1px solid var(--border); color: var(--text);
   border-radius:16px; padding:5px 12px; font-size:12px; width:180px; outline:none; }
 .search-input:focus { border-color: var(--accent); }
@@ -500,6 +544,8 @@ body {
       <h1>SwiftDM</h1>
       <div class="sub">高速多线程下载管理器 <span id="connStatus" style="color:var(--green)">&#9679; 已连接</span></div>
     </div>
+    <button class="btn btn-secondary btn-icon settings-btn" id="themeBtn" onclick="toggleTheme()"
+            title="切换浅色/深色主题">&#127769;</button>
     <button class="btn btn-secondary btn-icon settings-btn" onclick="openDownloadDir()"
             title="打开下载目录">&#128193;</button>
     <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn"
@@ -592,6 +638,18 @@ body {
     <div class="modal-head">
       <h2>下载设置</h2>
       <button class="btn btn-secondary btn-sm" onclick="closeSettings()">&#10006; 关闭</button>
+    </div>
+
+    <div class="modal-row">
+      <div class="modal-label">界面主题</div>
+      <div class="modal-controls">
+        <select id="themeSelect" onchange="setTheme(this.value)">
+          <option value="auto">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </div>
+      <div class="modal-note">默认跟随系统主题；浅色主题目前仅 Web 端提供。</div>
     </div>
 
     <div class="modal-row">
@@ -875,6 +933,42 @@ async function clearCompleted() {
 }
 
 // ===== 渲染 =====
+let themePref = "auto";
+try { themePref = localStorage.getItem("swiftdm.theme") || "auto"; } catch (e) {}
+
+function _systemPrefersLight() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+}
+
+function applyTheme(pref) {
+  const p = ["auto", "light", "dark"].indexOf(pref) >= 0 ? pref : "auto";
+  const resolved = p === "auto" ? (_systemPrefersLight() ? "light" : "dark") : p;
+  document.documentElement.dataset.theme = resolved;
+  const sel = document.getElementById("themeSelect");
+  if (sel) sel.value = p;
+  const btn = document.getElementById("themeBtn");
+  if (btn) btn.textContent = resolved === "light" ? "\u2600\ufe0e" : "\u263d\ufe0e";
+}
+
+function setTheme(pref) {
+  themePref = pref;
+  try { localStorage.setItem("swiftdm.theme", pref); } catch (e) {}
+  applyTheme(pref);
+}
+
+function toggleTheme() {
+  setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+}
+
+applyTheme(themePref);
+(function () {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  const onChange = () => { if (themePref === "auto") applyTheme("auto"); };
+  if (mq.addEventListener) mq.addEventListener("change", onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+})();
+
 // ===== 状态分段过滤（与桌面端一致）=====
 let currentFilter = "all";
 try { const _sf = localStorage.getItem("swiftdm.filter");
