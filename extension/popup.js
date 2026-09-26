@@ -29,11 +29,19 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// 面板名 -> DOM id 的映射规则（tabCapture / panelCapture ...）。
+// 集中在这里遍历，新增面板只改 PANELS，不会漏刷某个 tab 或某个面板——
+// 早先手写四个赋值时就漏了 tabTasks / panelTasks，「任务」页整个点不开。
+const PANELS = ['capture', 'media', 'tasks'];
+
 function showPanel(which) {
-  document.getElementById('tabCapture').className = 'tab' + (which === 'capture' ? ' active' : '');
-  document.getElementById('tabMedia').className = 'tab' + (which === 'media' ? ' active' : '');
-  document.getElementById('panelCapture').className = which === 'capture' ? '' : 'hidden';
-  document.getElementById('panelMedia').className = which === 'media' ? '' : 'hidden';
+  if (PANELS.indexOf(which) < 0) return;
+  PANELS.forEach((name) => {
+    const cap = name.charAt(0).toUpperCase() + name.slice(1);
+    const on = name === which;
+    document.getElementById('tab' + cap).className = 'tab' + (on ? ' active' : '');
+    document.getElementById('panel' + cap).className = on ? '' : 'hidden';
+  });
   if (which === 'media') loadMedia();
   if (which === 'tasks') loadTasks();
 }
