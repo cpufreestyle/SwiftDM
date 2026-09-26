@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `8b6975e`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 22 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `6e1dd82`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -81,7 +81,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作，最后把批量操作的键盘入口补到 Web 端、并修正桌面端 Ctrl+F 的指向；最后让定时等待中的任务在三端都能「取消定时」。
 
-本轮共 22 个 commit（HEAD = `8b6975e`，`git status -sb` 与 origin/main 0/0）：
+本轮共 23 个 commit（HEAD = `6e1dd82`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -348,11 +348,32 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      ② `assert.deepStrictEqual` 之外的坑：`config.get(key)` 的真实签名只收一个参数，
      conftest 里的替身写成 `(key, default=None)` 再把 default 传给真身就直接 TypeError。
 
+22. **@media 吞掉基础样式：高级面板收不起来、任务卡徽章全裸**（`6e1dd82`）：继续用 Playwright 走查发现的
+    最严重的一个 CSS 结构 bug——`@media (max-width: 600px)` 的花括号没有在该收的地方收住，
+    把 `.add-adv`、`.adv-tip`、`.kind-badge`、`.sched-badge` 共 22 行基础规则整段吞进了媒体查询里，
+    桌面宽度下全部失效：
+   - `.add-adv` 的 `display:none` 失效 → 「类型 / 清晰度 / 定时开始」面板**永远展开**，
+     ⏳ 按钮点了没有任何视觉变化，面板也丢了卡片边框背景；
+   - `.kind-badge` / `.sched-badge` 一条样式都不生效 → 任务卡片上的「直链 / HLS / DASH /
+     网页解析 / BT」徽章和「🕐 … 开始」定时徽章渲染成**纯文本**，一点 chip 样子都没有；
+   - `.adv-tip` 的 `flex-basis:100%` 失效 → 说明文字挤在日期输入框同一行。
+   - 修法：把非响应式规则整体移出媒体查询，只留 `.app/.task-top/.task-status/.add-bar/.batch-bar`
+     这五条真正该响应式的在里面；新增守卫 `test_base_rules_stay_out_of_media_queries`，
+     按花括号深度扫一遍 `<style>`，这些基础选择器只要出现在 `@media/@supports` 里就直接红。
+   - 顺手修了一个**依赖本机配置的测试**：`test_settings_dialog_theme_option_and_preview` 会在
+     本机主题为 light 时假失败——对话框构造时按 `config.get("theme")` 设了索引，而
+     `setCurrentIndex(1)` 发生在信号连接之后，索引没变就不触发预览。现在测试里把 theme 钉成 dark
+     （与既有「窗口级测试先钉死 `_filter`」同一套路）。
+   - 踩坑记录：进 UI 走查前先确认**模板缓存**：Flask debug=False 时 Jinja 会缓存编译后的模板，
+     改完 `templates/index.html` 不重启进程，浏览器里看到的还是旧页面（本轮就因此白查了一轮）；
+     `git` 看到的 LF/CRLF 警告与本次修改无关（`core.autocrlf=true` 的正常噪音）。
+
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
 - （已关账）批量操作的键盘入口：Web 端 Ctrl+A 全选可见、Esc 先清多选、Ctrl+点击卡片切换勾选；桌面端 Ctrl+F 已从「聚焦链接框」改回「聚焦搜索框」（与 Web 端及通用约定一致）。
+- （已关账）基础样式被吞进 @media：高级面板默认收起、任务卡徽章有样式了，见第 22 项。
 - （已关账）定时下载的「重启存活」：调度表在册的 pending 不再被当中断取消，见第 21 项。
 - （已关账）定时任务的取消入口：桌面端 pending 卡片按钮 + 右键菜单「取消定时」，Web 端卡片
   与设置面板定时列表每行一个「取消」，删除/取消都会先清调度表，幽灵条目不再出现。
