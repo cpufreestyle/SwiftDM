@@ -459,6 +459,10 @@ body {
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-head h2 { font-size: 15px; margin: 0; }
 .modal-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.modal-row:first-of-type { border-top: none; }
+.modal-section { font-size: 12px; font-weight: 700; color: var(--text2);
+                letter-spacing: .4px; margin: 16px 0 2px; }
+.modal-section:first-child { margin-top: 0; }
 .modal-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
 .modal-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .modal-controls input, .modal-controls select {
@@ -644,17 +648,7 @@ body {
       <button class="btn btn-secondary btn-sm" onclick="closeSettings()">&#10006; 关闭</button>
     </div>
 
-    <div class="modal-row">
-      <div class="modal-label">界面主题</div>
-      <div class="modal-controls">
-        <select id="themeSelect" onchange="setTheme(this.value)">
-          <option value="auto">跟随系统</option>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-        </select>
-      </div>
-      <div class="modal-note">默认跟随系统主题；浅色主题目前仅 Web 端提供。</div>
-    </div>
+    <div class="modal-section">下载</div>
 
     <div class="modal-row">
       <div class="modal-label">全局限速</div>
@@ -681,6 +675,26 @@ body {
       <div class="modal-note">仅在任务列表里再没有下载中 / 等待中 / 已暂停的任务后开始 60 秒倒计时；关闭程序不会自动取消，请用上面的按钮。设置会被记住，重启后仍然生效。</div>
     </div>
 
+
+    <div class="modal-row">
+      <div class="modal-label">定时任务</div>
+      <div class="modal-controls"><span id="scheduledList" class="sched-list">无</span></div>
+    </div>
+
+    <div class="modal-section">界面与诊断</div>
+
+    <div class="modal-row">
+      <div class="modal-label">界面主题</div>
+      <div class="modal-controls">
+        <select id="themeSelect" onchange="setTheme(this.value)">
+          <option value="auto">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </div>
+      <div class="modal-note">默认跟随系统主题；浅色主题目前仅 Web 端提供。</div>
+    </div>
+
     <div class="modal-row">
       <div class="modal-label">依赖检测</div>
       <div class="modal-controls">
@@ -688,11 +702,6 @@ body {
         <span class="chip" id="capYtdlp">yt-dlp: …</span>
       </div>
       <div class="modal-note">ffmpeg 只用系统安装的那个，SwiftDM 不会自动下载二进制文件。</div>
-    </div>
-
-    <div class="modal-row">
-      <div class="modal-label">定时任务</div>
-      <div class="modal-controls"><span id="scheduledList" class="sched-list">无</span></div>
     </div>
   </div>
 </div>

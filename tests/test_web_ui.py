@@ -145,6 +145,18 @@ def test_web_has_task_search_box(page):
     assert "matchFilter(t) && matchSearch(t)" in page
 
 
+def test_web_settings_modal_is_grouped(page):
+    assert '<div class="modal-section">下载</div>' in page
+    assert '<div class="modal-section">界面与诊断</div>' in page
+    dl = page.index('<div class="modal-section">下载</div>')
+    ui = page.index('<div class="modal-section">界面与诊断</div>')
+    assert dl < page.index('id="finishAction"') < ui      # 完成后动作归到「下载」组
+    assert dl < page.index('id="rateInput"') < ui
+    assert dl < page.index('id="scheduledList"') < ui
+    assert ui < page.index('id="themeSelect"')
+    assert ui < page.index('id="capFfmpeg"')
+
+
 def test_web_has_batch_copy_and_export(page):
     assert 'onclick="copyAllLinks()"' in page
     assert 'onclick="exportTasksCsv()"' in page
