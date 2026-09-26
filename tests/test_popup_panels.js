@@ -145,4 +145,69 @@ const BODIES = PANELS.map((p) => "panel" + p[0].toUpperCase() + p.slice(1));
   assert.strictEqual(on.elements.toggleBtn.textContent, "暂停");
 }
 
+// ⑦ 列表里的动作按钮必须带对象名：一屏几十行都写着「下载」，读屏用户听到一个裸动词
+// 根本不知道落在哪一条上；可见文字会变成「已添加」，aria-label 也得跟着走。
+{
+  const { sandbox } = makeSandbox((msg) =>
+    msg.action === "getTasks" ? { tasks: [], stats: {} } : undefined);
+
+  const dl = sandbox.renderItem({ url: "https://cdn.example.com/a/ep1.mp4", kind: "hls", bytes: 4096 },
+                                0, "https://cdn.example.com/list");
+  const dlBtn = dl.children[dl.children.length - 1];
+  assert.strictEqual(dlBtn.textContent, "下载");
+  assert.strictEqual(dlBtn.getAttribute("aria-label"), "下载 ep1.mp4",
+                    "下载按钮要报出是哪一条媒体");
+
+  // blob: 地址取不到文件名，至少别在名字尾部留个空格
+  const mse = sandbox.renderItem({ url: "blob:https://x/abc", is_mse: true, kind: "mse" },
+                                 0, "https://site.com/watch?v=1");
+  const parseBtn = mse.children[mse.children.length - 1];
+  assert.strictEqual(parseBtn.getAttribute("aria-label"), "解析本页",
+                    "解析本页按钮也要有可读名字");
+  assert.strictEqual(parseBtn.getAttribute("aria-label"), parseBtn.textContent);
+
+  // 分片型 hls：button 走解析本页分支，名字照旧从 URL 末段取
+  const seg = sandbox.renderItem({ url: "https://site.com/v/master.m3u8", kind: "hls_segments", bytes: 0 },
+                                 0, "https://site.com/v/master.m3u8");
+  assert.strictEqual(seg.children[seg.children.length - 1].getAttribute("aria-label"),
+                    "解析本页 master.m3u8");
+
+  // 点下去之后文案会变，aria-label 必须同步，否则读屏报的还是「下载 xxx」
+  dlBtn.listeners.click[0]();
+  assert.strictEqual(dlBtn.getAttribute("aria-label"), "重试 ep1.mp4",
+                    "失败回流到「重试」时 aria-label 也要跟着变");
+  assert.strictEqual(dlBtn.textContent, "重试");
+
+  const ok = makeSandbox((msg) =>
+    msg.action === "downloadMedia" ? { success: true } : undefined);
+  const okRow = ok.sandbox.renderItem({ url: "https://cdn.example.com/a/ep2.mp4", kind: "hls" },
+                                      0, "https://cdn.example.com/list");
+  const okBtn = okRow.children[okRow.children.length - 1];
+  okBtn.listeners.click[0]();
+  assert.strictEqual(okBtn.textContent, "已添加");
+  assert.strictEqual(okBtn.getAttribute("aria-label"), "已添加 ep2.mp4",
+                    "按钮变成「已添加」时 aria-label 仍要带着对象名");
+}
+
+// ⑧ 失败任务的重试按钮同样要带任务名
+{
+  const { sandbox, elements } = makeSandbox((msg) =>
+    msg.action === "getTasks" ? { tasks: [], stats: {} } : undefined);
+  sandbox.renderTasks({ tasks: [
+    { task_id: "t1", filename: "movie.mkv", status: "failed", error: "网络中断" },
+  ] });
+  const row = elements.taskList.children[0];
+  const retry = row.children[1];
+  assert.strictEqual(retry.getAttribute("aria-label"), "重试 movie.mkv",
+                    "重试按钮要报出是哪个任务");
+  // 重试成功后 1.2s 还会自动刷新一次，把定时器摘掉免得测试被拖住
+  const done = makeSandbox((msg) => msg.action === "retryTask" ? { success: true, retried: 1 } : undefined);
+  done.sandbox.setTimeout = () => 0;
+  done.sandbox.renderTasks({ tasks: [{ task_id: "t9", filename: "b.iso", status: "cancelled" }] });
+  const doneBtn = done.elements.taskList.children[0].children[1];
+  doneBtn.listeners.click[0]();
+  assert.strictEqual(doneBtn.getAttribute("aria-label"), "已重试 b.iso",
+                    "重试成功后 aria-label 要跟着文案走");
+}
+
 console.log("popup.js showPanel OK");

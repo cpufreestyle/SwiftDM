@@ -228,18 +228,19 @@ function taskRow(task) {
 function retryBtn(task) {
   const btn = document.createElement('button');
   btn.className = 'btn-dl';
-  btn.textContent = '重试';
+  const name = task.filename || '未命名任务';
+  relabel(btn, '重试', name);
   btn.title = '重试该任务（失败任务会从已有分片续传）';
   btn.addEventListener('click', () => {
     btn.disabled = true;
-    btn.textContent = '重试中';
+    relabel(btn, '重试中', name);
     chrome.runtime.sendMessage({ action: 'retryTask', taskId: task.task_id }, (res) => {
       if (res && res.success) {
-        btn.textContent = '已重试';
+        relabel(btn, '已重试', name);
         setTimeout(loadTasks, 1200);  // 重试后多半又变成下载中，稍后刷新列表
       } else {
         btn.disabled = false;
-        btn.textContent = '重试';
+        relabel(btn, '重试', name);
         btn.title = (res && res.error) || '重试失败';
       }
     });
@@ -263,6 +264,16 @@ function retryAllTasks() {
   });
 }
 
+// 一屏能列出几十条媒体/任务，按钮上只写「下载」「重试」，读屏用户 Tab 过去
+// 只听到一个裸动词，根本不知道落在哪一条上。aria-label 带上对象名；
+// 这里同时改 aria-label 而不是只改 textContent——可见文字会随状态变成
+// 「已添加」，若名字不跟着变，读屏软件报的仍是初始文案，和屏幕上对不上。
+function relabel(btn, text, name) {
+  const suffix = name ? ' ' + name : '';
+  btn.textContent = text;
+  btn.setAttribute('aria-label', text + suffix);
+}
+
 function renderItem(item, idx, pageUrl) {
   const row = document.createElement('div');
   row.className = 'media-item';
@@ -280,26 +291,26 @@ function renderItem(item, idx, pageUrl) {
   if (item.is_mse || item.kind === 'hls_segments') {
     // blob: 地址离开这个页面就没用了；只有分片流量时手上也没有主清单。
     // 两种情况能做的都只有把页面地址交给解析引擎。
-    row.appendChild(pageBtn(pageUrl));
+    row.appendChild(pageBtn(pageUrl, nameOf(item)));
   } else {
-    row.appendChild(downloadBtn(item, idx, pageUrl));
+    row.appendChild(downloadBtn(item, idx, pageUrl, nameOf(item)));
   }
   return row;
 }
 
-function downloadBtn(item, idx, pageUrl) {
+function downloadBtn(item, idx, pageUrl, name) {
   const btn = document.createElement('button');
   btn.className = 'btn-dl';
-  btn.textContent = '下载';
+  relabel(btn, '下载', name);
   btn.addEventListener('click', () => {
     btn.disabled = true;
-    btn.textContent = '添加中';
+    relabel(btn, '添加中', name);
     chrome.runtime.sendMessage({ action: 'downloadMedia', item: item, tabId: activeTabId,
       pageUrl: pageUrl || '' }, (res) => {
-      if (res && res.success) { btn.textContent = '已添加'; }
+      if (res && res.success) { relabel(btn, '已添加', name); }
       else {
         btn.disabled = false;
-        btn.textContent = '重试';
+        relabel(btn, '重试', name);
         btn.title = (res && res.error) || '添加失败';
       }
     });
@@ -307,21 +318,21 @@ function downloadBtn(item, idx, pageUrl) {
   return btn;
 }
 
-function pageBtn(pageUrl) {
+function pageBtn(pageUrl, name) {
   const btn = document.createElement('button');
   btn.className = 'btn-dl secondary';
-  btn.textContent = '解析本页';
+  relabel(btn, '解析本页', name);
   btn.title = '把当前页面地址交给网页视频解析（yt-dlp）';
   btn.disabled = !pageUrl;
   btn.addEventListener('click', () => {
     btn.disabled = true;
-    btn.textContent = '添加中';
+    relabel(btn, '添加中', name);
     chrome.runtime.sendMessage({ action: 'downloadMedia', tabId: activeTabId, pageUrl: pageUrl,
       item: { url: pageUrl, kind: 'video_page' } }, (res) => {
-      if (res && res.success) { btn.textContent = '已添加'; }
+      if (res && res.success) { relabel(btn, '已添加', name); }
       else {
         btn.disabled = false;
-        btn.textContent = '重试';
+        relabel(btn, '重试', name);
         btn.title = (res && res.error) || '添加失败';
       }
     });

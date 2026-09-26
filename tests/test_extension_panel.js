@@ -31,8 +31,11 @@ function makeEl(tag) {
     style: {},
     _text: "",
     _html: "",
+    _attrs: {},
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     appendChild(child) { this.children.push(child); return child; },
+    setAttribute(name, value) { this._attrs[name] = String(value); },
+    getAttribute(name) { return name in this._attrs ? this._attrs[name] : null; },
     set textContent(v) { this._text = String(v); },
     get textContent() { return this._text; },
     set innerHTML(v) { this._html = String(v); this.children.length = 0; },
@@ -97,6 +100,8 @@ function makeSandbox(handler, opts = {}) {
   assert.ok(row.children[0].innerHTML.indexOf("new.bin") >= 0);
   assert.ok(row.children[0].innerHTML.indexOf("连接超时") >= 0);
   assert.strictEqual(row.children[1].textContent, "重试");
+  assert.strictEqual(row.children[1].getAttribute("aria-label"), "重试 new.bin",
+                    "一屏几十行都写着「重试」，读屏用户必须听得出是哪一条");
   const cancelled = sandbox.taskRow({ task_id: "a5", filename: "stop.torrent", status: "cancelled", error: "" });
   assert.ok(cancelled.children[0].innerHTML.indexOf("已取消") >= 0, "已取消要有兜底文案");
   const evil = sandbox.taskRow({ task_id: "x", filename: "<img src=x onerror=alert(1)>", status: "failed", error: "<b>" });
@@ -124,6 +129,8 @@ function makeSandbox(handler, opts = {}) {
   assert.ok(retry, "应发送 retryTask 消息");
   assert.strictEqual(retry.taskId, "a5", "带上是哪一条任务");
   assert.strictEqual(btn.textContent, "已重试");
+  assert.strictEqual(btn.getAttribute("aria-label"), "已重试 stop.torrent",
+                    "文案变了 aria-label 也要跟着变，否则读屏报的还是「重试」");
   assert.strictEqual(btn.disabled, true);
 }
 
