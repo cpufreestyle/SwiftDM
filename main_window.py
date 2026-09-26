@@ -154,6 +154,28 @@ def _tasks_export_text(task_dict, ordered_ids):
     return buf.getvalue()
 
 
+def _fail_summary_text(items):
+    """把一批新失败任务汇总成一条状态栏文案；空列表返回 None。
+
+    单个失败保留文件名 + 原因；多个失败统计数量并去重后列出前两个不同原因。
+    """
+    if not items:
+        return None
+    if len(items) == 1:
+        err = (items[0].get("error") or "").strip()
+        name = items[0].get("filename") or "文件"
+        return f"✗ 下载失败 [{name}]: {err}" if err else f"✗ 下载失败: {name}"
+    reasons = []
+    for it in items:
+        reason = (it.get("error") or "").strip()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    if not reasons:
+        return f"✗ {len(items)} 个任务下载失败"
+    shown = "、".join(reasons[:2]) + ("等" if len(reasons) > 2 else "")
+    return f"✗ {len(items)} 个任务下载失败（{shown}）"
+
+
 def _finish_countdown_text(action, remaining):
     """「全部下载完成后动作」工具栏文案；无动作/已到点/非法值返回 None 表示隐藏按钮。"""
     if not action or action == "none":
@@ -1358,22 +1380,21 @@ class MainWindow(QMainWindow):
                 self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
                 self._first_refresh = False
             else:
+                failed_now = []
                 for tid, d in task_dict.items():
                     prev_status = self._prev_statuses.get(tid)
                     if prev_status != "completed" and d["status"] == "completed":
                         if tid not in self._completed_tasks:
                             self._completed_tasks.add(tid)
                             self._notify_complete(d)
-                    # 新失败的任务：状态栁直接提示失败原因
+                    # 新失败的任务：先收集，循环结束后聚合成一条提示
                     elif prev_status != "failed" and d["status"] == "failed":
-                        err = d.get("error", "")
-                        name = d.get("filename", "文件")
-                        if err:
-                            self.status_bar.showMessage(f"✗ 下载失败 [{name}]: {err}", 10000)
-                        else:
-                            self.status_bar.showMessage(f"✗ 下载失败: {name}", 10000)
+                        failed_now.append(d)
 
                 self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
+                if failed_now:
+                    self.status_bar.showMessage(
+                        _fail_summary_text(failed_now), 12000)
 
             # 移除不存在的任务卡片
             removed = set(self._cards.keys()) - set(task_dict.keys())

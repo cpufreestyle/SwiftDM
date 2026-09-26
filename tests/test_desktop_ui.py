@@ -174,6 +174,31 @@ def test_sorted_task_ids_orders_and_stays_stable():
     assert mw._sorted_task_ids(tasks, "speed") == ["b", "a", "c"]
 
 
+def test_fail_summary_text_single_and_aggregated():
+    import main_window as mw
+
+    assert mw._fail_summary_text([]) is None
+    one = [{"filename": "a.iso", "error": "连接超时"}]
+    assert mw._fail_summary_text(one) == "✗ 下载失败 [a.iso]: 连接超时"
+    no_err = [{"filename": "a.iso", "error": ""}]
+    assert mw._fail_summary_text(no_err) == "✗ 下载失败: a.iso"
+
+    same = [{"filename": "a", "error": "连接超时"},
+            {"filename": "b", "error": "连接超时"}]
+    text = mw._fail_summary_text(same)
+    assert text == "✗ 2 个任务下载失败（连接超时）"
+
+    mixed = [{"filename": "a", "error": "x"},
+             {"filename": "b", "error": "y"},
+             {"filename": "c", "error": "z"}]
+    text = mw._fail_summary_text(mixed)
+    assert text.startswith("✗ 3 个任务下载失败")
+    assert "x、y" in text and text.endswith("等）")
+
+    assert mw._fail_summary_text([{"filename": "a"}, {"filename": "b"}]) == \
+        "✗ 2 个任务下载失败"
+
+
 def test_finish_countdown_text_hidden_and_labeled():
     import main_window as mw
 
