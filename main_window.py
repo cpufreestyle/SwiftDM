@@ -813,7 +813,12 @@ class MainWindow(QMainWindow):
         fb = QHBoxLayout(filter_bar)
         fb.setContentsMargins(16, 8, 16, 4)
         fb.setSpacing(8)
-        self._filter = "all"
+        try:
+            import config as _cfg
+            _saved = _cfg.get("filter")
+            self._filter = _saved if _saved in ("all", "active", "completed", "failed") else "all"
+        except Exception:
+            self._filter = "all"
         self._filter_group = QButtonGroup(self)
         self._filter_group.setExclusive(True)
         self._filter_btns = {}
@@ -828,7 +833,8 @@ class MainWindow(QMainWindow):
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
         fb.addStretch(1)
-        self._filter_btns["all"].setChecked(True)
+        if self._filter in self._filter_btns:
+            self._filter_btns[self._filter].setChecked(True)
         layout.addWidget(filter_bar)
 
         # 滚动区域 — 任务列表
@@ -1108,10 +1114,15 @@ class MainWindow(QMainWindow):
         mgr.save_history()
 
     def _set_filter(self, key):
-        """切换状态分段过滤。"""
+        """切换状态分段过滤，并持久化以便重启后保持。"""
         if key == self._filter:
             return
         self._filter = key
+        try:
+            import config
+            config.set("filter", key)
+        except Exception:
+            pass
         self._refresh()
 
     def _match_filter(self, data):

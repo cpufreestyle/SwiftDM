@@ -86,3 +86,8 @@ def test_document_title_reflects_activity(page):
     assert "document.title" in page and "个下载中" in page
     assert "SwiftDM - 高速下载管理器" in page
 
+
+def test_filter_selection_persisted(page):
+    assert "localStorage.getItem(\"swiftdm.filter\")" in page
+    assert "localStorage.setItem(\"swiftdm.filter\"" in page
+    assert "function syncFilterButtons" in page

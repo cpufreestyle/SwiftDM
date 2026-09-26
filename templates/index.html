@@ -841,6 +841,11 @@ async function clearCompleted() {
 // ===== 渲染 =====
 // ===== 状态分段过滤（与桌面端一致）=====
 let currentFilter = "all";
+try { const _sf = localStorage.getItem("swiftdm.filter");
+     if (["all","active","completed","failed"].indexOf(_sf) >= 0) currentFilter = _sf;
+} catch (e) {}
+function syncFilterButtons(){ document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === currentFilter)); }
+ syncFilterButtons();
 let _lastTasks = [];
 let _tasksById = {};
 
@@ -859,8 +864,10 @@ function currentFilterLabel() {
 
 function setFilter(f) {
   currentFilter = f;
+  try { localStorage.setItem("swiftdm.filter", f); } catch (e) {}
   document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
   renderTasks(_lastTasks);
+  syncFilterButtons();
 }
 
 function updateFilterCounts(tasks) {
