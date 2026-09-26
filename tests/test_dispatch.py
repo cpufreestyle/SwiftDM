@@ -261,6 +261,49 @@ def test_no_entry_point_hard_codes_the_thread_count():
     assert offenders == [], "hard-coded thread count in create_task: " + " | ".join(offenders)
 
 
+def _tracked_source_files():
+    """受版本控制 + 未忽略的文本源文件，和 create_task 守卫同一份清单。"""
+    import os
+    import subprocess
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=root, capture_output=True, check=True)
+        raw_paths = listed.stdout.decode("utf-8", "replace").splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        raw_paths = []
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs
+                       if d not in (".git", "__pycache__", "build", "dist")]
+            for name in files:
+                raw_paths.append(os.path.relpath(os.path.join(base, name), root)
+                                 .replace(os.sep, "/"))
+    return [p for p in raw_paths
+            if p.endswith((".py", ".js", ".html", ".css", ".md", ".txt"))]
+
+
+def test_no_stray_bom_lands_inside_a_source_file():
+    """UTF-8 BOM 只能出现在文件开头，绝不能掉在文件中间。
+
+    templates/index.html 里曾掉进三个游离 BOM：一个把 .toast.info 这条 CSS 规则
+    整条打死（U+FEFF 成了选择器的一部分，匹配不上 .toast.info），另两个落在
+    HTML 注释和 <script> 注释前面。这类损坏极难用肉眼看出来——编辑器把它显示成
+    零宽空格，肉眼和 git diff 都未必察觉，但 CSS/JS 语义已经变了。
+    """
+    offenders = []
+    for path in _tracked_source_files():
+        with open(path, "rb") as handle:
+            blob = handle.read()
+        body = blob[3:] if blob.startswith(b"\xef\xbb\xbf") else blob
+        if b"\xef\xbb\xbf" in body:
+            first = body.index(b"\xef\xbb\xbf")
+            line = body[:first].count(b"\n") + 1
+            offenders.append("%s:%d" % (path, line))
+    assert offenders == [], "文件中间出现游离 BOM: " + ", ".join(offenders)
+
+
 def test_create_task_without_segments_follows_the_setting(tmp_path):
     """Omitting segments must resolve the shared setting, not a bare 8.
 

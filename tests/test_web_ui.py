@@ -579,6 +579,23 @@ def test_toast_and_modals_are_announced(page):
     assert 'aria-labelledby="settingsTitle"' in page and 'id="settingsTitle"' in page
 
 
+def test_toast_css_rules_survive_inline_bom_damage(page):
+    """三种 toast 皮肤都得是真规则，选择器前面不能混进 BOM。
+
+    文件中间掉进的 U+FEFF 会被 CSS 当成选择器的一部分，规则整条静默失效：
+    `.toast.info` 曾因此变成死规则，showToast(msg, "info") 渲染出来
+    没有任何视觉变化，而肉眼和 git diff 都看不出那一行有问题。
+    """
+    for kind in ("success", "error", "info"):
+        rule = ".toast.%s {" % kind
+        assert rule in page, "%s 规则缺失" % rule
+        line = [l for l in page.splitlines() if l.startswith(rule)]
+        assert len(line) == 1, "%s 规则应当独立成行" % rule
+        assert not line[0].startswith("\ufeff"), "%s 选择器前有游离 BOM" % rule
+    # showToast 必须真的会把 info 这个类名拼上去，否则规则对了也没人用
+    assert 'toast.className = `toast ${type} show`' in page
+
+
 def test_filters_and_compact_report_pressed_state(page):
     # 筛选/紧凑是开关语义，没有 aria-pressed 时读屏用户听不出当前是开是关
     assert 'role="group"' in page and 'aria-label="按状态筛选"' in page
