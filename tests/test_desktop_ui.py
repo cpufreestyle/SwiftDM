@@ -1575,6 +1575,50 @@ def test_task_detail_dialog_renders_rows_and_auto_closes(qt_app):
     assert not dlg._timer.isActive()
 
 
+def test_task_detail_dialog_offers_state_actions(qt_app):
+    """详情面板要能直接暂停/继续/重试/打开。
+
+    用户往往是看了失败原因才想重试、看了进度才想暂停，从前详情面板只有
+    「打开文件夹/复制链接/复制详情」几个静态按钮，只能退回列表找卡片操作。
+    动作集合与卡片行、右键菜单保持同一套状态取舍，且与 Web 端详情面板一致。
+    """
+    import main_window as mw
+    from PyQt6.QtWidgets import QPushButton
+
+    base = {"task_id": "t1", "filename": "a.bin", "url": "https://s/a.bin",
+            "save_dir": "C:/dl"}
+
+    def state_buttons(dlg):
+        return [b.text() for b in dlg._state_btns_widgets]
+
+    dlg = mw.TaskDetailDialog("t1", dict(base, status="downloading"), fetch=None)
+    dlg._timer.stop()
+    assert state_buttons(dlg) == ["⏸ 暂停", "✕ 取消"]
+
+    dlg.update_data(dict(base, status="paused"))
+    assert state_buttons(dlg) == ["▶ 继续", "✕ 取消"]
+
+    dlg.update_data(dict(base, status="failed", error="HTTP 404"))
+    assert state_buttons(dlg) == ["↻ 重试"]
+
+    dlg.update_data(dict(base, status="cancelled"))
+    assert state_buttons(dlg) == ["↻ 重试"]
+
+    dlg.update_data(dict(base, status="completed", total_size=10))
+    assert state_buttons(dlg) == ["📂 打开文件"]
+
+    # 等待中的定时任务没有可用状态动作，不该摆一排禁用的按钮
+    dlg.update_data(dict(base, status="pending"))
+    assert state_buttons(dlg) == []
+
+    # 点击要真的把动作抛回主窗口（信号名与 task_id 都对）
+    seen = []
+    dlg.action_requested.connect(lambda action, task_id: seen.append((action, task_id)))
+    dlg.update_data(dict(base, status="failed"))
+    retry = [b for b in dlg.findChildren(QPushButton) if b.text() == "↻ 重试"][0]
+    retry.click()
+    assert seen == [("retry", "t1")], seen
+
 def test_task_detail_dialog_follows_theme(qt_app):
     import main_window as mw
     data = {"task_id": "t1", "filename": "x.bin", "status": "downloading"}

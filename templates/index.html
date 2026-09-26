@@ -1657,14 +1657,37 @@ function closeDetail() {
   document.getElementById("detailModal").classList.remove("open");
 }
 
+// 详情面板的状态动作：与卡片行同一套动作、同一套状态取舍。
+// 从前详情面板只有「打开文件夹/复制详情/复制链接」几个静态按钮，用户往往是
+// 看了失败原因才想重试、看了进度才想暂停，却必须退回列表找到那张卡才能操作。
+function detailStateActionsHtml(task) {
+  const id = task.task_id;
+  if (task.status === "downloading") {
+    return `<button class="btn btn-secondary btn-sm" onclick="pauseTask('${id}')">&#10074;&#10074; 暂停</button>` +
+           `<button class="btn btn-danger btn-sm" onclick="cancelTask('${id}')">&#10006; 取消</button>`;
+  }
+  if (task.status === "paused") {
+    return `<button class="btn btn-success btn-sm" onclick="resumeTask('${id}')">&#9654; 继续</button>` +
+           `<button class="btn btn-danger btn-sm" onclick="cancelTask('${id}')">&#10006; 取消</button>`;
+  }
+  if (task.status === "failed" || task.status === "cancelled") {
+    return `<button class="btn btn-secondary btn-sm" onclick="retryTask('${id}')">&#8635; 重试</button>`;
+  }
+  if (task.status === "completed") {
+    return `<button class="btn btn-secondary btn-sm" onclick="openFile('${id}')">&#128193; 打开</button>`;
+  }
+  return "";
+}
+
 function renderDetail(task) {
   document.getElementById("detailTitle").textContent = task.filename || "任务详情";
   const rows = detailRows(task).map(([k, v]) =>
     `<div class="detail-row"><span class="detail-key">${escapeHtml(k)}</span>` +
     `<span class="detail-val">${escapeHtml(String(v))}</span></div>`).join("");
   document.getElementById("detailBody").innerHTML = rows + segmentStripHtml(task);
-  document.getElementById("detailActions").innerHTML = `
-      <button class="btn btn-secondary btn-sm" onclick="openFolder('${task.task_id}')">打开文件夹</button>
+  document.getElementById("detailActions").innerHTML =
+      detailStateActionsHtml(task) +
+      `<button class="btn btn-secondary btn-sm" onclick="openFolder('${task.task_id}')">打开文件夹</button>
       <button class="btn btn-secondary btn-sm" onclick="copyDetail('${task.task_id}')">复制详情</button>
       <button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')">复制链接</button>
       <button class="btn btn-primary btn-sm" onclick="closeDetail()">关闭</button>`;

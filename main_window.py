@@ -1650,6 +1650,16 @@ class TaskDetailDialog(QDialog):
         seg_box.addLayout(self.seg_rows)
         layout.addWidget(self.seg_wrap)
 
+        # 状态动作：和卡片/右键菜单同一套语义，但按当前状态只留有意义的那几个。
+        # 放在详情面板里是因为用户往往是看了失败原因才想重试、看了进度才想暂停，
+        # 从前得退回列表找到那张卡才能操作。
+        self._state_btns = QHBoxLayout()
+        self._state_btns.setSpacing(8)
+        self._state_btns.setContentsMargins(0, 0, 0, 0)
+        self._state_btns_widgets = []
+        self._state_actions = []
+        layout.addLayout(self._state_btns)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(self.reject)
         btn_folder = btns.addButton("打开文件夹",
@@ -1753,6 +1763,33 @@ class TaskDetailDialog(QDialog):
         self.setWindowTitle(f"{filename} - 任务详情")
         self._rebuild_rows(_detail_rows(d))
         self._rebuild_segments(_segment_rows(d))
+        self._rebuild_state_buttons(d.get("status"))
+
+    def _rebuild_state_buttons(self, status):
+        """按状态重排详情面板的状态动作（与卡片行同一套动作、同一套取舍）。
+
+        自己存一份按钮引用：deleteLater() 只是延后销毁，findChildren 在
+        本轮事件循环里仍能捞出上一状态的按钮，测试要能断言「只剩当前那几个」。
+        """
+        self._clear_layout(self._state_btns)
+        self._state_actions = []
+        self._state_btns_widgets = []
+        if status == "downloading":
+            self._state_actions.append(("⏸ 暂停", "pause"))
+            self._state_actions.append(("✕ 取消", "cancel"))
+        elif status == "paused":
+            self._state_actions.append(("▶ 继续", "resume"))
+            self._state_actions.append(("✕ 取消", "cancel"))
+        elif status in ("failed", "cancelled"):
+            self._state_actions.append(("↻ 重试", "retry"))
+        elif status == "completed":
+            self._state_actions.append(("📂 打开文件", "open"))
+        for text, action in self._state_actions:
+            btn = QPushButton(text)
+            btn.clicked.connect(
+                lambda _=False, a=action: self.action_requested.emit(a, self._task_id))
+            self._state_btns.addWidget(btn)
+            self._state_btns_widgets.append(btn)
 
     def _copy_details(self):
         """把当前详情行复制成纯文本（反馈问题时可直接粘贴，省去手抄）。"""

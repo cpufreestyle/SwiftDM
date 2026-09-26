@@ -15,7 +15,22 @@ assert.ok(START > 0 && END > START, "任务详情代码段必须存在");
 assert.ok(HTML.indexOf("// ===== 任务详情 =====") > START,
           "详情段必须位于分段进度段之后");
 const CODE = HTML.slice(START, END) +
-  "\n;({ detailRows, detailText, detailStatusText, detailSizeText, segmentStripHtml });";
+  "\n;({ detailRows, detailText, detailStatusText, detailSizeText, segmentStripHtml," +
+  " detailStateActionsHtml, renderDetail });";
+
+// renderDetail 往这两个节点塞 HTML，用可记录的桩接住
+const _rendered = { title: null, body: null, actions: null };
+function _stub(id) {
+  return {
+    set textContent(v) { if (id === "detailTitle") _rendered.title = v; },
+    get textContent() { return ""; },
+    set innerHTML(v) {
+      if (id === "detailBody") _rendered.body = v;
+      if (id === "detailActions") _rendered.actions = v;
+    },
+    get innerHTML() { return ""; },
+  };
+}
 
 const sandbox = {
   console,
@@ -25,7 +40,7 @@ const sandbox = {
   escapeHtml: (s) => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"),
   _tasksById: {},
-  document: { getElementById: () => null },
+  document: { getElementById: (id) => _stub(id) },
 };
 const api = vm.runInNewContext(CODE, sandbox, { filename: "detail-section.js" });
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -106,6 +121,49 @@ assert.ok(/↻ \d+s 后自动重试/.test(api.detailStatusText(
   assert.strictEqual(api.segmentStripHtml(
     { status: "completed", segments_offsets: [[0, 9], [10, 19]],
       segments_progress: [10, 10] }), "");
+}
+
+// 详情面板的状态动作：与卡片行同一套动作、同一套状态取舍
+{
+  const dl = plain(api.detailStateActionsHtml({ task_id: "t1", status: "downloading" }));
+  assert.ok(dl.indexOf("pauseTask('t1')") >= 0, "下载中要能暂停");
+  assert.ok(dl.indexOf("cancelTask('t1')") >= 0, "下载中要能取消");
+  assert.ok(dl.indexOf("retryTask") < 0, "下载中不该出现重试");
+
+  const pz = plain(api.detailStateActionsHtml({ task_id: "t1", status: "paused" }));
+  assert.ok(pz.indexOf("resumeTask('t1')") >= 0, "已暂停要能继续");
+  assert.ok(pz.indexOf("cancelTask('t1')") >= 0, "已暂停要能取消");
+
+  const fl = plain(api.detailStateActionsHtml({ task_id: "t1", status: "failed" }));
+  assert.ok(fl.indexOf("retryTask('t1')") >= 0, "失败要能重试");
+  assert.ok(fl.indexOf("removeTask") < 0, "详情面板不该提供删除（避免误触，删除留在卡片行）");
+
+  const cn = plain(api.detailStateActionsHtml({ task_id: "t1", status: "cancelled" }));
+  assert.ok(cn.indexOf("retryTask('t1')") >= 0, "已取消要能重试");
+
+  const cp = plain(api.detailStateActionsHtml({ task_id: "t1", status: "completed" }));
+  assert.ok(cp.indexOf("openFile('t1')") >= 0, "已完成要能打开文件");
+  assert.ok(cp.indexOf("openFolder('t1')") < 0, "打开文件夹由静态按钮承担，别重复");
+
+  const pd = plain(api.detailStateActionsHtml({ task_id: "t1", status: "pending" }));
+  assert.strictEqual(pd, "", "等待中的定时任务没有可用的状态动作");
+}
+
+// renderDetail 要把状态动作拼进 detailActions，静态按钮一个都不能丢
+{
+  api.renderDetail({ task_id: "t9", filename: "a.bin", status: "failed",
+                     url: "https://s/a.bin", error: "boom" });
+  assert.ok(_rendered.actions.indexOf("retryTask('t9')") >= 0,
+            "失败任务打开详情要看到重试按钮");
+  for (const needle of ["openFolder('t9')", "copyDetail('t9')",
+                        "copyLink('t9')", "closeDetail()"]) {
+    assert.ok(_rendered.actions.indexOf(needle) >= 0,
+              "详情面板原有的 " + needle + " 不能被挤掉");
+  }
+  // 成功任务：打开文件，且不该残留重试
+  api.renderDetail({ task_id: "t8", filename: "b.bin", status: "completed" });
+  assert.ok(_rendered.actions.indexOf("openFile('t8')") >= 0, "已完成要能打开");
+  assert.ok(_rendered.actions.indexOf("retryTask") < 0, "已完成不该出现重试");
 }
 
 console.log("test_web_detail: all ok");
