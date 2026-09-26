@@ -210,4 +210,34 @@ const BODIES = PANELS.map((p) => "panel" + p[0].toUpperCase() + p.slice(1));
                     "重试成功后 aria-label 要跟着文案走");
 }
 
+// ⑨ 长文件名必须在 260px 的弹窗里被截断，而不是把下载按钮顶出可见区域；
+//    截断之后还要能看全，所以 label 上要有悬浮提示。
+{
+  const html = fs.readFileSync(path.join(__dirname, "..", "extension", "popup.html"), "utf8");
+  const nameRule = html.match(/\.media-name\s*\{([^}]*)\}/);
+  assert.ok(nameRule, "popup.html 要有 .media-name 规则");
+  assert.ok(/min-width:\s*0/.test(nameRule[1]),
+            "flex 子项不把 min-width 归零，长文件名会把整行连同下载按钮一起顶出弹窗");
+  assert.ok(!/text-overflow:\s*ellipsis/.test(nameRule[1]),
+            "文字在子 div 里，省略号写在这一级不生效");
+  // 省略号得落在真正包着文字的那个元素上
+  const kid = html.match(/\.media-name\s*>\s*div\s*\{([^}]*)\}/);
+  assert.ok(kid, "省略号要写在 .media-name 的子元素上");
+  assert.ok(/text-overflow:\s*ellipsis/.test(kid[1]), "子元素要能截断");
+  assert.ok(/white-space:\s*nowrap/.test(kid[1]), "子元素要不换行");
+
+  const { sandbox } = makeSandbox((msg) =>
+    msg.action === "getTasks" ? { tasks: [], stats: {} } : undefined);
+  const row = sandbox.renderItem({ url: "https://cdn.example.com/a-very-long-name.mp4",
+                                   kind: "hls", quality_hint: "1080p", bytes: 1048576 },
+                                 0, "https://cdn.example.com/list");
+  assert.strictEqual(row.children[1].title, "a-very-long-name.mp4 · 1080p · 1.0 MB",
+                    "截断后悬浮要给出全文（名字 + 清晰度 + 大小）");
+
+  const trow = sandbox.taskRow({ task_id: "t1", filename: "超长的任务文件名.mkv",
+                                 status: "failed", error: "HTTP 403 Forbidden" });
+  assert.ok(trow.children[0].title.indexOf("超长的任务文件名.mkv") >= 0, "任务行悬浮要有文件名");
+  assert.ok(trow.children[0].title.indexOf("HTTP 403 Forbidden") >= 0, "任务行悬浮要有失败原因");
+}
+
 console.log("popup.js showPanel OK");

@@ -217,9 +217,12 @@ function taskRow(task) {
   row.className = 'media-item';
   const label = document.createElement('div');
   label.className = 'media-name';
+  const name = task.filename || '未命名任务';
   const sub = (task.error || '').trim() || (task.status === 'cancelled' ? '已取消' : '未知原因');
-  label.innerHTML = '<div>' + escapeHtml(task.filename || '未命名任务') + '</div>' +
+  label.innerHTML = '<div>' + escapeHtml(name) + '</div>' +
                     '<div class="media-sub">' + escapeHtml(sub) + '</div>';
+  // 同上：失败原因经常是一长串，截断后悬浮才能看全
+  label.title = [name, sub].join(' · ');
   row.appendChild(label);
   row.appendChild(retryBtn(task));
   return row;
@@ -283,6 +286,8 @@ function renderItem(item, idx, pageUrl) {
   label.className = 'media-name';
   label.innerHTML = '<div>' + escapeHtml(nameOf(item)) + '</div>' +
                     '<div class="media-sub">' + escapeHtml(sub) + '</div>';
+  // 名字在 260px 的弹窗里会被截断，悬浮给出全文，免得只能看到半截
+  label.title = [nameOf(item), sub].filter(Boolean).join(' · ');
   const chip = document.createElement('span');
   chip.className = 'media-kind ' + kind;
   chip.textContent = kind;

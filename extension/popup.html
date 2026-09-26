@@ -159,7 +159,11 @@ h2 { font-size: 15px; color: var(--text); }
 .media-kind.video { background: var(--green-soft); color: var(--green); }
 .media-kind.dash { background: var(--amber-soft); color: var(--amber); }
 .media-kind.mse { background: var(--red-soft); color: var(--red); }
-.media-name { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-name { flex: 1; min-width: 0; font-size: 11px; overflow: hidden; }
+/* 省略号得落在真正包着文字的那个元素上：文件名/错误信息都在子 div 里，
+   写在 .media-name 上一个字符都不截；另外 flex 子项默认 min-width:auto，
+   不显式归零的话长文件名会把整行连下载按钮一起顶出 260px 的弹窗。 */
+.media-name > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-sub { font-size: 10px; color: var(--text2); }
 .btn-dl { background: var(--green); color: var(--on-green); border: none; border-radius: 3px;
   font-size: 11px; font-weight: 700; padding: 4px 8px; cursor: pointer; }
