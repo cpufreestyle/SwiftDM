@@ -155,6 +155,28 @@ def test_no_token_regressed_to_transparent_or_black(web, desktop, theme):
         for key, value in tokens.items():
             assert value != "#000000", (side, theme, key)
 
+# 扩展 popup 的媒体类型标签色：和 Web 端同名语义的染料必须同值，
+# 否则同一个 HLS 视频在侧边栏和网页里看起来不一样。
+POPUP_KIND_TINTS = {
+    ".media-kind": ("accent-soft", "accent2"),
+    ".media-kind.video": ("green-soft", "green"),
+    ".media-kind.dash": ("amber-soft", "amber"),
+    ".media-kind.mse": ("red-soft", "red"),
+}
+
+
+def test_extension_popup_kind_chips_match_web(popup_rules, web):
+    dark = web["dark"]
+    for selector, (bg_key, fg_key) in POPUP_KIND_TINTS.items():
+        rule = popup_rules.get(selector)
+        assert rule is not None, f"popup 里找不到 {selector} 规则"
+        background, color = _decl(rule, "background"), _decl(rule, "color")
+        assert background and color, f"{selector} 缺 background/color 声明"
+        assert _colors(background) == [dark[bg_key]], (
+            selector, "background", background, bg_key, dark[bg_key])
+        assert _colors(color) == [dark[fg_key]], (
+            selector, "color", color, fg_key, dark[fg_key])
+
 
 def test_extension_popup_reuses_dark_palette(popup_rules, desktop):
     dark = desktop["dark"]
