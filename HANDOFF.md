@@ -1,6 +1,6 @@
 # SwiftDM 交接文档（Handoff）
 
-> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-23。
+> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-26。
 > 项目根目录：`D:\ai share\repo\SwiftDM\`（唯一主副本）
 > （git 仓库，远程 `cpufreestyle/SwiftDM`，GitHub）
 > 交付物/构建产物位于 `dist/SwiftDM.exe`。
@@ -76,20 +76,25 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ---
 
-## 5. 最近一轮已完成的工作（对应 commit `869b289`）
+## 5. 最近一轮已完成的工作（2026-09-26，已推送）
 
-1. **浏览器接管下载（takeover）**——用户要求：点下载链接时取消浏览器原生下载，改由 SwiftDM 多线程加速（类似 IDM）。
-   - `extension/background.js`：`onCreated` 捕获成功后 `chrome.downloads.cancel` + `erase`（清"已中断"残留），弹桌面通知；`sendToSwiftDM` 返回布尔，仅当 SwiftDM 真正接受才视为成功。
-   - `extension/manifest.json`：新增 `notifications` 权限。
-   - `app.py`：新增 `BROWSER_CAPTURE_ENABLED`，`/api/browser-capture` 关闭时返回 disabled。
-   - `main_window.py`：设置里切「浏览器监控」时同步写 `app.BROWSER_CAPTURE_ENABLED`。
-   - 扩展是 MV3 未打包 CRX，需用户在 `chrome://extensions` 开发者模式加载 `extension/` 文件夹。
+主题：逐项边缘场景补全 + 两个真实 bug 修复。每项改动均跑过
+全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后揘交。
 
-2. **下载走 Windows 系统代理**——修复外网"没速度/全部 failed"（见 3.1，改动在 `downloader.py`）。
+1. **失败通知聚合（桌面 + Web 对齐）**：多任务同时失败时不再相互覆盖，状态栏/托盘气泡/Web toast
+   各显示一条聚合文案（`main_window._fail_summary_text`，Web 端 `failSummaryText` 同算法）。
+   - 首帧不补弹历史账；重试后再失败会再提示；无变化不重复弹。
+2. **托盘菜单新增「全部暂停/全部恢复」**；托盘 tooltip 附带失败数与完成动作倒计时。
+3. **网页端完成/定时列表实时化**：SSE payload 增带 `scheduled`；新完成任务弹 toast。
+4. **桌面定时下载闭环补全**：添加对话框新增「定时开始」；卡片显示「⏰ 定时等待」 + 开始时间。
+5. **定时任务超越重启持久化**：`scheduler.schedule/unschedule/scan` 落盘到配置
+   （`config.py` 新键 `scheduled`）；启动时 `restore()` 恢复仍处于 pending 的条目，到点交给 scan() 拉起。
+6. **两个真实 bug 修复**：
+   - `downloader.resume()` 未失效 `to_dict()` 缓存：暂停后 UI/SSE 读取会缓存 `paused` 快照，
+     导致 `/api/resume` 返回旧状态（二进制冒演里间歇性复现）。
+   - 失败卡片缺失可操作提示：现在显示 `media._MEDIA_HINTS` 对应的下一步提示（与 Web 端同源）。
 
-3. **启动时不再弹出无关页面**——修复 5000 端口被占用但仍绑定的问题（见 3.2，改动在 `main.py`）。
-
-4. 任务卡片支持"打开文件夹"与拖拽文件（commit `ef91e85` 已含，但不属于当前未提交改动集，仅作背景）。
+剩余候选（需用户目视确认）：桌面浅色主题（第二套 QSS token）、扩展 popup 显示失败任务/重试。
 
 ---
 
