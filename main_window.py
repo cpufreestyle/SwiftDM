@@ -1399,8 +1399,7 @@ class MainWindow(QMainWindow):
 
                 self._prev_statuses = {tid: d["status"] for tid, d in task_dict.items()}
                 if failed_now:
-                    self.status_bar.showMessage(
-                        _fail_summary_text(failed_now), 12000)
+                    self._notify_failures(failed_now)
 
             # 移除不存在的任务卡片
             removed = set(self._cards.keys()) - set(task_dict.keys())
@@ -1484,6 +1483,13 @@ class MainWindow(QMainWindow):
             4000
         )
         self.status_bar.showMessage(f"✓ 下载完成: {name}", 5000)
+
+    def _notify_failures(self, items):
+        """新失败任务的聚合通知（托盘气泡 + 状态栏）。"""
+        summary = _fail_summary_text(items)
+        self.status_bar.showMessage(summary, 12000)
+        self.tray.showMessage("SwiftDM", summary,
+                              QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     # ==================== 操作处理 ====================
 

@@ -454,3 +454,43 @@ def test_pause_all_and_resume_all_only_touch_active_tasks(qt_app):
     assert not tasks[2].resumed
     assert mgr.saved == 2
     assert any("恢复" in m for m in host.status_bar.messages)
+
+
+def test_notify_failures_aggregates_status_and_tray(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QSystemTrayIcon
+
+    class _Bar:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, text, timeout=0):
+            self.messages.append(text)
+
+    class _Tray:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, title, body, icon, timeout):
+            self.messages.append((title, body, icon, timeout))
+
+    class _Host:
+        def __init__(self):
+            self.status_bar = _Bar()
+            self.tray = _Tray()
+
+    host = _Host()
+    items = [
+        {"task_id": "a", "filename": "a.bin", "status": "failed",
+         "error": "连接超时"},
+        {"task_id": "b", "filename": "b.bin", "status": "failed",
+         "error": "连接超时"},
+    ]
+    mw.MainWindow._notify_failures(host, items)
+    expected = "✗ 2 个任务下载失败（连接超时）"
+    assert host.status_bar.messages == [expected]
+    title, body, icon, timeout = host.tray.messages[0]
+    assert title == "SwiftDM"
+    assert body == expected
+    assert icon == QSystemTrayIcon.MessageIcon.Warning
+    assert timeout >= 4000
