@@ -29,6 +29,7 @@ _DEFAULTS = {
     "monitor_enabled": True,
     "theme": "dark",  # 桌面端界面主题：dark / light
     "auto_retry": 0,  # 失败自动重试次数（0 = 关闭），退透间隔 30s/1m/2m/5m
+    "clipboard_watch": False,  # 剪贴板监听：复制下载链接后托盘提示一键添加
     "scheduled": {},  # 定时任务表 {task_id: start_at epoch 秒}，重启后按原计划启动
 }
 

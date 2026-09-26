@@ -226,6 +226,20 @@ def _card_status_text(status, scheduled_at=None, auto_retry_at=None):
     return text
 
 
+def _clipboard_download_url(text):
+    """剪贴板里“整段就是一个下载链接”时返回它，否则 None。
+
+    只认 http/https/magnet 且不含空格/换行：用户把链接贴进聊天窗口
+    时不会误触发；一段文字里只包含链接时安静忽略（宁放过）。
+    """
+    t = (text or "").strip()
+    if not t or any(c.isspace() for c in t):
+        return None
+    if t.lower().startswith(("http://", "https://", "magnet:?")):
+        return t
+    return None
+
+
 def _overflow_plan(widths, avail, spacing):
     """窄宽度收纳方案：从尾部开始隐藏按钮，直到剩余按钮能并排放下。
 
@@ -1114,6 +1128,13 @@ class SettingsDialog(QDialog):
         self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
         form.addRow("浏览器监控:", self.monitor_check)
 
+        self.clip_check = QCheckBox("复制下载链接后拖盘提示一键添加")
+        self.clip_check.setChecked(bool(config.get("clipboard_watch")))
+        self.clip_check.setToolTip(
+            "开启后：复制 http(s)/magnet 链接时，托盘弹出提示，点击即可新建下载。"
+            "同一链接只提示一次，不会重复扔任务到任务榜")
+        form.addRow("剪贴板监听:", self.clip_check)
+
         # 代理模式：系统代理 / 直连 / 自定义（三态与 downloader 实际支持一致）
         from downloader import get_proxy_mode
         self.proxy_combo = QComboBox()
@@ -1247,6 +1268,7 @@ class SettingsDialog(QDialog):
             "dir": self.dir_edit.text().strip(),
             "segments": self.segments_spin.value(),
             "monitor": self.monitor_check.currentIndex() == 0,
+            "clipboard_watch": self.clip_check.isChecked(),
             "proxy_mode": proxy_mode,
             "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
             "auto_retry": self.auto_retry_spin.value(),
@@ -1388,6 +1410,13 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(500)
+
+        # 剪贴板监听（默认关闭，设置里开启）：复制下载链接后拖盘提示
+        self._clip_last = None      # 上一次处理过的剪贴板文本（去重）
+        self._clip_pending = None   # 待用户点击拖盘确认的 URL
+        self._clip_timer = QTimer(self)
+        self._clip_timer.timeout.connect(self._check_clipboard)
+        self._clip_timer.start(1000)
 
         # 初始加载
         self._refresh()
@@ -1682,6 +1711,7 @@ class MainWindow(QMainWindow):
 
         self.tray.setContextMenu(tray_menu)
         self.tray.activated.connect(self._tray_activated)
+        self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
 
     def _update_tray_icon(self, active, failed):
@@ -1711,6 +1741,41 @@ class MainWindow(QMainWindow):
         """获取全局下载管理器（延迟导入避免循环引用）"""
         from downloader import manager
         return manager
+
+    def _check_clipboard(self):
+        """剪贴板监听：新出现的下载链接用拖盘提示，点击拖盘才添加。"""
+        import config
+        if not config.get("clipboard_watch"):
+            return
+        try:
+            text = QApplication.clipboard().text()
+        except Exception:
+            return
+        url = _clipboard_download_url(text)
+        if not url or url == self._clip_last:
+            return
+        self._clip_last = url
+        # 任务榜里已有相同链接（否则每次复制都会弹提示）
+        try:
+            mgr = self._get_manager()
+            if any(t.url == url for t in mgr.get_all_tasks()):
+                return
+        except Exception:
+            pass
+        self._clip_pending = url
+        try:
+            self.tray.showMessage(
+                "SwiftDM", f"检测到下载链接，点击添加: {url[:60]}",
+                QSystemTrayIcon.MessageIcon.Information, 6000)
+        except Exception:
+            pass
+
+    def _tray_message_clicked(self):
+        """拖盘气泡点击：添加待确认的剪贴板链接。"""
+        url = self._clip_pending
+        self._clip_pending = None
+        if url:
+            self._create_and_start(url)
 
     def _refresh(self):
         """定时刷新 UI"""
@@ -2341,6 +2406,8 @@ class MainWindow(QMainWindow):
             config.set("rate_limit", rl)
             # 失败自动重试：管理器按任务失败时实时读取，修改当即生效
             config.set("auto_retry", settings.get("auto_retry", 0))
+            # 剪贴板监听：关闭时不再提示；开启时下一个节拍生效
+            config.set("clipboard_watch", settings.get("clipboard_watch", False))
             # 「全部下载完成后」动作：应用并持久化（与 Web 端共用 scheduler 单例，重启后仍生效）
             from scheduler import scheduler as _dl_scheduler
             _dl_scheduler.set_finish_action(settings.get("finish_action", "none"))

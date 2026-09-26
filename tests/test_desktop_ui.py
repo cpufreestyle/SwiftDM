@@ -361,7 +361,7 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
 
     by_title = {g.title(): row_labels(g) for g in groups}
     assert by_title["下载"] == {"下载目录:", "下载线程数:", "下载限速:", "失败自动重试:"}
-    assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:"}
+    assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:", "剪贴板监听:"}
     assert by_title["完成后"] == {"全部下载完成后:", "完成提示音:"}
     assert by_title["外观"] == {"界面主题:"}
 
@@ -372,7 +372,8 @@ def test_settings_dialog_get_settings_still_complete(qt_app):
     dlg = mw.SettingsDialog()
     settings = dlg.get_settings()
     for key in ("dir", "segments", "monitor", "proxy_mode",
-                "rate_limit", "auto_retry", "finish_action", "notify_sound", "theme"):
+                "rate_limit", "auto_retry", "clipboard_watch",
+                "finish_action", "notify_sound", "theme"):
         assert key in settings, key
 
 
@@ -1023,3 +1024,111 @@ def test_action_buttons_overflow_into_more_menu(qt_app, monkeypatch):
     card.resize(900, 140)
     assert card._hidden_actions == []
     assert not card._more_btn.isVisible()
+
+
+def test_clipboard_download_url_only_accepts_standalone_links():
+    import main_window as mw
+
+    assert mw._clipboard_download_url("https://a.com/x.zip") == "https://a.com/x.zip"
+    assert mw._clipboard_download_url("  http://a.com/y  ") == "http://a.com/y"
+    assert mw._clipboard_download_url("magnet:?xt=urn:btih:ABC") == "magnet:?xt=urn:btih:ABC"
+    # 非下载链接/多行/整段文字：不触发，避免把用户复制的普通文本当任务
+    assert mw._clipboard_download_url("ftp://a.com/x") is None
+    assert mw._clipboard_download_url("www.a.com") is None
+    assert mw._clipboard_download_url("https://a.com/a https://a.com/b") is None
+    assert mw._clipboard_download_url("来自 https://a.com/x.zip 的分享") is None
+    assert mw._clipboard_download_url("") is None
+    assert mw._clipboard_download_url(None) is None
+
+
+def test_check_clipboard_prompts_once_per_link(qt_app, monkeypatch):
+    """复制链接 → 拖盘提示一次 → 点击才新建；重复链接与已存在任务不扔提示。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QApplication
+
+    class _Tray:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, title, text, icon, ms):
+            self.messages.append(text)
+
+    class _Mgr:
+        def __init__(self, tasks):
+            self._tasks = tasks
+
+        def get_all_tasks(self):
+            return self._tasks
+
+    class _Host:
+        def __init__(self, tasks=()):
+            self._clip_last = None
+            self._clip_pending = None
+            self.tray = _Tray()
+            self._mgr = _Mgr(list(tasks))
+            self.created = []
+
+        def _get_manager(self):
+            return self._mgr
+
+        def _create_and_start(self, url):
+            self.created.append(url)
+            return None
+
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "get",
+                        lambda key: True if key == "clipboard_watch" else None)
+
+    host = _Host()
+    QApplication.clipboard().setText("https://a.com/x.zip")
+    mw.MainWindow._check_clipboard(host)
+    assert host._clip_pending == "https://a.com/x.zip"
+    assert len(host.tray.messages) == 1
+    assert "https://a.com/x.zip" in host.tray.messages[0]
+
+    # 同一链接不重复提示
+    mw.MainWindow._check_clipboard(host)
+    assert len(host.tray.messages) == 1
+
+    # 点击拖盘气泡 → 新建下载（不自动下载，由用户确认）
+    mw.MainWindow._tray_message_clicked(host)
+    assert host.created == ["https://a.com/x.zip"]
+    assert host._clip_pending is None
+
+    # 任务榜已有相同链接：不再提示
+    dup = type("T", (), {"url": "https://a.com/x.zip"})()
+    host2 = _Host([dup])
+    mw.MainWindow._check_clipboard(host2)
+    assert host2._clip_pending is None
+    assert host2.tray.messages == []
+
+    # 普通文本不触发
+    host3 = _Host()
+    QApplication.clipboard().setText("今天天气不错")
+    mw.MainWindow._check_clipboard(host3)
+    assert host3._clip_pending is None
+    assert host3.tray.messages == []
+
+
+def test_check_clipboard_noop_when_disabled(qt_app, monkeypatch):
+    import main_window as mw
+    from PyQt6.QtWidgets import QApplication
+
+    class _Host:
+        _clip_last = None
+        _clip_pending = None
+
+        class tray:
+            @staticmethod
+            def showMessage(*a, **k):
+                raise AssertionError("关闭时不应弹提示")
+
+        def _get_manager(self):
+            raise AssertionError("关闭时不应查任务榜")
+
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "get",
+                        lambda key: False if key == "clipboard_watch" else None)
+    QApplication.clipboard().setText("https://a.com/x.zip")
+    mw.MainWindow._check_clipboard(_Host())
+    assert _Host._clip_pending is None
