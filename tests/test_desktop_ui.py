@@ -699,3 +699,74 @@ def test_add_dialog_follows_theme(qt_app):
     dlg = mw.AddDialog(theme="light")
     assert mw.THEMES["light"]["surface"] in dlg.styleSheet()
     assert dlg.get_data()["start_at"] is None
+
+
+def test_torrent_paths_from_mime_collects_local_seeds(qt_app):
+    import main_window as mw
+    m = _mime(urls=[QUrl.fromLocalFile("D:/dl/a.torrent"),
+                    QUrl.fromLocalFile("D:/dl/notes.txt"),
+                    QUrl("https://site/b.torrent")],
+              text="https://site/c.zip")
+    assert mw.MainWindow._torrent_paths_from_mime(m) == ["D:/dl/a.torrent"]
+    # 大小写不敏感（Windows 上常见 .TORRENT）
+    m2 = _mime(urls=[QUrl.fromLocalFile("D:/dl/D.TORRENT")])
+    assert mw.MainWindow._torrent_paths_from_mime(m2) == ["D:/dl/D.TORRENT"]
+    # 没有本地种子时为空
+    assert mw.MainWindow._torrent_paths_from_mime(_mime(text="magnet:?xt=urn:btih:ABC")) == []
+    # http 的 .torrent 仍走链接通道，不会重复计一次
+    m3 = _mime(urls=[QUrl("https://site/b.torrent")])
+    assert mw.MainWindow._torrent_paths_from_mime(m3) == []
+    assert mw.MainWindow._urls_from_mime(m3) == ["https://site/b.torrent"]
+
+
+def test_drop_event_adds_local_torrent_files(qt_app):
+    """拖入「链接 + 本地种子」两种内容都要建成任务。"""
+    import main_window as mw
+
+    class _Host:
+        # 复用真实静态方法：_urls_from_mime / _torrent_paths_from_mime
+        _urls_from_mime = staticmethod(mw.MainWindow._urls_from_mime)
+        _torrent_paths_from_mime = staticmethod(mw.MainWindow._torrent_paths_from_mime)
+
+        def __init__(self):
+            self.created = []
+
+        def _create_and_start(self, url, **kw):
+            self.created.append(url)
+
+        class logger:
+            @staticmethod
+            def exception(msg):
+                pass
+
+        class status_bar:
+            @staticmethod
+            def showMessage(msg, timeout=0):
+                pass
+
+    class _Event:
+        def __init__(self, mime):
+            self._mime = mime
+            self.accepted = False
+
+        def mimeData(self):
+            return self._mime
+
+        def acceptProposedAction(self):
+            self.accepted = True
+
+    host = _Host()
+    mime = _mime(urls=[QUrl("https://site/a.zip"),
+                       QUrl.fromLocalFile("D:/dl/seed.torrent")])
+    mw.MainWindow.dropEvent(host, _Event(mime))
+    assert host.created == ["https://site/a.zip", "D:/dl/seed.torrent"]
+
+    # 只有种子文件时也能用
+    host2 = _Host()
+    mw.MainWindow.dropEvent(host2, _Event(_mime(urls=[QUrl.fromLocalFile("D:/dl/only.torrent")])))
+    assert host2.created == ["D:/dl/only.torrent"]
+    # 「什么都没有」的分支会走 super().dropEvent()，需要真实 QWidget，
+    # 这里只保证拖入普通文本/非种子文件时两个提取函数都返回空（交给默认行为）
+    plain = _mime(urls=[QUrl.fromLocalFile("D:/dl/x.txt")], text="hello")
+    assert mw.MainWindow._urls_from_mime(plain) == []
+    assert mw.MainWindow._torrent_paths_from_mime(plain) == []

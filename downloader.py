@@ -873,11 +873,14 @@ class DownloadManager:
 
     @staticmethod
     def _is_torrent_url(url):
-        """判断是否为 BT/PT 下载链接（磁力链接或 .torrent 文件）。"""
+        """判断是否为 BT/PT 下载链接（磁力链接、.torrent 文件或本地种子路径）。"""
         u = (url or "").strip().lower()
         if u.startswith("magnet:"):
             return True
         if "btih:" in u:
+            return True
+        # 本地 .torrent 路径（拖文件进窗口）：无协议前缀且以 .torrent 结尾
+        if u.endswith(".torrent") and "://" not in u:
             return True
         # 以 .torrent 结尾的 http(s) 链接（如 PT 种子下载地址）
         if (u.startswith("http://") or u.startswith("https://")) and u.endswith(".torrent"):

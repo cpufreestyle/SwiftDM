@@ -79,11 +79,28 @@ def _get_session():
         return _session
 
 
+def _is_local_torrent_path(url):
+    """本地 .torrent 文件路径（区别于 http(s) 种子地址 / 磁力链接）。
+
+    拖文件进窗口时 Qt 给的是本地路径，形如 C:/x/y.torrent 或 /tmp/y.torrent。
+    """
+    u = (url or "").strip()
+    if not u or u.lower().startswith(("magnet:", "http://", "https://", "ftp://")):
+        return False
+    return u.lower().endswith(".torrent")
+
+
 def _fetch_torrent_bytes(url):
-    """下载 .torrent 文件字节（走系统/自定义代理，与下载引擎一致）。
+    """取 .torrent 文件字节：本地路径直接读盘，http(s) 走代理下载。
 
     PT 站点通常要求通过代理访问，这里继承 downloader 的代理模式判断。
     """
+    if _is_local_torrent_path(url):
+        path = os.path.abspath(os.path.expanduser(url.strip()))
+        if not os.path.isfile(path):
+            raise Exception(f"种子文件不存在: {path}")
+        with open(path, "rb") as f:
+            return f.read()
     from downloader import get_proxy_mode
     mode = get_proxy_mode()
     proxies = None
@@ -124,7 +141,14 @@ class TorrentTask:
         self.speed = 0.0
         self.eta = ""
         self.error = ""
-        self.filename = filename or f"magnet_{_hash_from_magnet(url)[:8]}"
+        # filename 未显式指定时算「自动命名」：元数据就绪后要换成 torrent 里的真实名称
+        self._filename_auto = not filename
+        if filename:
+            self.filename = filename
+        elif _is_local_torrent_path(url):
+            self.filename = os.path.basename(url.strip())
+        else:
+            self.filename = f"magnet_{_hash_from_magnet(url)[:8]}"
         self.filepath = os.path.join(save_dir, self.filename)
 
         self.protocol = "torrent"
@@ -168,7 +192,7 @@ class TorrentTask:
                     data = _fetch_torrent_bytes(self.url)
                     ti = lt.torrent_info(data)
                     name = ti.name() or self.filename
-                    if not self.filename or self.filename.startswith("magnet_"):
+                    if self._filename_auto or self.filename.startswith("magnet_"):
                         self.filename = name
                     self.filepath = os.path.join(self.save_dir, self.filename)
                     self.segments = max(ti.num_files(), 1)

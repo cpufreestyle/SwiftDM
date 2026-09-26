@@ -99,7 +99,14 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      改为与「任务」页同一口径：失败 + 已取消（两者都可一键重试）。
    - `loadTasks` 原先用「参数为 undefined 就重新请求」的实现，响应为空时会无限递归，
      现改为 `loadTasks()`（取数）→ `renderTasks(res)`（渲染）两层，掉线只渲染提示、不再递归。
-6. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
+6. **本地 .torrent 种子支持**（同一轮追加）：此前只能在「新建下载」里粘 magnet 或
+   http(s) 种子地址，本地种子文件无处可加。现在可以把 `.torrent` 文件直接拖进窗口：
+   - `downloader._is_torrent_url` 认出「无协议前缀且以 .torrent 结尾」的本地路径，路由到 BT 引擎；
+   - `torrent._is_local_torrent_path()` + `_fetch_torrent_bytes()` 本地路径直读，文件不存在时报明确错误；
+   - `TorrentTask` 本地种子先用种子文件名占位，元数据就绪后再换成 torrent 里的真实内容名
+     （新增 `_filename_auto`，用户显式命名仍优先）；
+   - `main_window._torrent_paths_from_mime()` + `dragEnterEvent/dropEvent` 支持「链接 + 种子」混拖。
+7. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
    设置「外观 → 界面主题」、`config.py` 新键 `theme`）。
 
 剩余候选：无（待用户反馈后再定）。

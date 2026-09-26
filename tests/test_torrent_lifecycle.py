@@ -214,3 +214,53 @@ def test_tick_reports_progress_and_completion(tmp_path):
     t._handle = _FakeHandle(finished=True)
     t._tick()
     assert t.status == "completed" and t.progress == 100.0
+
+
+def test_is_local_torrent_path_rejects_urls_and_magnets():
+    assert torrent._is_local_torrent_path("D:/dl/a.torrent")
+    assert torrent._is_local_torrent_path("/tmp/a.TORRENT")
+    assert not torrent._is_local_torrent_path("magnet:?xt=urn:btih:" + "0" * 40)
+    assert not torrent._is_local_torrent_path("https://site/a.torrent")
+    assert not torrent._is_local_torrent_path("http://site/a.torrent")
+    assert not torrent._is_local_torrent_path("D:/dl/a.zip")
+    assert not torrent._is_local_torrent_path("")
+    assert not torrent._is_local_torrent_path(None)
+
+
+def test_fetch_torrent_bytes_reads_local_file(tmp_path):
+    seed = tmp_path / "a.torrent"
+    seed.write_bytes(b"d8:announce3:foo4:infod6:lengthi1eee")
+    assert torrent._fetch_torrent_bytes(str(seed)) == b"d8:announce3:foo4:infod6:lengthi1eee"
+    # 文件不存在时给出明确错误，而不是把路径当 URL 请求
+    with pytest.raises(Exception) as err:
+        torrent._fetch_torrent_bytes(str(tmp_path / "missing.torrent"))
+    assert "不存在" in str(err.value)
+
+
+def test_local_torrent_task_uses_seed_filename_until_metadata(tmp_path):
+    """本地种子：先用种子文件名占位，元数据就绪后再换成真实内容名。"""
+    seed = tmp_path / "My.Show.S01.torrent"
+    seed.write_bytes(b"x")
+    t = torrent.TorrentTask("bt_local", str(seed), str(tmp_path / "out"))
+    assert t.filename == "My.Show.S01.torrent"
+    assert t._filename_auto is True
+    # 用户显式命名时不要被元数据覆盖
+    named = torrent.TorrentTask("bt_named", str(seed), str(tmp_path / "out"), "自定义名")
+    assert named.filename == "自定义名"
+    assert named._filename_auto is False
+    # 磁力链接保持旧行为
+    mag = torrent.TorrentTask("bt_mag", "magnet:?xt=urn:btih:" + "a" * 40, str(tmp_path / "out"))
+    assert mag.filename.startswith("magnet_")
+
+
+def test_manager_routes_local_torrent_path_to_torrent_task(tmp_path):
+    """create_task 对本地 .torrent 路径必须走 BT 引擎（而不是去解析成 http）。"""
+    from downloader import manager, DownloadTask
+    seed = tmp_path / "route.torrent"
+    seed.write_bytes(b"x")
+    t = manager.create_task(str(seed), str(tmp_path / "out"))
+    assert type(t).__name__ == "TorrentTask"
+    assert t.filename == "route.torrent"
+    # 普通直链仍然走 DownloadTask（没被这次改动带偏）
+    http = manager.create_task("https://example.com/a.bin", str(tmp_path / "out"))
+    assert isinstance(http, DownloadTask)

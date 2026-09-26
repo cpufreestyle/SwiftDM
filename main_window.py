@@ -2026,6 +2026,24 @@ class MainWindow(QMainWindow):
         return task
 
     @staticmethod
+    def _torrent_paths_from_mime(mime):
+        """从拖入数据提取本地 .torrent 文件路径（拖种子文件进窗口即下载）。"""
+        out = []
+        try:
+            if mime.hasUrls():
+                for u in mime.urls():
+                    if (u.isLocalFile() and u.toLocalFile().lower().endswith(".torrent")):
+                        out.append(u.toLocalFile())
+        except Exception:
+            pass
+        seen, res = set(), []
+        for p in out:
+            if p and p not in seen:
+                seen.add(p)
+                res.append(p)
+        return res
+
+    @staticmethod
     def _urls_from_mime(mime):
         """从拖入数据提取 http(s)/magnet 链接（忽略本地文件）。"""
         out = []
@@ -2051,14 +2069,17 @@ class MainWindow(QMainWindow):
         return res
 
     def dragEnterEvent(self, event):
-        if self._urls_from_mime(event.mimeData()):
+        if (self._urls_from_mime(event.mimeData())
+                or self._torrent_paths_from_mime(event.mimeData())):
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dropEvent(self, event):
-        urls = self._urls_from_mime(event.mimeData())
-        if not urls:
+        mime = event.mimeData()
+        urls = self._urls_from_mime(mime)
+        torrents = self._torrent_paths_from_mime(mime)
+        if not urls and not torrents:
             super().dropEvent(event)
             return
         event.acceptProposedAction()
@@ -2070,6 +2091,13 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.exception("拖入添加下载失败")
                 self.status_bar.showMessage(f"添加失败: {e}", 8000)
+        for path in torrents:
+            try:
+                self._create_and_start(path)
+                added += 1
+            except Exception as e:
+                self.logger.exception("拖入种子文件失败")
+                self.status_bar.showMessage(f"添加种子失败: {e}", 8000)
         if added > 1:
             self.status_bar.showMessage(f"已添加 {added} 个下载任务")
 
