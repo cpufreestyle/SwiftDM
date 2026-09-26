@@ -182,6 +182,32 @@ def test_web_has_batch_copy_and_export(page):
     assert "\\uFEFF" in page        # BOM：Excel 直接打开中文不乱码
 
 
+def test_web_has_multi_select_batch(page):
+    # 选择执行条默认隐藢，不干扰日常界面
+    assert 'id="selectBar" hidden' in page
+    assert 'id="selectCount"' in page
+    for bid in ("selPause", "selResume", "selRetry", "selRemove"):
+        assert f'id="{bid}"' in page, bid
+    # 每张卡片带复选框，状态跨刷新保持
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert 'class="task-pick-box"' in card
+    assert "_selected.has(task.task_id)" in card
+    assert "onchange=\"togglePick(this)\"" in card
+    # 批量逻辑：按状态过滤 + 清理失效选择 + 删除要确认
+    body = page[page.index("const BATCH_STATUS"):]
+    body = body[:body.index("async function copyAllLinks")]
+    assert 'pause: ["downloading"]' in body
+    assert 'resume: ["paused"]' in body
+    assert 'retry: ["failed", "cancelled"]' in body
+    assert "pruneSelection" in body and "updateSelectBar" in body
+    assert "confirm(" in body and "/api/remove/" in body
+    # 每次渲染后都要剪枝 + 刷新执行条（否则空列表时选择不会清理）
+    rt = page[page.index("function renderTasks"):]
+    rt = rt[:rt.index("function createEmptyState")]
+    assert "pruneSelection();" in rt and "updateSelectBar();" in rt
+
+
 def test_web_has_task_sorting(page):
     assert 'onchange="setSort(this.value)"' in page
     assert "function sortTasks" in page

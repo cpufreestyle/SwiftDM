@@ -220,6 +220,23 @@ body {
 
 .batch-actions { display: flex; gap: 6px; }
 
+/* ===== 多选批量操作 ===== */
+.select-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.select-bar[hidden] { display: none; }
+.select-bar .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.select-count { font-size: 13px; color: var(--text2); white-space: nowrap; }
+.task-pick { display: flex; align-items: center; flex-shrink: 0; padding-top: 2px; }
+.task-pick-box { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+
 /* ===== 下载列表 ===== */
 .task-list {
   display: flex;
@@ -618,6 +635,16 @@ body {
       <button class="btn btn-danger btn-sm" onclick="clearCompleted()">&#128465; 清除已完成</button>
     </div>
   </div>
+  <div class="select-bar" id="selectBar" hidden>
+    <span class="select-count" id="selectCount">已选 0 项</span>
+    <div class="batch-actions">
+      <button class="btn btn-secondary btn-sm" id="selPause" onclick="batchAction('pause')">&#10074;&#10074; 暂停</button>
+      <button class="btn btn-secondary btn-sm" id="selResume" onclick="batchAction('resume')">&#9654; 继续</button>
+      <button class="btn btn-secondary btn-sm" id="selRetry" onclick="batchAction('retry')">&#8635; 重试</button>
+      <button class="btn btn-danger btn-sm" id="selRemove" onclick="batchAction('remove')">&#128465; 删除</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearSelection()">取消选择</button>
+    </div>
+  </div>
 
   <!-- 状态分段过滤 -->
   <div class="filter-bar" id="filterBar">
@@ -888,6 +915,68 @@ function visibleTasks() {
   return sortTasks(_lastTasks.filter(t => matchFilter(t) && matchSearch(t)));
 }
 
+// ===== 多选批量操作（与桌面端一致）=====
+const BATCH_STATUS = {
+  pause: ["downloading"],
+  resume: ["paused"],
+  retry: ["failed", "cancelled"],
+  remove: null,   // 不限状态
+};
+
+function batchTargets(action) {
+  const allowed = BATCH_STATUS[action];
+  const ids = [..._selected];
+  if (!allowed) return ids;
+  return ids.filter(id => allowed.includes((_tasksById[id] || {}).status));
+}
+
+function togglePick(cb) {
+  const id = cb.dataset.id;
+  if (cb.checked) _selected.add(id); else _selected.delete(id);
+  updateSelectBar();
+}
+
+function clearSelection() {
+  _selected.clear();
+  document.querySelectorAll(".task-pick-box").forEach(cb => { cb.checked = false; });
+  updateSelectBar();
+}
+
+function pruneSelection() {
+  const alive = new Set(_lastTasks.map(t => t.task_id));
+  _selected.forEach(id => { if (!alive.has(id)) _selected.delete(id); });
+}
+
+function updateSelectBar() {
+  const bar = document.getElementById("selectBar");
+  if (!bar) return;
+  const n = _selected.size;
+  document.getElementById("selectCount").textContent = `已选 ${n} 项`;
+  bar.hidden = n === 0;
+  ["pause", "resume", "retry"].forEach(a => {
+    const btn = document.getElementById("sel" + a[0].toUpperCase() + a.slice(1));
+    if (btn) btn.disabled = batchTargets(a).length === 0;
+  });
+}
+
+async function batchAction(action) {
+  const targets = batchTargets(action);
+  if (!targets.length) return;
+  if (action === "remove" && !confirm(`确定删除选中的 ${targets.length} 个任务吗？`)) return;
+  let ok = 0;
+  for (const id of targets) {
+    const isRemove = action === "remove";
+    const res = await api(isRemove ? `/api/remove/${id}` : `/api/${action}/${id}`,
+                          { method: isRemove ? "DELETE" : "POST" });
+    if (res && res.success !== false) ok++;
+  }
+  const label = { pause: "暂停", resume: "继续", retry: "重试", remove: "删除" }[action] || action;
+  showToast(`已${label} ${ok} 个任务`);
+  clearSelection();
+  const res = await api("/api/tasks");   // SSE 有延迟，主动拉一次保除即反馈
+  if (res && res.tasks) renderTasks(res.tasks);
+}
+
 async function copyAllLinks() {
   const seen = {}, urls = [];
   visibleTasks().forEach(t => {
@@ -1035,6 +1124,7 @@ function syncFilterButtons(){ document.querySelectorAll(".filter-btn").forEach(b
  syncFilterButtons();
 let _lastTasks = [];
 let _tasksById = {};
+let _selected = new Set();   // 多选的 task_id（跨刷新保持）
 
 function matchFilter(t) {
   switch (currentFilter) {
@@ -1137,6 +1227,8 @@ function renderTasks(tasks) {
   if (op) op.textContent = _tt > 0 ? `${formatSize(_dl)} / ${formatSize(_tt)} (${Math.floor(_dl * 100 / _tt)}%)` : "--";
 
   const container = document.getElementById("taskList");
+  pruneSelection();
+  updateSelectBar();
 
   if (tasks.length === 0) {
     container.innerHTML = "";
@@ -1241,6 +1333,7 @@ function createTaskCard(task) {
 
   card.innerHTML = `
     <div class="task-top">
+      <label class="task-pick" title="选择任务"><input type="checkbox" class="task-pick-box" data-id="${task.task_id}"${_selected.has(task.task_id) ? " checked" : ""} onchange="togglePick(this)"></label>
       <div class="task-info">
         <div class="task-filename" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
         <div class="task-url" title="${escapeHtml(task.url)}">${escapeHtml(task.url)}</div>
