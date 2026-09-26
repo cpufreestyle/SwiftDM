@@ -881,6 +881,9 @@ function renderTasks(tasks) {
   _tasksById = {};
   tasks.forEach(t => { _tasksById[t.task_id] = t; });
   updateFilterCounts(tasks);
+  const _dlCount = tasks.filter(t => t.status === "downloading").length;
+  const _spSum = tasks.reduce((a, t) => a + (t.speed || 0), 0);
+  document.title = _dlCount > 0 ? (formatSpeed(_spSum) + " · " + _dlCount + " 个下载中 - SwiftDM") : "SwiftDM - 高速下载管理器";
 
   // 总体进度（对已知体积的任务聚合）
   let _dl = 0, _tt = 0;

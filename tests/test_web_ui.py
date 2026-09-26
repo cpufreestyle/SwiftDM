@@ -80,3 +80,9 @@ def test_open_folder_endpoint_exists():
     r = client.post("/api/open_folder/dl_does_not_exist")
     assert r.status_code == 404
     assert r.get_json().get("success") is False
+
+
+def test_document_title_reflects_activity(page):
+    assert "document.title" in page and "个下载中" in page
+    assert "SwiftDM - 高速下载管理器" in page
+

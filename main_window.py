@@ -35,6 +35,20 @@ def format_speed(bps):
     return format_size(bps) + "/s"
 
 
+def _status_title(active, total_speed, total):
+    """When downloads are active, surface speed + count in the title bar."""
+    if active > 0:
+        return f"↓ {format_speed(total_speed)} · {active} 个下载中 - SwiftDM"
+    return "SwiftDM - 高速下载管理器"
+
+
+def _tray_tip(active, total_speed, total):
+    """Tray tooltip: live speed and running count."""
+    if active > 0:
+        return f"SwiftDM · ↓{format_speed(total_speed)} · 下载中 {active}/{total}"
+    return "SwiftDM - 下载管理器"
+
+
 def open_in_system(path):
     """跨平台用系统默认程序打开文件/目录（os.startfile 仅 Windows 可用）。"""
     try:
@@ -930,6 +944,8 @@ class MainWindow(QMainWindow):
                 f"下载中: {stats['active']}  |  已完成: {stats['completed']}  |  "
                 f"失败: {stats['failed']}  |  暂停: {stats['paused']}  |  总计: {stats['total']}"
             )
+            self.setWindowTitle(_status_title(stats["active"], stats["total_speed"], stats["total"]))
+            self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"], stats["total"]))
             self._update_overall(tasks)
 
             if not tasks:

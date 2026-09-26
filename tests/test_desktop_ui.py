@@ -92,3 +92,13 @@ def test_keyboard_shortcuts_registered(qt_app):
     mw.MainWindow._setup_shortcuts(host)
     seqs = sorted(seq for seq, _ in host._shortcuts)
     assert "Ctrl+N" in seqs and "Ctrl+F" in seqs, seqs
+
+
+def test_title_and_tray_helpers_surface_activity():
+    import main_window as mw
+    assert mw._status_title(0, 0, 5) == "SwiftDM - 高速下载管理器"
+    active = mw._status_title(2, 1536, 8)
+    assert "下载中" in active and "2" in active and "↓" in active
+    assert mw._tray_tip(0, 0, 5) == "SwiftDM - 下载管理器"
+    assert "下载中 2/8" in mw._tray_tip(2, 1536, 8)
+
