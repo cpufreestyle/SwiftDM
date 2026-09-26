@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import logging
+import re
 import subprocess
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QSystemTrayIcon, QMenu, QApplication,
     QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
+    QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread, QMimeData, QUrl
@@ -183,6 +185,13 @@ QHeaderView::section {
     color: #8888a0;
     font-weight: 600;
 }
+QPushButton#filterBtn {
+    background:#1a1a26; border:1px solid #2a2a3a; border-radius:13px;
+    padding:4px 14px; color:#8888a0; font-size:12px; font-weight:600;
+}
+QPushButton#filterBtn:hover { color:#e0e0e8; border-color:#3a3a52; }
+QPushButton#filterBtn:checked { background:#6c5ce7; border-color:#6c5ce7; color:#fff; }
+QMenu::separator { height:1px; background:#2a2a3a; margin:4px 10px; }
 """
 
 
@@ -196,6 +205,7 @@ class TaskCard(QFrame):
         self.filepath = task_data.get("filepath", "")
         self._drag_start_pos = None
         self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
+        self.url = task_data.get("url", "")
         self.setObjectName("taskCard")
         self.setStyleSheet("""
             TaskCard {
@@ -418,6 +428,29 @@ class TaskCard(QFrame):
         else:
             self.error_label.hide()
             self.setMaximumHeight(self._base_max_height)
+
+    def contextMenuEvent(self, event):
+        """右键菜单：按状态提供 暂停/继续/重试/打开/复制链接/删除。"""
+        status = getattr(self, "_built_status", "pending")
+        menu = QMenu(self)
+
+        def add(text, action):
+            menu.addAction(text, lambda: self.action_triggered.emit(action, self.task_id))
+
+        if status == "downloading":
+            add("暂停", "pause")
+        elif status == "paused":
+            add("继续", "resume")
+        elif status == "completed":
+            add("打开文件", "open")
+            add("打开文件夹", "open_folder")
+        elif status in ("failed", "cancelled"):
+            add("重试", "retry")
+        if self.url:
+            add("复制链接", "copy_link")
+        menu.addSeparator()
+        add("删除", "remove")
+        menu.exec(event.globalPos())
 
     def update_data(self, task_data):
         """更新卡片显示"""
@@ -650,6 +683,7 @@ class MainWindow(QMainWindow):
 
         # 暗色主题
         self.setStyleSheet(QSS)
+        self.setAcceptDrops(True)  # 支持把链接/磁力拖入窗口即新建下载
 
         self._setup_log_panel()
         self._setup_toolbar()
@@ -735,6 +769,10 @@ class MainWindow(QMainWindow):
         self.total_speed_label.setObjectName("speedLabel")
         header_layout.addWidget(self.total_speed_label)
 
+        self.overall_label = QLabel("")
+        self.overall_label.setStyleSheet("font-size: 12px; color:#8888a0; margin-left: 14px;")
+        header_layout.addWidget(self.overall_label)
+
         header_layout.addStretch()
 
         self.stats_label = QLabel("下载中: 0  |  已完成: 0  |  失败: 0  |  总计: 0")
@@ -742,6 +780,30 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.stats_label)
 
         layout.addWidget(header)
+
+        # 分类过滤：学习主流下载器的状态分段，pill 样式切换
+        filter_bar = QWidget()
+        filter_bar.setStyleSheet("background: transparent;")
+        fb = QHBoxLayout(filter_bar)
+        fb.setContentsMargins(16, 8, 16, 4)
+        fb.setSpacing(8)
+        self._filter = "all"
+        self._filter_group = QButtonGroup(self)
+        self._filter_group.setExclusive(True)
+        self._filter_btns = {}
+        for _key, _label in [("all", "全部"), ("active", "进行中"),
+                             ("completed", "已完成"), ("failed", "失败")]:
+            _b = QPushButton(_label)
+            _b.setObjectName("filterBtn")
+            _b.setCheckable(True)
+            _b.setCursor(Qt.CursorShape.PointingHandCursor)
+            _b.clicked.connect(lambda _=False, k=_key: self._set_filter(k))
+            self._filter_group.addButton(_b)
+            self._filter_btns[_key] = _b
+            fb.addWidget(_b)
+        fb.addStretch(1)
+        self._filter_btns["all"].setChecked(True)
+        layout.addWidget(filter_bar)
 
         # 滚动区域 — 任务列表
         self.scroll = QScrollArea()
@@ -856,15 +918,18 @@ class MainWindow(QMainWindow):
                 f"下载中: {stats['active']}  |  已完成: {stats['completed']}  |  "
                 f"失败: {stats['failed']}  |  暂停: {stats['paused']}  |  总计: {stats['total']}"
             )
+            self._update_overall(tasks)
 
             if not tasks:
-                self.empty_label.show()
+                self._update_filter_counts({})
                 # 清理所有卡片
                 for card in list(self._cards.values()):
                     self.task_layout.removeWidget(card)
                     card.deleteLater()
                 self._cards.clear()
                 self._prev_statuses.clear()
+                self.empty_label.setText(self._filter_hint())
+                self.empty_label.show()
                 return
 
             self.empty_label.hide()
@@ -922,6 +987,20 @@ class MainWindow(QMainWindow):
                     # 插入到布局中（在 stretch 之前）
                     self.task_layout.insertWidget(self.task_layout.count() - 1, card)
 
+            # 分类过滤：只显示当前分段可见的卡片
+            self._update_filter_counts(task_dict)
+            _visible = 0
+            for _tid, _card in self._cards.items():
+                _show = self._match_filter(task_dict.get(_tid, {}))
+                _card.setVisible(_show)
+                if _show:
+                    _visible += 1
+            if _visible == 0:
+                self.empty_label.setText(self._filter_hint())
+                self.empty_label.show()
+            else:
+                self.empty_label.hide()
+
         except Exception as e:
             self.logger.exception("刷新任务列表失败")
 
@@ -946,16 +1025,9 @@ class MainWindow(QMainWindow):
             if not data["url"]:
                 return
             try:
-                import requests as req
-                from downloader import manager
-                # 优先用用户设置的下载目录，否则回退默认
-                save_dir = data["dir"] or self.download_dir
-                os.makedirs(save_dir, exist_ok=True)
-                task = manager.create_task(data["url"], save_dir, data["filename"], data["segments"])
-                task.start()
-                manager.save_history()
+                self._create_and_start(data["url"], data["filename"],
+                                       data["segments"], data["dir"] or self.download_dir)
                 self.url_input.clear()
-                self.status_bar.showMessage(f"已添加: {task.filename}")
             except Exception as e:
                 self.logger.exception("添加下载失败")
                 self.status_bar.showMessage(f"添加失败: {e}", 8000)
@@ -997,8 +1069,126 @@ class MainWindow(QMainWindow):
                     self.status_bar.showMessage("文件所在文件夹不存在", 5000)
             else:
                 self.status_bar.showMessage("未知文件路径，无法打开文件夹", 5000)
+        elif action == "copy_link":
+            _link = getattr(task, "url", "") or ""
+            if _link:
+                QApplication.clipboard().setText(_link)
+                self.status_bar.showMessage("已复制下载链接", 3000)
+            else:
+                self.status_bar.showMessage("该任务没有可复制的链接", 3000)
         # 操作后即时落盘，避免仅依赖 5s 定时保存
         mgr.save_history()
+
+    def _set_filter(self, key):
+        """切换状态分段过滤。"""
+        if key == self._filter:
+            return
+        self._filter = key
+        self._refresh()
+
+    def _match_filter(self, data):
+        f = self._filter
+        status = data.get("status")
+        if f == "all":
+            return True
+        if f == "active":
+            return status in ("downloading", "pending", "paused")
+        if f == "completed":
+            return status == "completed"
+        if f == "failed":
+            return status in ("failed", "cancelled")
+        return True
+
+    def _filter_hint(self):
+        return {
+            "all": "还没有下载任务\n粘贴链接，或从浏览器捕获，或把链接拖入窗口",
+            "active": "当前没有进行中的任务",
+            "completed": "还没有已完成任务",
+            "failed": "没有失败的任务",
+        }[self._filter] if self._filter else "还没有下载任务\n粘贴链接，或从浏览器捕获，或把链接拖入窗口"
+
+    def _update_filter_counts(self, task_dict):
+        labels = {"all": "全部", "active": "进行中", "completed": "已完成", "failed": "失败"}
+        counts = {
+            "all": len(task_dict),
+            "active": sum(1 for d in task_dict.values() if d.get("status") in ("downloading", "pending", "paused")),
+            "completed": sum(1 for d in task_dict.values() if d.get("status") == "completed"),
+            "failed": sum(1 for d in task_dict.values() if d.get("status") in ("failed", "cancelled")),
+        }
+        for _key, _btn in getattr(self, "_filter_btns", {}).items():
+            _btn.setText(f"{labels[_key]} {counts[_key]}")
+
+    def _update_overall(self, tasks):
+        _dl = _tt = 0
+        for _t in tasks:
+            _total = getattr(_t, "total_size", 0) or 0
+            _done = getattr(_t, "downloaded", 0) or 0
+            if _total > 0:
+                _dl += _done
+                _tt += _total
+        if _tt > 0:
+            _pct = int(_dl * 100 / _tt)
+            self.overall_label.setText(f"总下载 {format_size(_dl)} / {format_size(_tt)} ({_pct}%)")
+        else:
+            self.overall_label.setText("")
+
+    def _create_and_start(self, url, filename=None, segments=8, save_dir=None):
+        from downloader import manager
+        save_dir = save_dir or self.download_dir
+        os.makedirs(save_dir, exist_ok=True)
+        task = manager.create_task(url, save_dir, filename, segments or 8)
+        task.start()
+        manager.save_history()
+        self.status_bar.showMessage(f"已添加: {task.filename}")
+        return task
+
+    @staticmethod
+    def _urls_from_mime(mime):
+        """从拖入数据提取 http(s)/magnet 链接（忽略本地文件）。"""
+        out = []
+        try:
+            if mime.hasUrls():
+                for u in mime.urls():
+                    if not u.isLocalFile() and u.scheme().lower() in ("http", "https", "magnet"):
+                        out.append(u.toString())
+        except Exception:
+            pass
+        try:
+            if mime.hasText():
+                for tok in re.split(r"\s+", mime.text().strip()):
+                    if tok.startswith(("magnet:", "http://", "https://")):
+                        out.append(tok)
+        except Exception:
+            pass
+        seen, res = set(), []
+        for u in out:
+            if u and u not in seen:
+                seen.add(u)
+                res.append(u)
+        return res
+
+    def dragEnterEvent(self, event):
+        if self._urls_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        urls = self._urls_from_mime(event.mimeData())
+        if not urls:
+            super().dropEvent(event)
+            return
+        event.acceptProposedAction()
+        added = 0
+        for u in urls:
+            try:
+                self._create_and_start(u)
+                added += 1
+            except Exception as e:
+                self.logger.exception("拖入添加下载失败")
+                self.status_bar.showMessage(f"添加失败: {e}", 8000)
+        if added > 1:
+            self.status_bar.showMessage(f"已添加 {added} 个下载任务")
 
     def _pause_all(self):
         mgr = self._get_manager()
