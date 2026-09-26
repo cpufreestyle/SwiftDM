@@ -256,3 +256,13 @@ def test_web_notifies_new_failures_via_toast(page):
     # 聚合文案与桌面端 _fail_summary_text 一致
     assert "下载失败 [" in page
     assert "个任务下载失败（" in page
+
+
+def test_web_notifies_new_completions_via_toast(page):
+    assert "function notifyNewCompletions" in page
+    assert "notifyNewCompletions(data.tasks);" in page
+    # 首帧只记录不提示，避免刷新页面补弹旧账
+    assert "_knownDoneIds === null" in page
+    # 完成文案与桌面端 _notify_complete 对齐
+    assert "下载完成: $" in page
+    assert "个任务下载完成" in page

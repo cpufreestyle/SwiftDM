@@ -1415,6 +1415,24 @@ function failSummaryText(failed) {
   return `✗ ${failed.length} 个任务下载失败（${shown}）`;
 }
 
+// 新完成任务提示（与桌面端 _notify_complete 对齐）：首帧只记录不提示。
+let _knownDoneIds = null;
+
+function notifyNewCompletions(tasks) {
+  const ids = new Set(tasks.filter(t => t.status === "completed").map(t => t.task_id));
+  if (_knownDoneIds === null) {
+    _knownDoneIds = ids;
+    return;
+  }
+  const fresh = tasks.filter(t => t.status === "completed" && !_knownDoneIds.has(t.task_id));
+  _knownDoneIds = ids;
+  if (fresh.length === 1) {
+    showToast(`✓ 下载完成: ${fresh[0].filename || "文件"}`, "success");
+  } else if (fresh.length > 1) {
+    showToast(`✓ ${fresh.length} 个任务下载完成`, "success");
+  }
+}
+
 function notifyNewFailures(tasks) {
   const ids = new Set(tasks.filter(t => t.status === "failed").map(t => t.task_id));
   if (_knownFailedIds === null) {
@@ -1444,6 +1462,7 @@ function connectSSE() {
       const data = JSON.parse(event.data);
       renderTasks(data.tasks);
       notifyNewFailures(data.tasks);
+      notifyNewCompletions(data.tasks);
       renderStats(data.stats);
       renderFinishFromStream(data.finish);
     } catch(e) {
