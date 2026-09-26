@@ -256,7 +256,8 @@ def settings():
             set_proxy_mode(data["proxy_mode"])
             config.set("proxy_mode", data["proxy_mode"])
         if "rate_limit" in data:
-            set_rate(data["rate_limit"])
+            rl = set_rate(data["rate_limit"])
+            config.set("rate_limit", rl)  # 持久化，重启后限速仍生效
         if "finish_action" in data:
             scheduler.set_finish_action(data["finish_action"])
         # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效

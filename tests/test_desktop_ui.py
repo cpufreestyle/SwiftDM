@@ -143,3 +143,18 @@ def test_match_search_matches_filename_and_url(qt_app):
     assert m({"filename": "a.bin", "url": "https://example.com"}, "") is True
     assert m({"filename": "a.bin", "url": "https://example.com"}, "  ") is True
     assert m({}, "any") is False
+
+
+def test_parse_and_format_rate_limit_kbps():
+    import main_window as mw
+    assert mw._parse_rate_kbps("") == 0
+    assert mw._parse_rate_kbps("  ") == 0
+    assert mw._parse_rate_kbps("0") == 0
+    assert mw._parse_rate_kbps("512") == 512 * 1024
+    assert mw._parse_rate_kbps("1.5") == 1536
+    assert mw._parse_rate_kbps("abc") is None
+    assert mw._parse_rate_kbps("-1") is None
+    assert mw._format_rate_kbps(0) == ""
+    assert mw._format_rate_kbps(None) == ""
+    assert mw._format_rate_kbps(512 * 1024) == "512"
+    assert mw._format_rate_kbps(1536) == "1"

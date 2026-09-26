@@ -64,3 +64,20 @@ def test_sse_finish_field_drives_a_one_shot_toast(page):
     body = body[:body.index("\n}")]
     assert "lastFinishRemaining === 0" in body        # 只在倒数刚开始时提示一次
     assert "showToast(" in body
+
+
+def test_settings_post_persists_rate_limit(monkeypatch):
+    from throttle import get_rate, set_rate
+    recorded = []
+    monkeypatch.setattr(appmod.config, "set", lambda k, v: recorded.append((k, v)))
+    appmod.app.config["TESTING"] = True
+    resp = appmod.app.test_client().post("/api/settings", json={"rate_limit": 2048})
+    assert resp.status_code == 200
+    assert resp.get_json()["rate_limit"] == 2048
+    assert get_rate() == 2048
+    assert ("rate_limit", 2048) in recorded
+    set_rate(0)  # 不把限速泄漏到其它测试
+
+
+def test_settings_get_reports_current_rate(page):
+    assert "rate_limit" in appmod.app.test_client().get("/api/settings").get_json()

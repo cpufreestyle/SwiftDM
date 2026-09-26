@@ -78,6 +78,29 @@ def _save_window_geometry(win, settings):
         pass
 
 
+def _parse_rate_kbps(text):
+    """解析设置面板的限速输入（KB/s，空或 0 = 不限速）；非法输入返回 None。"""
+    s = str(text or "").strip()
+    if not s:
+        return 0
+    try:
+        value = float(s)
+    except ValueError:
+        return None
+    if value < 0:
+        return None
+    return int(value * 1024)
+
+
+def _format_rate_kbps(bytes_per_sec):
+    """字节/秒 格式化为 KB/s 文本（不限速时返回空串）。"""
+    try:
+        value = int(bytes_per_sec or 0)
+    except (TypeError, ValueError):
+        return ""
+    return "" if value <= 0 else str(value // 1024)
+
+
 def open_in_system(path):
     """跨平台用系统默认程序打开文件/目录（os.startfile 仅 Windows 可用）。"""
     try:
@@ -587,6 +610,15 @@ class SettingsDialog(QDialog):
         self.segments_spin.setToolTip("多线程分段数，越大速度越快但占用更多资源")
         layout.addRow("下载线程数:", self.segments_spin)
 
+        import throttle
+        self.rate_edit = QLineEdit(_format_rate_kbps(throttle.get_rate()))
+        self.rate_edit.setPlaceholderText("0 = 不限速")
+        self.rate_edit.setToolTip("全局下载限速（KB/s），0 或留空表示不限速；所有任务与分段共享")
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(self.rate_edit, 1)
+        rate_row.addWidget(QLabel("KB/s"))
+        layout.addRow("下载限速:", rate_row)
+
         self.monitor_check = QComboBox()
         self.monitor_check.addItems(["启用", "禁用"])
         self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
@@ -639,6 +671,7 @@ class SettingsDialog(QDialog):
             "segments": self.segments_spin.value(),
             "monitor": self.monitor_check.currentIndex() == 0,
             "proxy_mode": proxy_mode,
+            "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
         }
 
 
@@ -1341,6 +1374,10 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             settings = dlg.get_settings()
+            if settings.get("rate_limit") is None:
+                QMessageBox.warning(self, "输入无效",
+                                    "下载限速请输入非负数字（KB/s），0 或留空表示不限速")
+                return
             import config
             # 应用下载目录（真正生效）并持久化 —— Web/浏览器捕获/桌面三端统一读取
             if settings["dir"]:
@@ -1369,6 +1406,11 @@ class MainWindow(QMainWindow):
             set_proxy_mode(settings.get("proxy_mode", "env"))
             config.set("proxy_mode", settings.get("proxy_mode", "env"))
             config.set("segments", settings.get("segments", 8))
+            # 全局限速：应用并持久化（重启后仍生效）
+            from throttle import set_rate
+            rl = settings.get("rate_limit") or 0
+            set_rate(rl)
+            config.set("rate_limit", rl)
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(

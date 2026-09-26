@@ -22,6 +22,7 @@ _DEFAULTS = {
     "download_dir": os.path.join(os.path.expanduser("~"), "Downloads", "IDM_Downloads"),
     "proxy_mode": "env",
     "segments": 8,
+    "rate_limit": 0,  # 全局下载限速（字节/秒，0 = 不限速）
     "monitor_enabled": True,
 }
 
