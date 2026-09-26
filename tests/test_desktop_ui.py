@@ -237,6 +237,34 @@ def test_tray_icon_renders_every_state(qt_app):
         assert not icon.isNull()
 
 
+def test_settings_dialog_groups_cover_every_row(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QGroupBox, QLabel
+
+    dlg = mw.SettingsDialog()
+    groups = dlg.findChildren(QGroupBox)
+    assert [g.title() for g in groups] == ["下载", "网络", "完成后"]
+
+    def row_labels(group):
+        return {lbl.text() for lbl in group.findChildren(QLabel)
+                if lbl.text().endswith(":")}
+
+    by_title = {g.title(): row_labels(g) for g in groups}
+    assert by_title["下载"] == {"下载目录:", "下载线程数:", "下载限速:"}
+    assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:"}
+    assert by_title["完成后"] == {"全部下载完成后:", "完成提示音:"}
+
+
+def test_settings_dialog_get_settings_still_complete(qt_app):
+    import main_window as mw
+
+    dlg = mw.SettingsDialog()
+    settings = dlg.get_settings()
+    for key in ("dir", "segments", "monitor", "proxy_mode",
+                "rate_limit", "finish_action", "notify_sound"):
+        assert key in settings, key
+
+
 def test_step_selection_moves_clamps_and_handles_unknown():
     import main_window as mw
 

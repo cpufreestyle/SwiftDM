@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QSystemTrayIcon, QMenu, QApplication,
     QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
+    QGroupBox,
     QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
@@ -737,31 +738,52 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙ 设置")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(460)
         self.setStyleSheet("""
             QDialog { background-color: #1a1a23; border: 1px solid #2a2a3a; border-radius: 10px; }
             QLabel { font-size: 13px; color: #ccc; }
+            QGroupBox {
+                border: 1px solid #2a2a3a; border-radius: 8px;
+                margin-top: 12px; padding: 10px 10px 8px 10px;
+                font-size: 12px; font-weight: 700; color: #8f8fa3;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; subcontrol-position: top left;
+                left: 10px; padding: 0 4px;
+            }
         """)
 
-        layout = QFormLayout(self)
-        layout.setSpacing(14)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(20, 16, 20, 16)
+        self._add_groups(layout)
+
+    def _add_groups(self, layout):
+        """分三组搭建设置项：下载 / 网络 / 完成后（选项变多后仍可快速定位）。"""
+        import config
+
+        # —— 下载 ——
+        dl_box = QGroupBox("下载")
+        form = QFormLayout(dl_box)
+        form.setSpacing(12)
+        form.setContentsMargins(10, 6, 10, 6)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         # 下载目录：预填当前生效目录（共享配置），而非空白占位
-        import config
         self.dir_edit = QLineEdit(config.get_download_dir())
         btn_browse = QPushButton("浏览...")
         btn_browse.clicked.connect(self._browse_dir)
         dir_row = QHBoxLayout()
         dir_row.addWidget(self.dir_edit, 1)
         dir_row.addWidget(btn_browse)
-        layout.addRow("下载目录:", dir_row)
+        form.addRow("下载目录:", dir_row)
 
         self.segments_spin = QSpinBox()
         self.segments_spin.setRange(1, 32)
         self.segments_spin.setValue(int(config.get("segments")))
         self.segments_spin.setToolTip("多线程分段数，越大速度越快但占用更多资源")
-        layout.addRow("下载线程数:", self.segments_spin)
+        form.addRow("下载线程数:", self.segments_spin)
 
         import throttle
         self.rate_edit = QLineEdit(_format_rate_kbps(throttle.get_rate()))
@@ -770,44 +792,21 @@ class SettingsDialog(QDialog):
         rate_row = QHBoxLayout()
         rate_row.addWidget(self.rate_edit, 1)
         rate_row.addWidget(QLabel("KB/s"))
-        layout.addRow("下载限速:", rate_row)
+        form.addRow("下载限速:", rate_row)
+        layout.addWidget(dl_box)
 
-        # 「全部下载完成后」动作：与 Web 端设置面板共用 scheduler 单例
-        from scheduler import scheduler as _dl_scheduler
-        self.finish_combo = QComboBox()
-        for _action in FINISH_ACTIONS:
-            self.finish_combo.addItem(FINISH_ACTION_LABELS[_action], _action)
-        _current_action = _dl_scheduler.get_finish_action()
-        _current_idx = FINISH_ACTIONS.index(_current_action) if _current_action in FINISH_ACTIONS else 0
-        self.finish_combo.setCurrentIndex(_current_idx)
-        self.finish_combo.setToolTip(
-            "任务列表里再没有下载中/等待中/已暂停的任务后，开始 60 秒倒计时\n"
-            "关机: 倒计时结束执行系统关机\n"
-            "睡眠: 倒计时结束让系统睡眠\n"
-            "提示音: 倒计时结束播放提示音\n"
-            "倒计时期间工具栏显示剩余时间，点击可取消")
-        layout.addRow("全部下载完成后:", self.finish_combo)
-
-        # 完成提示音：任务下载完成时的声音提醒（默认关闭）
-        import notify_sound
-        self.sound_combo = QComboBox()
-        for _key in notify_sound.NOTIFY_SOUNDS:
-            self.sound_combo.addItem(notify_sound.NOTIFY_SOUND_LABELS[_key], _key)
-        _cur_sound = notify_sound.get_sound()
-        self.sound_combo.setCurrentIndex(
-            notify_sound.NOTIFY_SOUNDS.index(_cur_sound)
-            if _cur_sound in notify_sound.NOTIFY_SOUNDS else 0)
-        self.sound_combo.setToolTip(
-            "任务下载完成时播放声音\n"
-            "关闭: 仅托盘气泡 + 状态栏\n"
-            "提示音: 三声短中\n"
-            "系统音: 播放操作系统提示音")
-        layout.addRow("完成提示音:", self.sound_combo)
+        # —— 网络 ——
+        net_box = QGroupBox("网络")
+        form = QFormLayout(net_box)
+        form.setSpacing(12)
+        form.setContentsMargins(10, 6, 10, 6)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.monitor_check = QComboBox()
         self.monitor_check.addItems(["启用", "禁用"])
         self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
-        layout.addRow("浏览器监控:", self.monitor_check)
+        form.addRow("浏览器监控:", self.monitor_check)
 
         # 代理模式：系统代理 / 直连 / 自定义（三态与 downloader 实际支持一致）
         from downloader import get_proxy_mode
@@ -824,19 +823,61 @@ class SettingsDialog(QDialog):
             self.proxy_combo.setCurrentIndex(1)
         else:
             self.proxy_combo.setCurrentIndex(2)
-        layout.addRow("下载代理:", self.proxy_combo)
+        form.addRow("下载代理:", self.proxy_combo)
 
         self.proxy_custom = QLineEdit()
         self.proxy_custom.setPlaceholderText("如 http://127.0.0.1:7890 或 socks5://...")
         if cur not in ("env", "system", "direct", ""):
             self.proxy_custom.setText(cur)
-        layout.addRow("自定义代理:", self.proxy_custom)
+        form.addRow("自定义代理:", self.proxy_custom)
+        layout.addWidget(net_box)
+
+        # —— 完成后 ——
+        done_box = QGroupBox("完成后")
+        form = QFormLayout(done_box)
+        form.setSpacing(12)
+        form.setContentsMargins(10, 6, 10, 6)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        # 「全部下载完成后」动作：与 Web 端设置面板共用 scheduler 单例
+        from scheduler import scheduler as _dl_scheduler
+        self.finish_combo = QComboBox()
+        for _action in FINISH_ACTIONS:
+            self.finish_combo.addItem(FINISH_ACTION_LABELS[_action], _action)
+        _current_action = _dl_scheduler.get_finish_action()
+        _current_idx = FINISH_ACTIONS.index(_current_action) if _current_action in FINISH_ACTIONS else 0
+        self.finish_combo.setCurrentIndex(_current_idx)
+        self.finish_combo.setToolTip(
+            "任务列表里再没有下载中/等待中/已暂停的任务后，开始 60 秒倒计时\n"
+            "关机: 倒计时结束执行系统关机\n"
+            "睡眠: 倒计时结束让系统睡眠\n"
+            "提示音: 倒计时结束播放提示音\n"
+            "倒计时期间工具栏显示剩余时间，点击可取消")
+        form.addRow("全部下载完成后:", self.finish_combo)
+
+        # 完成提示音：任务下载完成时的声音提醒（默认关闭）
+        import notify_sound
+        self.sound_combo = QComboBox()
+        for _key in notify_sound.NOTIFY_SOUNDS:
+            self.sound_combo.addItem(notify_sound.NOTIFY_SOUND_LABELS[_key], _key)
+        _cur_sound = notify_sound.get_sound()
+        self.sound_combo.setCurrentIndex(
+            notify_sound.NOTIFY_SOUNDS.index(_cur_sound)
+            if _cur_sound in notify_sound.NOTIFY_SOUNDS else 0)
+        self.sound_combo.setToolTip(
+            "任务下载完成时播放声音\n"
+            "关闭: 仅托盘气泡 + 状态栏\n"
+            "提示音: 三声短中\n"
+            "系统音: 播放操作系统提示音")
+        form.addRow("完成提示音:", self.sound_combo)
+        layout.addWidget(done_box)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         btns.setStyleSheet("QPushButton{padding:6px 18px;border-radius:4px;}")
-        layout.addRow(btns)
+        layout.addWidget(btns)
 
     def _browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择下载目录")
