@@ -1388,6 +1388,8 @@ function renderFinishFromStream(finish) {
   const modal = document.getElementById("settingsModal");
   if (modal && modal.classList.contains("open")) {
     renderFinishStatus({ finish_action: f.action, finish_countdown: remaining });
+    // 定时列表随 SSE 实时刷新：到点启动/取消后自动从列表消失
+    renderScheduled(f.scheduled || []);
   }
 }
 

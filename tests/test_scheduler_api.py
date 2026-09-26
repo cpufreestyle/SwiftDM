@@ -81,5 +81,6 @@ def test_stream_payload_carries_schedule_and_finish_state(fake):
     _client, f = fake
     f.action = "shutdown"
     payload = appmod._stream_payload()
-    assert payload["finish"] == {"action": "shutdown", "remaining": 42}
+    assert payload["finish"] == {"action": "shutdown", "remaining": 42,
+                                 "scheduled": [{"task_id": "t_9", "start_at": 1234.0}]}
     assert isinstance(payload["tasks"], list) and "stats" in payload

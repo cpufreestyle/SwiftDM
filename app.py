@@ -417,7 +417,8 @@ def _stream_payload():
     return {
         "tasks": [_with_schedule(t) for t in manager.get_all_tasks()],
         "stats": manager.get_stats(),
-        "finish": {"action": st["finish_action"], "remaining": st["remaining"]},
+        "finish": {"action": st["finish_action"], "remaining": st["remaining"],
+                   "scheduled": st["scheduled"]},
     }
 
 
