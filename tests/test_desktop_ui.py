@@ -73,3 +73,22 @@ def test_match_filter(qt_app, active_filter, status, expected):
     import main_window as mw
     shim = type("Shim", (), {"_filter": active_filter})()
     assert mw.MainWindow._match_filter(shim, {"status": status}) is expected
+
+
+def test_keyboard_shortcuts_registered(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QWidget, QLineEdit
+
+    class _Host(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._shortcuts = []
+            self.url_input = QLineEdit()
+
+        def _add_download(self):  # pragma: no cover - just a slot target
+            pass
+
+    host = _Host()
+    mw.MainWindow._setup_shortcuts(host)
+    seqs = sorted(seq for seq, _ in host._shortcuts)
+    assert "Ctrl+N" in seqs and "Ctrl+F" in seqs, seqs

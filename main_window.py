@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread, QMimeData, QUrl
-from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QDrag
+from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QDrag, QShortcut, QKeySequence
 from log_helper import setup_logging, QtLogHandler
 
 
@@ -673,6 +673,7 @@ class MainWindow(QMainWindow):
         self.logger.addHandler(self._log_handler)
         self.log_signal.connect(self._append_log)
         self._cards = {}  # task_id -> TaskCard
+        self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
         self._prev_statuses = {}  # task_id -> status
         self._first_refresh = True  # 首刷：从历史加载的任务作为已知状态，不再弹完成/失败通知
@@ -690,6 +691,7 @@ class MainWindow(QMainWindow):
         self._setup_central()
         self._setup_statusbar()
         self._setup_tray()
+        self._setup_shortcuts()
 
         # 定时刷新
         self._timer = QTimer(self)
@@ -698,6 +700,16 @@ class MainWindow(QMainWindow):
 
         # 初始加载
         self._refresh()
+
+    def _setup_shortcuts(self):
+        """Global shortcuts: Ctrl+N new download, Ctrl+F focus the link box."""
+        for _seq, _slot in (
+            ("Ctrl+N", self._add_download),
+            ("Ctrl+F", self.url_input.setFocus),
+        ):
+            _sc = QShortcut(QKeySequence(_seq), self)
+            _sc.activated.connect(_slot)
+            self._shortcuts.append((_seq, _sc))
 
     def _setup_toolbar(self):
         toolbar = QToolBar("主工具栏")
