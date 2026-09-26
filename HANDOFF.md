@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `b2ab72c`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 20 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `00cb89e`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 21 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作，最后把批量操作的键盘入口补到 Web 端、并修正桌面端 Ctrl+F 的指向。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM，让详情面板本身就能操作任务，并把桌面端补齐成与 Web 端一样能多选批量操作，最后把批量操作的键盘入口补到 Web 端、并修正桌面端 Ctrl+F 的指向；最后让定时等待中的任务在三端都能「取消定时」。
 
-本轮共 20 个 commit（HEAD = `b2ab72c`，`git status -sb` 与 origin/main 0/0）：
+本轮共 21 个 commit（HEAD = `00cb89e`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -296,11 +296,41 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      要按「选择器列表」语义匹配（子串），写成 `s === "button"` 等于没测守卫；
      ③ QTest 合成快捷键**可以**触发 QShortcut（本机实测），但桌面端 Ctrl+A 曾因
      本机配置 filter=completed 而「选到空集」——窗口级测试先钉死 `_filter`。
+20. **定时任务可管理性：三端都能「取消定时」**（`00cb89e`）：定时等待中的任务（`pending`）此前
+    在三个端都没有取消入口——桌面端 `pending` 分支一张按钮都不摆，想叫停一个还没开始的定时任务
+    只能整条删除；而删除在过去甚至不清调度表，`scan()` 到点之前调度表里一直挂着幽灵条目，
+    Web 设置面板的「定时任务」列表看得见它；那份列表本身也只显示对用户无意义的 `task_id`。
+   - `templates/index.html`：
+     - 新增纯函数 `pendingActionHtml(task)`：有 `scheduled_at` 显示「✕ 取消定时」，否则退化「取消」，
+       复用既有 `cancelTask` 路径，删除留给勾选批量操作；
+     - `createTaskCard` 的 `actionsHtml` 链末新增 `pending` 分支（此前 downloading/paused/
+       downloading-paused/completed 几条分支全部落空，pending 一个按钮都没有）；
+     - `renderScheduled` 重写：优先显示 `_tasksById[task_id].filename`（找不到才退回 id），
+       `task_id` 收进行 `title`，每行带「取消」按钮；新增 `.sched-row` / `.sched-name` 样式；
+     - 新增 `async cancelScheduled(taskId)`：`POST /api/cancel/<id>` → toast → 拉 `/api/settings`
+       重渲染列表，不新增后端语义。
+   - `main_window.py`：TaskCard 新增 `pending` 按钮分支（「✕ 取消定时 / ✕ 取消」）与右键菜单项，
+     `_built_scheduled` 在 `__init__` / `update_data` 同步；`_handle_action("cancel")` 先
+     `scheduler.unschedule(task_id)` 再 `task.cancel()`，与 Flask 的 `/api/cancel` 顺序对齐。
+   - `downloader.py`：`remove_task` 末尾补 `unschedule`（Flask `/api/remove` 早就先做这一步）。
+   - 测试：`tests/test_desktop_ui.py` 新增 4 个用例（pending 卡片按钮与文案退化、右键菜单、
+     cancel 先注销再取消、`remove_task` 注销）；新增 `tests/test_web_schedule.js`，
+     vm 抽出 `pendingActionHtml` / `renderScheduled` / `cancelScheduled` 做行为断言。
+   - 踩坑记录：① `findChildren(QPushButton)` 会把隐藏的「···」溢出按钮一起捞出来，
+     断言按钮集合必须按业务按钮过滤；② node 微任务计数：`node --test` 下
+     `return Promise.resolve().then().then(assert)` 只给 2 个 tick，而 `cancelScheduled` 内部
+     有两次 `await`，断言会比最后一次 `/api/settings` 早一步跑（看起来「actual 与 expected
+     一模一样却 diff 失败」其实只比到了一项）——改成 `await` 被测函数本身（异步 IIFE +
+     `.catch` 里 `process.exit(1)`）才确定；③ `assert.deepStrictEqual` 把 `{a:1,b:undefined}`
+     与 `{a:1}` 视为不等，断言里写 `method: undefined` 就要求被测代码真的把这个键塞进对象。
+
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
 - （已关账）批量操作的键盘入口：Web 端 Ctrl+A 全选可见、Esc 先清多选、Ctrl+点击卡片切换勾选；桌面端 Ctrl+F 已从「聚焦链接框」改回「聚焦搜索框」（与 Web 端及通用约定一致）。
+- （已关账）定时任务的取消入口：桌面端 pending 卡片按钮 + 右键菜单「取消定时」，Web 端卡片
+  与设置面板定时列表每行一个「取消」，删除/取消都会先清调度表，幽灵条目不再出现。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 - （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
