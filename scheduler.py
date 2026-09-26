@@ -9,6 +9,8 @@ import sys
 import threading
 import time
 
+import config
+
 FINISH_ACTIONS = ("none", "shutdown", "suspend", "beep")
 COUNTDOWN_SECONDS = 60     # 全部完成后再等 60 秒，给人留出取消时间
 SCAN_INTERVAL = 5          # 扫描节拍：定时开始的延迟不会超过它
@@ -91,10 +93,53 @@ class Scheduler:
     def schedule(self, task_id, start_at):
         with self._lock:
             self._pending[str(task_id)] = float(start_at)
+            self._persist()
 
     def unschedule(self, task_id):
         with self._lock:
-            return self._pending.pop(str(task_id), None) is not None
+            removed = self._pending.pop(str(task_id), None) is not None
+            if removed:
+                self._persist()
+            return removed
+
+    def _persist(self):
+        """定时任务表落盘（走共享配置的原子写）；失败不影响内存态。"""
+        try:
+            config.set("scheduled", dict(self._pending))
+        except Exception:
+            logger.warning("定时任务表持久化失败", exc_info=True)
+
+    def restore(self):
+        """从磁盘恢复定时任务表（启动时调一次）。
+
+        只恢复 manager 里仍存在且仍处于 pending 的任务；已删除/已结束的条目
+        直接丢弃（启动过的任务状态已不是 pending，不会被重新拉起）。
+        到点的任务不在这里启动，交给接下来的 scan() 拉起。
+        """
+        try:
+            stored = config.get("scheduled")
+        except Exception:
+            logger.warning("读取定时任务表失败", exc_info=True)
+            return 0
+        if not isinstance(stored, dict) or not stored:
+            return 0
+        mgr = self._mgr()
+        restored = 0
+        with self._lock:
+            for tid, at in list(stored.items()):
+                try:
+                    at = float(at)
+                except (TypeError, ValueError):
+                    continue
+                task = mgr.get_task(str(tid))
+                if task is None or getattr(task, "status", None) != "pending":
+                    continue
+                self._pending[str(tid)] = at
+                restored += 1
+            self._persist()  # 顺手清掉已失效条目
+        if restored:
+            logger.info("已恢复 %d 个定时任务", restored)
+        return restored
 
     def pending_at(self, task_id):
         with self._lock:
@@ -197,6 +242,8 @@ class Scheduler:
                 self._saw_busy = False
                 self._finish_action = "none"
 
+        if due:
+            self._persist()                     # 到点条目已移除，同步落盘
         started = self._start_now(due)          # 锁外执行副作用
         if fire:
             self._fire(fire)

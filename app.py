@@ -557,5 +557,6 @@ if __name__ == "__main__":
     print(f"  下载目录: {config.get_download_dir()}")
     print(f"  打开浏览器访问: http://127.0.0.1:{SWIFTDM_PORT}")
     print("=" * 50 + "\n")
+    scheduler.restore()  # 恢复重启前的定时任务表
     scheduler.start()
     app.run(host=SWIFTDM_HOST, port=SWIFTDM_PORT, debug=False, threaded=True)

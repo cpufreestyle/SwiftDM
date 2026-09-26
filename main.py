@@ -224,6 +224,7 @@ def main():
 
     # 2.5 下载调度线程：定时开始 + 完成后的动作（不启动则定时永不生效）
     from scheduler import scheduler as dl_scheduler
+    dl_scheduler.restore()  # 恢复重启前的定时任务表
     dl_scheduler.start()
     # 恢复上次设置的「全部下载完成后」动作（桌面/Web 两端共用，重启后仍生效）
     _finish_action = config.get("finish_action")

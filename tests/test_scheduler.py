@@ -1,5 +1,6 @@
 ﻿import pytest
 
+import config
 from scheduler import COUNTDOWN_SECONDS, Scheduler, build_command
 
 
@@ -224,3 +225,47 @@ def test_build_command_suspend_and_beep():
     assert build_command("suspend", "linux") == ["systemctl", "suspend"]
     assert build_command("beep", "win32") is None
     assert build_command("none", "win32") is None
+
+
+# ---------------- 定时任务持久化（重启后仍按原计划启动） ----------------
+def _fake_config(monkeypatch):
+    store = {}
+    monkeypatch.setattr(config, "get", lambda k, d=None: store.get(k, {}))
+    monkeypatch.setattr(config, "set", lambda k, v: store.__setitem__(k, v))
+    return store
+
+
+def test_schedule_persists_and_restores(monkeypatch):
+    store = _fake_config(monkeypatch)
+    t = FakeTask("t_1")
+    s, clock, *_ = make([t])
+    s.schedule("t_1", 5000.0)
+    assert store["scheduled"] == {"t_1": 5000.0}
+
+    # 模拟重启：新实例从磁盘恢复
+    s2, clock2, *_ = make([t])
+    assert s2.restore() == 1
+    assert s2.pending_at("t_1") == 5000.0
+
+
+def test_restore_skips_missing_and_finished(monkeypatch):
+    store = {"scheduled": {"gone": 100.0, "done": 200.0, "kept": 300.0}}
+    monkeypatch.setattr(config, "get", lambda k, d=None: store.get(k, {}))
+    monkeypatch.setattr(config, "set", lambda k, v: store.__setitem__(k, v))
+    done = FakeTask("done", status="completed")
+    kept = FakeTask("kept")
+    s, *_ = make([done, kept])
+    assert s.restore() == 1
+    assert s.pending_at("kept") == 300.0
+    assert s.pending_at("done") is None
+    assert store["scheduled"] == {"kept": 300.0}  # 失效条目被清掉
+
+
+def test_restore_ignores_garbage(monkeypatch):
+    store = {"scheduled": {"t_1": "abc", "t_2": None}}
+    monkeypatch.setattr(config, "get", lambda k, d=None: store.get(k, {}))
+    monkeypatch.setattr(config, "set", lambda k, v: store.__setitem__(k, v))
+    s, *_ = make([FakeTask("t_1"), FakeTask("t_2")])
+    assert s.restore() == 0
+    assert s.pending_at("t_1") is None
+    assert s.pending_at("t_2") is None
