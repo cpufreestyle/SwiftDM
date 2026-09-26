@@ -1331,6 +1331,8 @@ function sortTasks(list) {
 function syncSortSelect(){ const el = document.getElementById("sortSelect"); if (el) el.value = sortKey; }
 
 // ===== 紧凑模式（与桌面端一致）=====
+// 之前只存 localStorage，而桌面端读写的是同一份共享配置，
+// 结果两边各记一份。现在以后端为准，localStorage 只做本地缓存。
 let compactMode = false;
 try { compactMode = localStorage.getItem("swiftdm.compact") === "1"; } catch (e) {}
 function toggleCompact() {
@@ -1338,6 +1340,10 @@ function toggleCompact() {
   try { localStorage.setItem("swiftdm.compact", compactMode ? "1" : "0"); } catch (e) {}
   applyCompact();
   renderTasks(_lastTasks);
+  // 保存失败不能影响当场切换，但要说出来
+  api("/api/settings",
+    { method: "POST", body: JSON.stringify({ compact: compactMode }) })
+    .then(res => { if (!res || !res.success) showToast("紧凑模式保存失败", "error"); });
 }
 function applyCompact() {
   const btn = document.getElementById("compactBtn");
@@ -1724,6 +1730,7 @@ async function refreshSettings() {
   syncAutoRetryOptions(res);
   syncSoundOptions(res);
   syncCaptureInput(res);
+  syncCompactInput(res);
   renderFinishStatus(res);
   renderCapabilities(res.capabilities || {});
   renderScheduled(res.scheduled || []);
@@ -1833,6 +1840,15 @@ async function applySound() {
 function syncCaptureInput(res) {
   const sel = document.getElementById("captureSelect");
   if (sel) sel.value = res.browser_capture ? "1" : "0";
+}
+
+function syncCompactInput(res) {
+  const on = !!res.compact;
+  if (on === compactMode) return;
+  compactMode = on;
+  try { localStorage.setItem("swiftdm.compact", on ? "1" : "0"); } catch (e) {}
+  applyCompact();
+  if (typeof renderTasks === "function") renderTasks(_lastTasks);
 }
 
 async function applyCapture() {

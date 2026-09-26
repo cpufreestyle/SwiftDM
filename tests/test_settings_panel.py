@@ -218,3 +218,28 @@ def test_browser_capture_route_uses_the_configured_thread_count(monkeypatch):
     finally:
         appmod.BROWSER_CAPTURE_ENABLED = saved[0]
         config.set("segments", saved[1])
+
+
+def test_compact_mode_is_shared_with_the_desktop(page):
+    """紧凑模式之前只存 localStorage，桌面端读写共享配置，两边各记一份。"""
+    assert 'JSON.stringify({ compact: compactMode })' in page
+    assert "function syncCompactInput" in page
+    assert "syncCompactInput(res);" in page
+    refresh = page[page.index("function syncCompactInput"):]
+    refresh = refresh[:refresh.index("\n}")]
+    assert "localStorage" in refresh, "本地缓存要同步，否则刷新前会回退"
+
+
+def test_compact_post_persists_and_round_trips():
+    appmod.app.config["TESTING"] = True
+    saved = config.get("compact")
+    try:
+        for value in (True, False):
+            resp = appmod.app.test_client().post("/api/settings",
+                                                json={"compact": value})
+            assert resp.status_code == 200
+            assert resp.get_json()["compact"] is value
+            assert config.get("compact") is value
+        assert appmod.app.test_client().get("/api/settings").get_json()["compact"] is False
+    finally:
+        config.set("compact", saved)

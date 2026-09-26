@@ -316,6 +316,9 @@ def settings():
         if "segments" in data:
             # default threads: shares the clamp rule with /api/add
             config.set("segments", _clamp_segments(data["segments"], 8))
+        if "compact" in data:
+            # compact list mode: the desktop persists this too, so share it
+            config.set("compact", bool(data["compact"]))
         if "auto_retry" in data:
             # downloader re-reads this on every failure, so no restart is needed
             config.set("auto_retry", _clamp_auto_retry(data["auto_retry"]))
@@ -344,6 +347,7 @@ def settings():
             "auto_retry": _clamp_auto_retry(config.get("auto_retry")),
             "notify_sound": notify_sound.get_sound(),
             "browser_capture": BROWSER_CAPTURE_ENABLED,
+            "compact": bool(config.get("compact")),
         })
     st = scheduler.status()
     return jsonify({
@@ -359,6 +363,7 @@ def settings():
         "notify_sound": notify_sound.get_sound(),
         "notify_sounds": notify_sound.NOTIFY_SOUND_LABELS,
         "browser_capture": BROWSER_CAPTURE_ENABLED,
+        "compact": bool(config.get("compact")),
         "finish_countdown": st["remaining"],
         "scheduled": st["scheduled"],
         "capabilities": {"ffmpeg": ffmpeg_status(), "ytdlp": ytdlp_available()},
