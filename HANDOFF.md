@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `ca64fd7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 9 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `1a15e83`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 10 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；末尾追加扩展 popup 主题化改造。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性。
 
-本轮共 9 个 commit（HEAD = `ca64fd7`，`git status -sb` 与 origin/main 0/0）：
+本轮共 10 个 commit（HEAD = `1a15e83`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -128,17 +128,22 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - `extension/background.js`：消息桥新增 `getSettings` 分支，转发 `GET /api/settings`，供 popup 读取 theme 设置，分支排在 `getTasks` 之前；
    - 测试：`tests/test_theme_tokens.py` 以 POPUP_TOKENS（popup ↔ Web ↔ 桌面端三端映射，None 表示该端暂无对应令牌）、POPUP_ONLY、POPUP_TEXT_PAIRS、POPUP_CHIP_TINTS 取代原 POPUP_MAP，新增 5 组断言：调色板与共享主题一致、只声明已登记变量、无字面色值（先去掉 HTML 实体，否则 `&#11015;` 误报）、芯片共用柔色、文字对比度 ≥ 4.5、popup 跟随应用设置；
    - `tests/test_extension_panel.js`：sandbox 补 `matchMedia` 与 `documentElement.dataset` 桩，消息顺序断言改为 `['getSettings','getStatus']` 并用注释说明主题必须排在最前。
+9. **Web 端补齐键盘焦点环与无障碍属性**（`1a15e83`）：之前网页端所有交互控件没有可见焦点（只有 border-color 变化），图标按钮也没有可读的名字，纯键盘和读屏用户基本上没法用。
+   - `templates/index.html`：新增 `:focus-visible` 焦点环，并用 .btn / .filter-btn / .search-input / .sort-select 同名类把特异度抬过 `.add-bar input` 等写死的 `outline:none`；新增 `@media (prefers-reduced-motion: reduce)`，停掉 `.pulse` 呼吸动画与按钮过渡；
+   - 7 个图标按钮全部补 `aria-label`（值与现有 `title` 同文，title 保留给鼠标悬浮）；两个模态框声明 `role="dialog"` / `aria-modal` / `aria-labelledby`；toast 声明 `role="status"` + `aria-live="polite"`；
+   - 任务卡片的进度条暴露为 `role="progressbar"`（带 aria-valuenow / min / max），多选框补 `aria-label`；筛选区加 `role="group"`，筛选与紧凑芯片由 `syncFilterButtons` / `applyCompact` 维护 `aria-pressed`；`advToggle` / `settingsBtn` 维护 `aria-expanded`；
+   - 顺手修两个真 bug：`setFilter` / `syncFilterButtons` 用的 `.filter-btn` 选择器连紧凑按钮一起匹配，切换筛选会把紧凑按钮的 active 状态抹掉（现收窄为 `.filter-btn[data-filter]`）；`escapeHtml` 被声明了两次，后一份静默覆盖前一份，带 XSS 说明的那份根本没生效；
+   - 测试：`tests/test_web_ui.py` 新增 6 组断言（焦点环与减弱动态、图标按钮可访问名、模态框与 toast 宣读、芯片按下态、进度条与多选框、`escapeHtml` 只声明一次）；变异测试 7/7 全红。
 
-验证：全量 pytest 343 passed / 1 skipped；12 个 node 测试全绿；
+验证：全量 pytest 349 passed / 1 skipped；12 个 node 测试全绿；变异测试 7/7 均能把新增守卫打红。
 `build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）；`extension/` 不参与打包（`SwiftDM.spec` 只收 `templates/`），本轮未再重建二进制，改动靠源码级守卫与沙箱测试覆盖。
-打包后的 EXE 起 --web-only 服务，已确认返回的页面含 stepFocus/setFocusTask/focusableCardIds 与 kbd-hint 提示。
+打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- 三端都没有键盘与读屏支持：`templates/index.html` 的 `aria-` / `role=` / `tabindex` / `focus-visible` 计数均为 0，桌面端 `main_window.py` 也没有 `setAccessibleName` / `setTabOrder`；建议先补 `:focus-visible` 焦点环与关键控件的 `aria-label`。
-- `prefers-reduced-motion` 还没生效：`.pulse` 等动画在系统开启「减弱动态效果」时依旧会动。
+- （已关账）Web 端已补上焦点环与 aria-属性；桌面端 `main_window.py` 仍然没有 `setAccessibleName` / `setTabOrder`，待下一轮。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
