@@ -1375,3 +1375,62 @@ def test_task_detail_dialog_follows_theme(qt_app):
     assert mw.THEMES["dark"]["surface"] in dlg.styleSheet()
     dlg.apply_theme("nonsense")
     assert dlg._theme == "dark"
+
+
+def test_tray_message_click_only_adds_for_clip_prompt(qt_app):
+    """完成/失败等提示气泡被误点不应凭空新建下载，只有剪贴板待确认气泡可以。"""
+    import main_window as mw
+
+    class _Host:
+        def __init__(self, kind):
+            self._tray_msg_kind = kind
+            self._clip_pending = "https://a.com/x.zip"
+            self.created = []
+
+        def _create_and_start(self, url):
+            self.created.append(url)
+
+    info = _Host("info")
+    mw.MainWindow._tray_message_clicked(info)
+    assert info.created == []
+    assert info._clip_pending == "https://a.com/x.zip"  # 不消费待确认链接
+
+    prompt = _Host("clip_prompt")
+    mw.MainWindow._tray_message_clicked(prompt)
+    assert prompt.created == ["https://a.com/x.zip"]
+    assert prompt._clip_pending is None
+    # 重复点击不重复添加
+    mw.MainWindow._tray_message_clicked(prompt)
+    assert prompt.created == ["https://a.com/x.zip"]
+
+
+def test_notify_capture_surfaces_source_of_new_task(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QSystemTrayIcon
+
+    class _Bar:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, text, timeout=0):
+            self.messages.append(text)
+
+    class _Tray:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, title, body, icon, timeout):
+            self.messages.append((title, body, icon, timeout))
+
+    class _Host:
+        def __init__(self):
+            self.status_bar = _Bar()
+            self.tray = _Tray()
+
+    host = _Host()
+    mw.MainWindow._notify_capture(host, "movie.mkv")
+    assert any("浏览器捕获" in m for m in host.status_bar.messages)
+    title, body, icon, _ms = host.tray.messages[0]
+    assert title == "SwiftDM" and "movie.mkv" in body
+    assert icon == QSystemTrayIcon.MessageIcon.Information
+    assert host._tray_msg_kind == "info"   # 点击不触发任何动作

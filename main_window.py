@@ -142,6 +142,19 @@ def _tray_icon(icon_state):
     return QIcon(pixmap)
 
 
+def _tray_bubble(owner, title, text, icon, msecs, kind="info"):
+    """弹托盘气泡并记录类型。完成/失败/捕获等提示点了不该有副作用，
+    只有「剪贴板链接待确认」气泡被点击后才添加下载。
+
+    收 owner（而非方法）是为了让测试能用鸭子宿主直接驱动这些通知路径。
+    """
+    owner._tray_msg_kind = kind
+    try:
+        owner.tray.showMessage(title, text, icon, msecs)
+    except Exception:
+        pass
+
+
 def _links_text(urls):
     """把任务链接拼成剪贴板文本（每行一个，去空去重保序）。"""
     seen, out = set(), []
@@ -1603,6 +1616,7 @@ class TaskDetailDialog(QDialog):
 class MainWindow(QMainWindow):
     """SwiftDM 主窗口"""
     log_signal = pyqtSignal(str)
+    capture_notified = pyqtSignal(str)  # 浏览器捕获到下载（monitor 线程 -> UI 线程）
 
     def __init__(self, http_port=5000, monitor=None):
         super().__init__()
@@ -1617,6 +1631,7 @@ class MainWindow(QMainWindow):
             logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))
         self.logger.addHandler(self._log_handler)
         self.log_signal.connect(self._append_log)
+        self.capture_notified.connect(self._notify_capture)
         self._cards = {}  # task_id -> TaskCard
         self._compact = False  # 任务列表紧凑模式
         self._selected_task_id = None  # 键盘/鼠标选中的任务（↑/↓ 导航）
@@ -1657,6 +1672,7 @@ class MainWindow(QMainWindow):
         # 剪贴板监听（默认关闭，设置里开启）：复制下载链接后拖盘提示
         self._clip_last = None      # 上一次处理过的剪贴板文本（去重）
         self._clip_pending = None   # 待用户点击拖盘确认的 URL
+        self._tray_msg_kind = None  # 最近一条托盘气泡类型：只有 clip_prompt 可点击添加
         self._clip_timer = QTimer(self)
         self._clip_timer.timeout.connect(self._check_clipboard)
         self._clip_timer.start(1000)
@@ -1978,8 +1994,8 @@ class MainWindow(QMainWindow):
         _save_window_geometry(self, _window_settings())
         event.ignore()
         self.hide()
-        self.tray.showMessage("SwiftDM", "已最小化到系统托盘，下载任务继续运行",
-                              QSystemTrayIcon.MessageIcon.Information, 2000)
+        _tray_bubble(self, "SwiftDM", "已最小化到系统托盘，下载任务继续运行",
+                          QSystemTrayIcon.MessageIcon.Information, 2000)
 
     # ==================== 数据刷新 ====================
 
@@ -2009,19 +2025,30 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._clip_pending = url
-        try:
-            self.tray.showMessage(
-                "SwiftDM", f"检测到下载链接，点击添加: {url[:60]}",
-                QSystemTrayIcon.MessageIcon.Information, 6000)
-        except Exception:
-            pass
+        _tray_bubble(self, "SwiftDM", f"检测到下载链接，点击添加: {url[:60]}",
+                          QSystemTrayIcon.MessageIcon.Information, 6000,
+                          kind="clip_prompt")
 
     def _tray_message_clicked(self):
-        """拖盘气泡点击：添加待确认的剪贴板链接。"""
+        """拖盘气泡点击：仅「剪贴板链接待确认」气泡触发添加。"""
+        if getattr(self, "_tray_msg_kind", None) != "clip_prompt":
+            return
+        self._tray_msg_kind = None
         url = self._clip_pending
         self._clip_pending = None
         if url:
             self._create_and_start(url)
+
+    def notify_capture(self, filename=""):
+        """浏览器监控线程入口：捕获到下载时通知 UI（线程安全，走信号队列）。"""
+        self.capture_notified.emit(filename or "")
+
+    def _notify_capture(self, filename):
+        """浏览器捕获提示：让用户知道新任务从哪来，而不是列表里凭空多一项。"""
+        name = filename or "文件"
+        self.status_bar.showMessage(f"🌐 浏览器捕获: {name}", 5000)
+        _tray_bubble(self, "SwiftDM", f"已捕获下载: {name}",
+                          QSystemTrayIcon.MessageIcon.Information, 4000)
 
     def _refresh(self):
         """定时刷新 UI"""
@@ -2161,7 +2188,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         name = task_data.get("filename", "文件")
-        self.tray.showMessage(
+        _tray_bubble(self, 
             "✅ 下载完成",
             f"{name} 已下载完成！",
             QSystemTrayIcon.MessageIcon.Information,
@@ -2205,8 +2232,8 @@ class MainWindow(QMainWindow):
         """新失败任务的聚合通知（托盘气泡 + 状态栏）。"""
         summary = _fail_summary_text(items)
         self.status_bar.showMessage(summary, 12000)
-        self.tray.showMessage("SwiftDM", summary,
-                              QSystemTrayIcon.MessageIcon.Warning, 8000)
+        _tray_bubble(self, "SwiftDM", summary,
+                          QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     # ==================== 操作处理 ====================
 

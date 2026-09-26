@@ -206,6 +206,8 @@ def main():
     if config.get("monitor_enabled"):
         monitor.start()
 
+    _ui_ref = {"window": None}   # 桌面窗口在下面才创建，回调通过它延迟取用
+
     def on_url_captured(url, filename):
         """浏览器捕获到 URL 时的回调"""
         import config
@@ -219,6 +221,13 @@ def main():
         task = manager.create_task(url, save_dir, filename, 8)
         task.start()
         print(f"[Monitor] 浏览器捕获下载: {task.filename}")
+        _win = _ui_ref["window"]
+        if _win is not None:
+            # 捕获来源对用户不可见，弹一条提示说明「这个任务是从浏览器来的」
+            try:
+                _win.notify_capture(task.filename)
+            except Exception:
+                pass
 
     monitor.on_url_captured = on_url_captured  # start() 已按配置调用过
 
@@ -272,6 +281,7 @@ def main():
         app.setQuitOnLastWindowClosed(False)  # 关闭窗口时隐藏到托盘
 
         window = MainWindow(http_port=web_port, monitor=monitor)
+        _ui_ref["window"] = window
         window.show()
 
         print("[OK] SwiftDM 已启动！\n")
