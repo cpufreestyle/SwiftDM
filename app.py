@@ -443,7 +443,9 @@ def self_test():
     os.makedirs(save_dir, exist_ok=True)
     url = request.host_url.rstrip("/") + "/api/local-test-file"
 
-    task = manager.create_task(url, save_dir, "swiftdm_local_test.bin", segments=8)
+    # 自检也得跟设置面板走；硬编码 8 会让限速下的自检结果毫无参考价值
+    task = manager.create_task(
+        url, save_dir, "swiftdm_local_test.bin", _default_segments())
     task.start()
 
     # 等待完成或失败（最多 30s）

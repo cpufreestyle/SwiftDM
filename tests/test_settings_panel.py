@@ -243,3 +243,50 @@ def test_compact_post_persists_and_round_trips():
         assert appmod.app.test_client().get("/api/settings").get_json()["compact"] is False
     finally:
         config.set("compact", saved)
+
+
+def test_web_can_run_the_backend_self_test(page):
+    """后端自检接口一直存在，但两个 UI 都没有入口。"""
+    assert 'id="selfTestBtn"' in page and 'id="selfTestStatus"' in page
+    assert 'api("/api/self-test")' in page
+    handler = page[page.index("async function runSelfTest"):]
+    handler = handler[:handler.index("\n}")]
+    assert "btn.disabled = true" in handler and "btn.disabled = false" in handler, "\u8981\u9632\u8fde\u70b9"
+    assert '"chip ok"' in handler and '"chip bad"' in handler
+
+
+def test_self_test_uses_the_configured_thread_count(monkeypatch):
+    """自检也得跟设置面板走；硬编码 8 会让限速下的结果毫无参考价值。"""
+    appmod.app.config["TESTING"] = True
+    saved = config.get("segments")
+    created = []
+
+    class _Task:
+        status = "completed"
+        error = None
+        task_id = "selftest-probe"
+        filepath = "C:/swiftdm-does-not-exist/x.bin"
+        _tmp_dir = "C:/swiftdm-does-not-exist/tmp"
+
+        def start(self):
+            pass
+
+    class _Mgr:
+        def create_task(self, *args, **kwargs):
+            created.append(args[3])
+            return _Task()
+
+        def remove_task(self, tid):
+            pass
+
+    monkeypatch.setattr("downloader.manager", _Mgr())
+    try:
+        for value, expected in ((6, 6), (99, config.SEGMENTS_MAX)):
+            config.set("segments", value)
+            created.clear()
+            resp = appmod.app.test_client().get("/api/self-test")
+            assert resp.status_code == 200
+            assert resp.get_json()["success"] is True
+            assert created == [expected], (value, created)
+    finally:
+        config.set("segments", saved)
