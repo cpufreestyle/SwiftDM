@@ -2006,10 +2006,10 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _setup_shortcuts(self):
-        """Global shortcuts: Ctrl+N new download, Ctrl+F focus the link box."""
+        """Global shortcuts: Ctrl+N new download, Ctrl+F focus the search box."""
         for _seq, _slot in (
             ("Ctrl+N", self._add_download),
-            ("Ctrl+F", self.url_input.setFocus),
+            ("Ctrl+F", self._focus_search),
             ("Up", lambda: self._move_selection(-1)),
             ("Down", lambda: self._move_selection(1)),
             ("Return", lambda: self._open_selected_task()),
@@ -2022,6 +2022,14 @@ class MainWindow(QMainWindow):
             _sc = QShortcut(QKeySequence(_seq), self)
             _sc.activated.connect(_slot)
             self._shortcuts.append((_seq, _sc))
+
+    def _focus_search(self):
+        """Ctrl+F 聚焦任务搜索框（与 Web 端、以及「Ctrl+F = 查找」的通用约定一致）。
+
+        链接输入框常驻工具栏最左侧且回车即新建，Ctrl+N 已覆盖新建入口，
+        这里再占一个 Ctrl+F 反而是把最常用的查找键让给了次要操作。
+        """
+        self.search_input.setFocus()
 
     def _close_task_detail(self):
         """Esc 关闭当前托盘/任务详情面板；未打开时空转。"""
@@ -2195,10 +2203,12 @@ class MainWindow(QMainWindow):
         self.kbd_hint.setObjectName("kbdHint")
         self.kbd_hint.setToolTip(
             "键盘导航：↑↓ 在可见任务间移动，回车打开文件；"
-            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择；"
+            "Ctrl+N 新建下载，Ctrl+F 搜索任务")
         self.kbd_hint.setAccessibleName(
             "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件；"
-            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择；"
+            "Ctrl+N 新建下载，Ctrl+F 搜索任务")
         fb.addWidget(self.kbd_hint)
         fb.addStretch(1)
         self.sort_combo = QComboBox()

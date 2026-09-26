@@ -12,7 +12,8 @@ const START = HTML.indexOf("// ===== 快捷键（与桌面端一致）=====");
 const END = HTML.indexOf("function extractDropUrls");
 assert.ok(START > 0 && END > START, "快捷键代码段必须存在");
 const CODE = HTML.slice(START, HTML.indexOf("document.addEventListener(\"keydown\", runShortcut);"))
-  + "\n;({ shortcutAction, runShortcut, stepFocus, setFocusTask, focusableCardIds });";
+  + "\n;({ shortcutAction, runShortcut, stepFocus, setFocusTask, focusableCardIds, "
+  + "selectAllVisible, onCardClick });";
 
 function makeSandbox(openModals = [], cardIds = []) {
   const focused = [];
@@ -21,6 +22,9 @@ function makeSandbox(openModals = [], cardIds = []) {
                     settingsModal: new Set(openModals.includes("settings") ? ["open"] : []) };
   const closed = [];
   const opened = [];
+  const toasts = [];
+  const picked = [];
+  const boxes = {};
   // 卡片桩：只有 id / classList / scrollIntoView，够脚本用
   const cards = cardIds.map((cid) => {
     const card = { id: "task-" + cid, scrolled: 0, _cls: new Set() };
@@ -34,7 +38,20 @@ function makeSandbox(openModals = [], cardIds = []) {
     console,
     closeDetail: () => closed.push("detail"),
     closeSettings: () => closed.push("settings"),
+    _selected: new Set(),
+    visibleTasks: () => [{ task_id: "t1" }, { task_id: "t2" }, { task_id: "t3" }],
+    updateSelectBar: () => toasts.push("__updateSelectBar"),
+    showToast: (msg) => toasts.push(msg),
+    togglePick: (cb) => picked.push([cb.dataset.id, cb.checked]),
     document: {
+      querySelector: (sel) => {
+        const m = /data-id="([^"]+)"/.exec(sel || "");
+        if (!m) return null;
+        // 同一个任务始终返回同一个元素（真实 DOM 也是这样），
+        // 不然第二次 Ctrl+点击看到的还是初始 checked=false
+        if (!boxes[m[1]]) boxes[m[1]] = { dataset: { id: m[1] }, checked: false };
+        return boxes[m[1]];
+      },
       getElementById: (id) => (
         id === "urlInput" ? { focus: () => focused.push("url"),
                               select: () => selected.push("url") }
@@ -57,7 +74,8 @@ function makeSandbox(openModals = [], cardIds = []) {
     openFile: (id) => opened.push(id),
   };
   const api = vm.runInNewContext(CODE, sandbox, { filename: "shortcut-section.js" });
-  return { api, focused, selected, opened, cards, classes, closed, sandbox };
+  return { api, focused, selected, opened, cards, classes, closed, sandbox,
+           toasts, picked, boxes };
 }
 
 // Ctrl/⌘+N、Ctrl+F 才触发；大小写与修饰键都认
@@ -195,3 +213,91 @@ console.log("test_web_shortcuts: all ok");
   assert.deepStrictEqual(opened, ["t1"]);       // 没有第二次打开
 }
 
+// ===== Ctrl+A 全选可见 / Esc 先清多选 / Ctrl+点击卡片切换勾选 =====
+//（与桌面端 _select_all_visible / _on_escape / TaskCard.mousePressEvent 对齐）
+{
+  const { api, sandbox, toasts } = makeSandbox();
+  assert.strictEqual(api.shortcutAction({ key: "a", ctrlKey: true }), "select_all_visible");
+  assert.strictEqual(api.shortcutAction({ key: "A", ctrlKey: true }), "select_all_visible");
+  assert.strictEqual(api.shortcutAction({ key: "a", metaKey: true }), "select_all_visible");
+  assert.strictEqual(api.shortcutAction({ key: "a" }), null);   // 裸 A 不拦
+}
+
+// Esc：有多选先清多选，没有才关弹窗
+{
+  const sel = makeSandbox(["detail"]);
+  sel.sandbox._selected.add("t1");
+  assert.strictEqual(sel.api.shortcutAction({ key: "Escape" }), "clear_selection");
+  const none = makeSandbox(["detail"]);
+  assert.strictEqual(none.api.shortcutAction({ key: "Escape" }), "close_detail");
+}
+
+// runShortcut：Ctrl+A 真的全选了可见任务并刷新操作条
+{
+  const { api, sandbox, toasts } = makeSandbox();
+  api.runShortcut(ev("a", true));
+  assert.deepStrictEqual([...sandbox._selected], ["t1", "t2", "t3"]);
+  // 顺序与桌面端一致：先刷操作条，再出提示
+  assert.deepStrictEqual(toasts, ["__updateSelectBar", "已选中 3 个任务"]);
+  // 再来一次是替换而不是叠加（_selected.clear 在先）
+  api.runShortcut(ev("a", true));
+  assert.strictEqual(sandbox._selected.size, 3);
+  // 空可见集时不出 toast
+  const empty = makeSandbox();
+  empty.sandbox.visibleTasks = () => [];
+  empty.api.selectAllVisible();
+  assert.strictEqual(empty.sandbox._selected.size, 0);
+  assert.deepStrictEqual(empty.toasts, ["__updateSelectBar"]);
+}
+
+// runShortcut：Esc 走 clearSelection（清空勾选 + 收起操作条）
+{
+  const cleared = [];
+  const none = makeSandbox([]);
+  none.sandbox.clearSelection = () => cleared.push("cleared");
+  none.api.runShortcut(ev("Escape"));
+  assert.deepStrictEqual(cleared, []);   // 没有多选时 Esc 不碰 clearSelection
+
+  const some = makeSandbox([]);
+  some.sandbox._selected.add("t1");
+  some.sandbox.clearSelection = () => cleared.push("cleared");
+  some.api.runShortcut(ev("Escape"));
+  assert.deepStrictEqual(cleared, ["cleared"]);
+}
+
+// onCardClick：Ctrl+点击空白处切换勾选；点勾选框/按钮不叠切换
+{
+  const { api, picked, boxes } = makeSandbox();
+  const blank = { ctrlKey: true, target: { closest: () => null } };
+  api.onCardClick(blank, "t1");
+  assert.deepStrictEqual(picked, [["t1", true]]);
+  assert.strictEqual(boxes.t1.checked, true);
+  api.onCardClick({ ctrlKey: true, target: { closest: () => null } }, "t1");
+  assert.deepStrictEqual(picked, [["t1", true], ["t1", false]]);
+  // 无修饰键 / 点在交互控件上一律不拦
+  api.onCardClick({ ctrlKey: false, target: { closest: () => null } }, "t1");
+  // 真实 closest() 是按选择器列表匹配，桩也要按子串匹配，否则等于没测守卫
+  api.onCardClick({ ctrlKey: true, target: { closest: (s) => (s.indexOf("input") >= 0 ? {} : null) } }, "t1");
+  api.onCardClick({ metaKey: true, target: { closest: (s) => (s.indexOf("button") >= 0 ? {} : null) } }, "t1");
+  assert.deepStrictEqual(picked, [["t1", true], ["t1", false]]);
+  api.onCardClick(null, "t1");
+  assert.deepStrictEqual(picked, [["t1", true], ["t1", false]]);
+}
+
+// Ctrl+A 不能被输入框吃掉：焦点在 input/select/textarea 上时让位；
+// 空白处才 preventDefault（否则浏览器会把整页文本全选）。
+// 「有没有真去全选」借 updateSelectBar 桩计数（selectAllVisible 里必调它）。
+{
+  const { api, toasts } = makeSandbox();
+  const runs = () => toasts.filter((t) => t === "__updateSelectBar").length;
+  for (const tag of ["INPUT", "Select", "textarea"]) {
+    const e = Object.assign(ev("a", true), { target: { tagName: tag } });
+    api.runShortcut(e);
+    assert.strictEqual(e.prevented, false, tag + " 上不该抢 Ctrl+A");
+    assert.strictEqual(runs(), 0, tag + " 上不该全选任务");
+  }
+  const blank = ev("a", true);
+  api.runShortcut(blank);
+  assert.strictEqual(blank.prevented, true);
+  assert.strictEqual(runs(), 1);
+}

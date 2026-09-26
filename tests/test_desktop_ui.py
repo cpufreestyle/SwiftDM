@@ -92,6 +92,7 @@ def test_keyboard_shortcuts_registered(qt_app):
         _close_task_detail = mw.MainWindow._close_task_detail
         _on_escape = mw.MainWindow._on_escape
         _select_all_visible = mw.MainWindow._select_all_visible
+        _focus_search = mw.MainWindow._focus_search
 
         def _add_download(self):  # pragma: no cover - just a slot target
             pass
@@ -104,6 +105,15 @@ def test_keyboard_shortcuts_registered(qt_app):
     assert "Escape" in seqs, seqs
     # Ctrl+A 全选可见任务：桌面端多选批量的键盘入口
     assert "Ctrl+A" in seqs, seqs
+
+    # Ctrl+F 聚焦搜索框（与 Web 端、以及「Ctrl+F = 查找」的通用约定一致；
+    # 链接输入框常驻工具栏，Ctrl+N 已覆盖新建入口）
+    host2 = _Host()
+    host2.search_input = QLineEdit()
+    focused = []
+    host2.search_input.setFocus = lambda: focused.append("search")
+    mw.MainWindow._focus_search(host2)
+    assert focused == ["search"]
 
 
 def test_escape_closes_task_detail(qt_app):
@@ -2022,10 +2032,12 @@ def test_filter_bar_hints_at_the_task_keyboard_shortcuts(qt_app, monkeypatch):
         # 多选三件套（Ctrl+点击 / Ctrl+A / Esc）也要在悬浮说明里说清
         assert "↑↓" in hint.toolTip() and "回车" in hint.toolTip()
         assert "Ctrl" in hint.toolTip() and "Esc" in hint.toolTip()
+        assert "Ctrl+N" in hint.toolTip() and "Ctrl+F" in hint.toolTip()
         assert "Ctrl" in hint.accessibleName() and "Esc" in hint.accessibleName()
         assert hint.accessibleName() == (
             "键盘导航提示：↑↓ 在可见任务间移动，回车打开文件；"
-            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择")
+            "Ctrl+点击卡片多选，Ctrl+A 全选可见任务，Esc 取消选择；"
+            "Ctrl+N 新建下载，Ctrl+F 搜索任务")
 
         # 位置：伸缩位是「左组 / 右组」的分界，addStretch 之前的都跟着芯片在左边
         layout = hint.parentWidget().layout()
@@ -2246,6 +2258,7 @@ def test_batch_shortcuts_registered_and_escape_prefers_selection(qt_app):
         _close_task_detail = mw.MainWindow._close_task_detail
         _on_escape = mw.MainWindow._on_escape
         _select_all_visible = mw.MainWindow._select_all_visible
+        _focus_search = mw.MainWindow._focus_search
 
         def _add_download(self):  # pragma: no cover - 只是槽位
             pass
@@ -2343,3 +2356,26 @@ def test_ctrl_a_and_escape_drive_the_batch_selection(qt_app, monkeypatch):
         qt_app.processEvents()
         assert win._selected_ids == set(), "Esc 要先收起多选"
         assert not win.select_bar.isVisible()
+
+def test_ctrl_f_focuses_search_box_and_ctrl_a_selects_visible(qt_app, monkeypatch):
+    """Ctrl+F 聚焦搜索框（不是链接框，那与通用「查找」约定相反）；
+    Ctrl+A 全选当前可见任务。两条都走真实按键，验证快捷键真的接对了线。"""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    tasks = [_fake_batch_task("dl", "downloading"), _fake_batch_task("pz", "paused")]
+    with _batch_window(qt_app, monkeypatch, tasks) as (win, mgr):
+        win.scroll.setFocus()
+        qt_app.processEvents()
+        QTest.keyClick(win, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        qt_app.processEvents()
+        assert win._selected_ids == {"dl", "pz"}
+        assert win.select_count.text() == "已选 2 项"
+
+        # 焦点在链接框时按 Ctrl+F：焦点要挪到搜索框（Ctrl+F 不再是「跳到链接框」）
+        win.url_input.setFocus()
+        qt_app.processEvents()
+        QTest.keyClick(win, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+        qt_app.processEvents()
+        assert win.focusWidget() is win.search_input, (
+            f"Ctrl+F 后焦点在 {_widget_name(win.focusWidget())}，应该落在搜索框")

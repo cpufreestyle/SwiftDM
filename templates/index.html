@@ -747,7 +747,7 @@ textarea:focus-visible,
       <option value="progress">进度</option>
       <option value="speed">速度</option>
     </select>
-    <span class="kbd-hint" title="键盘导航：↑↓ 在可见任务间移动，回车打开文件">↑↓ 选择任务 · Enter 打开</span>
+    <span class="kbd-hint" title="键盘导航：↑↓ 在可见任务间移动，回车打开文件；Ctrl+A 全选可见任务，Esc 取消选择">↑↓ 选择任务 · Enter 打开 · Ctrl+A 全选</span>
     <button class="filter-btn" id="compactBtn" onclick="toggleCompact()"
             title="紧凑模式：隐藏次要信息，一屏看更多任务（会被记住）">≡ 紧凑</button>
   </div>
@@ -1045,12 +1045,17 @@ document.addEventListener("drop", async e => {
 });
 
 // ===== 快捷键（与桌面端一致）=====
-// Ctrl/⌘+N 聚焦链接输入框并全选，Ctrl/⌘+F 聚焦搜索框，Esc 关闭详情/设置弹窗。
+// Ctrl/⌘+N 聚焦链接输入框并全选，Ctrl/⌘+F 聚焦搜索框，Ctrl+A 全选可见任务；
+// Esc 先取消多选，没有再关详情/设置弹窗。
 // 纯函数 shortcutAction 决定「该做什么」，runShortcut 只负责执行，便于单测。
 function shortcutAction(e) {
   if (!e) return null;
   const key = String(e.key || "").toLowerCase();
   if (key === "escape") {
+    // 有多选时 Esc 先收起批量选择（与桌面端 _on_escape 同优先级）
+    if (typeof _selected !== "undefined" && _selected && _selected.size > 0) {
+      return "clear_selection";
+    }
     const detail = document.getElementById("detailModal");
     if (detail && detail.classList.contains("open")) return "close_detail";
     const settings = document.getElementById("settingsModal");
@@ -1065,20 +1070,24 @@ function shortcutAction(e) {
   }
   if (key === "n") return "focus_url";
   if (key === "f") return "focus_search";
+  if (key === "a") return "select_all_visible";
   return null;
 }
 
 function runShortcut(e) {
   const action = shortcutAction(e);
   if (!action) return;
-  // 焦点类快捷键要抢掉浏览器默认行为（Ctrl+F 是页面查找，会抢焦点）
-  if (action === "focus_url" || action === "focus_search") e.preventDefault();
-  // 焦点在输入类控件上时让位给控件自身（与桌面端 _keyboard_nav_allowed 一致）
-  if (action === "focus_prev" || action === "focus_next" || action === "open_focused") {
+  // 焦点在输入类控件上时让位给控件自身（与桌面端 _keyboard_nav_allowed 一致）。
+  // 必须排在 preventDefault 之前：否则输入框里的 Ctrl+A「全选文字」会被拦掉。
+  if (action === "focus_prev" || action === "focus_next" || action === "open_focused"
+      || action === "select_all_visible") {
     const _tag = String((e.target && e.target.tagName) || "").toLowerCase();
     if (_tag === "input" || _tag === "select" || _tag === "textarea"
         || (e.target && e.target.isContentEditable)) return;
   }
+  // 焦点类快捷键要抢掉浏览器默认行为（Ctrl+F 是页面查找，Ctrl+A 是全选页面）
+  if (action === "focus_url" || action === "focus_search"
+      || action === "select_all_visible") e.preventDefault();
   if (action === "focus_url") {
     const el = document.getElementById("urlInput");
     if (el) { el.focus(); el.select(); }
@@ -1096,6 +1105,37 @@ function runShortcut(e) {
   } else if (action === "open_focused") {
     // 回车打开选中任务的文件（与桌面端 Enter 同一路径）
     openFile(_focusTaskId);
+  } else if (action === "select_all_visible") {
+    selectAllVisible();
+  } else if (action === "clear_selection") {
+    clearSelection();
+  }
+}
+
+// Ctrl+A：全选当前过滤 + 搜索下可见的任务（与桌面端 _select_all_visible 对齐）
+function selectAllVisible() {
+  const ids = visibleTasks().map(t => t.task_id);
+  _selected.clear();
+  ids.forEach(id => _selected.add(id));
+  // 勾选框跟着回显；被过滤掉的卡片不在 DOM 里，由 _selected 替它们记着
+  document.querySelectorAll(".task-pick-box").forEach(cb => {
+    cb.checked = _selected.has(cb.dataset.id);
+  });
+  updateSelectBar();
+  if (ids.length) showToast(`已选中 ${ids.length} 个任务`);
+}
+
+// Ctrl+点击卡片空白处 = 勾选/取消勾选（与桌面端 TaskCard.mousePressEvent 一致）
+function onCardClick(event, taskId) {
+  if (!event || !(event.ctrlKey || event.metaKey)) return;
+  const t = event.target;
+  // 勾选框/按钮/链接自己会处理这次点击，别叠一次切换
+  if (t && typeof t.closest === "function"
+      && t.closest(".task-pick, button, a, select, textarea, input")) return;
+  const box = document.querySelector(`.task-pick-box[data-id="${taskId}"]`);
+  if (box) {
+    box.checked = !box.checked;
+    togglePick(box);
   }
 }
 
@@ -1716,6 +1756,8 @@ function createTaskCard(task) {
   const card = document.createElement("div");
   card.className = `task-card ${task.status}`;
   card.id = `task-${task.task_id}`;
+  // Ctrl+点击卡片空白处 = 切换该任务的勾选（与桌面端 TaskCard 一致）
+  card.onclick = (event) => onCardClick(event, task.task_id);
 
   const progressPercent = task.progress || 0;
 
