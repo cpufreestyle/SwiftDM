@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 上表的未提交改动已于 commit `869b289` 提交（提交时顺带修复了 `background.js` 一处 HEAD 里就存在的非法语法——可选链作赋值左值，曾导致 MV3 service worker 整体加载失败，浏览器接管功能实际不可用；修复后需重新加载扩展验证）。
+- 状态（截至 commit `240a4d7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 4 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -78,38 +78,33 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-26，已推送）
 
-主题：扩展 popup 补上「任务」页 —— 最近的失败任务 + 一键重试（含单个 / 全部）。
-每项改动均跑过 node 测试 + 全量 pytest + `python build_exe.py` + `python test_binary.py`（全绿）后提交。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
 
-1. **popup 第三页「任务」**：`extension/popup.html` 新增页签与面板；失败/已取消任务按
-   「创建顺序倒序」取最近 8 条，每行显示文件名 + 错误原因 + 重试按钮。
-   - 打开弹窗就刷新失败角标（不用点进页签也能看到有几条失败），≥2 条时才显示「全部重试」。
-2. **重试接线**：`extension/background.js` 在同一 `onMessage` handler 内新增
-   `getTasks`（GET `/api/tasks`）、`retryTask`（POST `/api/retry/<id>`，`taskId` 走
-   `encodeURIComponent`）、`retryAllTasks`（POST `/api/retry_all`）；缺 `taskId` 直接拒绝、不发请求。
-3. **失败反馈闭环**：重试成功后按钮变「已重试」并在 1.2s 后刷新列表；失败则按钮恢复可点并把
-   后端原因回填到 `title`；连不上 SwiftDM 时面板给提示而不是空白。
-4. **测试**：新增 `tests/test_extension_panel.js`（vm + 最小 DOM 桩跑真实 popup.js：
-   `failedTasksOf` 筛选/排序/上限、行渲染与 HTML 转义、点重试的消息往返、失败与掉线路径）；
-   `tests/test_background_load.js` 扩到 ⑩ 条断言（GET 无 body、taskId 编码、缺参不发请求）。
-5. **popup 头部实时状态**（同一轮追加）：`liveStatsOf()` + `loadLive()` 在打开弹窗时刷新
-   「下载中 / 总速度 / 失败」，每 2 秒轮询，且与失败角标/列表共用同一次 `/api/tasks` 响应。
-   顺手修掉两处会咬人的地方：
-   - `liveStatsOf().failed` 不用后端 `stats.failed`（那只数 `failed`，会和角标对不上），
-     改为与「任务」页同一口径：失败 + 已取消（两者都可一键重试）。
-   - `loadTasks` 原先用「参数为 undefined 就重新请求」的实现，响应为空时会无限递归，
-     现改为 `loadTasks()`（取数）→ `renderTasks(res)`（渲染）两层，掉线只渲染提示、不再递归。
-6. **本地 .torrent 种子支持**（同一轮追加）：此前只能在「新建下载」里粘 magnet 或
-   http(s) 种子地址，本地种子文件无处可加。现在可以把 `.torrent` 文件直接拖进窗口：
-   - `downloader._is_torrent_url` 认出「无协议前缀且以 .torrent 结尾」的本地路径，路由到 BT 引擎；
-   - `torrent._is_local_torrent_path()` + `_fetch_torrent_bytes()` 本地路径直读，文件不存在时报明确错误；
-   - `TorrentTask` 本地种子先用种子文件名占位，元数据就绪后再换成 torrent 里的真实内容名
-     （新增 `_filename_auto`，用户显式命名仍优先）；
-   - `main_window._torrent_paths_from_mime()` + `dragEnterEvent/dropEvent` 支持「链接 + 种子」混拖。
-7. **上一轮**（commit `0e5b42c`）：桌面浅色主题（`THEMES` token 化 QSS、`TaskCard.apply_theme`、
-   设置「外观 → 界面主题」、`config.py` 新键 `theme`）。
+本轮共 4 个 commit（HEAD = `240a4d7`，`git status -sb` 与 origin/main 0/0）：
 
-剩余候选：无（待用户反馈后再定）。
+1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
+   改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
+   - 新增 `tests/test_dispatch.py::test_no_entry_point_hard_codes_the_thread_count`：源码级守卫，扫描全部受版本控制的 `.py/.js/.html`，任何 `create_task(` 调用点（downloader.py 的签名默认值除外）出现裸整数字面量即失败；
+     已用“把 8 塞回去”的方式验证过它真的会红。
+   - 两个行为级测试覆盖 `browser_monitor` 的两个入口（3/16/99/0 四组值，含 1-32 钳制与未配置回退），
+     跑完用真 `config.set` + finally 还原。
+2. **Web 端 theme/filter/sort 接入共享配置**（`5dd2619`）：此前只存 localStorage，桌面端读写同一份 `~/.swiftdm/config.json`，两边各记一份、切换即丢。
+   - `app.py`：POST 接受三个键（按桌面端同套键名校验，非法值回退默认），GET 下发；
+   - `templates/index.html`：`setTheme/setFilter/setSort` 改为 POST，`refreshSettings()` 里新增 `syncThemeInput/syncFilterInput/syncSortInput`，
+     服务端值优先、localStorage 只做首屏缓存（沿用 compact 的模式）；
+   - `config.py` `_DEFAULTS` 补 `filter: all` / `sort: default`；
+   - 主题说明文案改为“与桌面端共用”；`test_api_contract.js` 的设置契约自动覆盖新键。
+3. **删除死接口 `/api/clipboard`**（`240a4d7`）：写入的 `_clipboard_url` 全仓库无人读取，三个端也都没有调用方；
+   剪贴板功能实际由 `browser_monitor.py` 的系统剪贴板监听实现。
+
+验证：全量 pytest 333 passed / 1 skipped；11 个 node 测试全绿；
+`build_exe.py` 重建 + `test_binary.py` 全过（`app.py` 参与打包）。
+
+剩余候选：
+- `downloader.create_task` 的 `segments=8` 形参默认值可改为 None + 内部读 config，让“不传参”与“传 None”语义统一（当前所有调用点已显式传值，属防御性改动）。
+- 托盘“失败数”角标 16px 可读性差（优先级低）。
+- 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
+- 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
 
 ---
 
