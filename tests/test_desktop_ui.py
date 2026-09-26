@@ -195,6 +195,24 @@ def test_finish_countdown_text_tolerates_junk_remaining():
     assert mw._finish_countdown_text("shutdown", "abc") is None
 
 
+def test_tray_icon_state_priority():
+    import main_window as mw
+
+    assert mw._tray_icon_state(0, 0) == "idle"
+    assert mw._tray_icon_state(3, 0) == "downloading"
+    assert mw._tray_icon_state(3, 5) == "downloading"   # 下载中优先于有失败
+    assert mw._tray_icon_state(0, 2) == "attention"
+    assert mw._tray_icon_state(0, 0) == "idle"
+
+
+def test_tray_icon_renders_every_state(qt_app):
+    import main_window as mw
+
+    for state in mw.TRAY_ICON_STATES:
+        icon = mw._tray_icon(state)
+        assert not icon.isNull()
+
+
 def test_step_selection_moves_clamps_and_handles_unknown():
     import main_window as mw
 

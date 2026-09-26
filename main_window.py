@@ -16,8 +16,10 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl
-from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QDrag, QShortcut, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint
+from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
+                     QPainter, QBrush, QDrag, QShortcut, QKeySequence,
+                     QPolygon)
 from log_helper import setup_logging, QtLogHandler
 
 
@@ -78,6 +80,43 @@ def _keyboard_nav_allowed(focus_widget):
     if focus_widget is None:
         return True
     return not isinstance(focus_widget, NAV_INPUT_TYPES)
+
+
+TRAY_ICON_STATES = ("idle", "downloading", "attention")
+TRAY_ICON_STYLE = {
+    "idle": {"bg": "#6c5ce7", "fg": "#ffffff"},
+    "downloading": {"bg": "#00d2a0", "fg": "#06281f"},
+    "attention": {"bg": "#ff5e7a", "fg": "#2a0a12"},
+}
+
+
+def _tray_icon_state(active, failed):
+    """按活跃/失败任务数推导托盘图标状态：下载中 > 有失败 > 空闲。"""
+    if active > 0:
+        return "downloading"
+    if failed > 0:
+        return "attention"
+    return "idle"
+
+
+def _tray_icon(icon_state):
+    """按状态绘制托盘图标（圆角方块 + 向下箭头；attention 加白色角标）。"""
+    style = TRAY_ICON_STYLE.get(icon_state, TRAY_ICON_STYLE["idle"])
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(style["bg"])))
+    painter.drawRoundedRect(2, 4, 28, 24, 6, 6)
+    painter.setBrush(QBrush(QColor(style["fg"])))
+    painter.drawRoundedRect(14, 8, 4, 12, 2, 2)          # 箭头杆
+    painter.drawPolygon(QPolygon([QPoint(11, 17), QPoint(21, 17), QPoint(16, 25)]))
+    if icon_state == "attention":
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        painter.drawEllipse(20, 20, 9, 9)               # 右下角提示点
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _finish_countdown_text(action, remaining):
@@ -1100,18 +1139,10 @@ class MainWindow(QMainWindow):
                 self.btn_log.setChecked(True)
 
     def _setup_tray(self):
+        self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
         self.tray = QSystemTrayIcon(self)
-        # 创建一个简单的托盘图标
-        pixmap = QPixmap(32, 32)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setBrush(QBrush(QColor("#6c5ce7")))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(2, 4, 28, 24, 6, 6)
-        painter.setBrush(QBrush(QColor("#fff")))
-        painter.drawRoundedRect(8, 12, 16, 4, 2, 2)
-        painter.end()
-        self.tray.setIcon(QIcon(pixmap))
+        self.tray.setIcon(_tray_icon("idle"))
+        self._tray_icon_state = "idle"
         self.tray.setToolTip("SwiftDM - 下载管理器")
 
         tray_menu = QMenu()
@@ -1126,6 +1157,14 @@ class MainWindow(QMainWindow):
         self.tray.setContextMenu(tray_menu)
         self.tray.activated.connect(self._tray_activated)
         self.tray.show()
+
+    def _update_tray_icon(self, active, failed):
+        """托盘图标随任务状态切换（下载中/空闲/有失败）；状态未变则跳过。"""
+        state = _tray_icon_state(active, failed)
+        if state == self._tray_icon_state:
+            return
+        self._tray_icon_state = state
+        self.tray.setIcon(_tray_icon(state))
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -1162,6 +1201,7 @@ class MainWindow(QMainWindow):
             )
             self.setWindowTitle(_status_title(stats["active"], stats["total_speed"], stats["total"]))
             self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"], stats["total"]))
+            self._update_tray_icon(stats["active"], stats["failed"])
             self._update_overall(tasks)
             self._update_finish_countdown()
 
