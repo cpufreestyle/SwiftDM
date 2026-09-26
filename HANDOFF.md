@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `fbb7004`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `57da5a6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 25 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -420,6 +420,31 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      现在改为只对 failed 显示，原因仍然能在详情弹窗里看到；变异测试取掉限定即红。
    - 本轮还做了一轮实拍走查：定时任务卡片（角标、“取消定时”按钮、设置面板列表、取消后表单刷新）、
      分段进度条（3/8 段三态正常）、详情弹窗、搜索空态均无异常；浅色主题下各面板也复核无溢出。
+26. **实时速度曲线（桌面 + Web 双端，学习开源同类后的美观/实用填补）**（`57da5a6`）：IDM / Motrix / FDM 都有速率图，
+    而 SwiftDM 的总速度一直只是一行文本——「带宽到底跑满没跑满」全靠猜，空闲时头部也死气沉沉。
+    本轮给两个完整 UI 各加一条实时曲线，两端同一套取舍：
+   - 采样：Web 端由 `renderStats` 在每次 SSE 推送（0.5s）后压入，桌面端由既有 500ms `_refresh` 推进；
+     只留最近 90 个点（约 45 秒），超出即丢最旧的点——定长环形缓冲，不随运行时间增长。
+   - 画法：折线 + 半透明填充。Web 端 canvas 按 `devicePixelRatio` 放大 backing store（否则高分屏发虚），
+     并用 `requestAnimationFrame` 合并重绘（SSE 抖动不会一帧画两次）；桌面端 `SpeedGraph(QWidget)` 自绘，
+     线宽 1.5px 取 2（1.5 在高 DPI 下会被取整吞掉）。
+   - 颜色一条都没写死：全部读主题令牌（Web 读 `--accent2`/`--border` 计算值，桌面读 `THEMES`），两套主题自动跟随。
+     CSS/注释禁色值的守卫管不到 canvas 绘制，因此新增守卫专门钉住「必须走 `getComputedStyle(el)` 取令牌」——
+     换成 `document.body` 一样能取到色，但画布一旦被挪出 body（弹窗、Shadow DOM）颜色就悄悄失灵，这条变异实测能红。
+   - 可访问性：画布 `role="img"` + `aria-label`；桌面端 `setAccessibleName` + tooltip 带窗口长度说明；
+     Web 端 title 常驻「当前 / 峰值 / 窗口秒数」，鼠标悬停即可读出。
+   - 踩坑记录（重要，只有真执行页面才暴露）：绘制被接进 `applyTheme()`，而它在脚本顶层就会被调用，
+     `speedSamples` 的 const 声明却在它之后——落进 TDZ，整段内联脚本在加载时抛 ReferenceError 半途而废。
+     `node --check`、所有源码级断言、pytest 全绿也看不见。现在声明前移到脚本最开头，并新增 vm 冒烟测试：
+     用通用 Proxy 桩跑完整段内联脚本，任何顶层初始化顺序错误都会当场炸出来。
+   - 测试：Web 源码守卫 8 条（画布+aria、喂样、环形缓冲、令牌取色、取色对象、主题/resize 重绘、DPR+rAF、CSS 不写色值）；
+     `tests/test_web_speed_graph.js` 行为级（点几何、缓冲裁剪、canvas 调用序列、DPR 缩放、title、零尺寸安全、整段脚本冒烟）；
+     桌面 `tests/test_desktop_ui.py` 离屏渲染 5 条（有采样必须画出像素、两套主题渲染不同、环形缓冲、可访问名、刷新/主题挂点）。
+     变异测试：Web 7/7、桌面 5/5 全红，TDZ 复现变异同样被冒烟测试抓住。
+   - 验证：`python -m pytest tests -q` 397 passed / 1 skipped；14 个 node 套件全绿；
+     Playwright 实开 Flask 页面量过 canvas：空闲 140 个着色像素（仅底线），推入 40 个采样后 1846 个（折线+填充真的画出来了），
+     切主题后重绘正常、着色像素不丢；暗/浅两主题截图见 `_speedgraph_*.png`。
+     复现脚本留在 `_browsercheck/speed_graph_render.py`（gitignore），两个变异脚本同目录。
 ---
 
 ## 6. 关键文件速查
