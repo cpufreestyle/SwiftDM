@@ -136,3 +136,10 @@ def test_web_has_retry_all_failed_action(page):
     body = page[page.index("async function retryAllFailed"):][:700]
     assert "/api/retry_all" in body
     assert "confirm(" in body
+
+
+def test_web_has_task_search_box(page):
+    assert 'id="searchInput"' in page
+    assert "function setSearch" in page
+    assert "function matchSearch" in page
+    assert "matchFilter(t) && matchSearch(t)" in page

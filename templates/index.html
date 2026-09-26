@@ -480,6 +480,10 @@ body {
 .filter-btn:hover { color: var(--text); border-color: var(--accent2); }
 .filter-btn.active { background: var(--accent); border-color: var(--accent); color:#fff; }
 .filter-btn .fc { font-size:11px; opacity:.85; background: rgba(255,255,255,.12); border-radius:8px; padding:0 6px; }
+.search-input { margin-left:auto; background: var(--surface2); border:1px solid var(--border); color: var(--text);
+  border-radius:16px; padding:5px 12px; font-size:12px; width:180px; outline:none; }
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--text2); }
 .filter-empty { color: var(--text2); font-size:13px; text-align:center; padding:28px 0; }
 </style>
 </head>
@@ -557,6 +561,7 @@ body {
     <button class="filter-btn" data-filter="active" onclick="setFilter('active')">进行中<span class="fc" id="fc-active">0</span></button>
     <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
     <button class="filter-btn" data-filter="failed" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
+    <input type="text" id="searchInput" class="search-input" placeholder="搜索任务…" oninput="setSearch(this.value)">
   </div>
 
   <!-- 下载列表 -->
@@ -870,6 +875,19 @@ function matchFilter(t) {
   }
 }
 
+let searchQuery = "";
+function setSearch(q) {
+  const v = (q || "").trim().toLowerCase();
+  if (v === searchQuery) return;
+  searchQuery = v;
+  renderTasks(_lastTasks);
+}
+function matchSearch(t) {
+  if (!searchQuery) return true;
+  return String(t.filename || "").toLowerCase().indexOf(searchQuery) >= 0
+      || String(t.url || "").toLowerCase().indexOf(searchQuery) >= 0;
+}
+
 function currentFilterLabel() {
   return { all: "全部", active: "进行中", completed: "已完成", failed: "失败" }[currentFilter] || "该";
 }
@@ -919,10 +937,13 @@ function renderTasks(tasks) {
     return;
   }
 
-  const view = tasks.filter(matchFilter);
+  const view = tasks.filter(t => matchFilter(t) && matchSearch(t));
   if (view.length === 0) {
-    container.innerHTML = `<div class="filter-empty">${currentFilterLabel()}下暂无任务</div>`;
-    document.getElementById("taskCountLabel").textContent = `${currentFilterLabel()}下暂无任务`;
+    const _msg = searchQuery
+      ? `没有匹配「${searchQuery}」的任务`
+      : `${currentFilterLabel()}下暂无任务`;
+    container.innerHTML = `<div class="filter-empty">${_msg}</div>`;
+    document.getElementById("taskCountLabel").textContent = _msg;
     return;
   }
 

@@ -716,6 +716,7 @@ class MainWindow(QMainWindow):
         self.logger.addHandler(self._log_handler)
         self.log_signal.connect(self._append_log)
         self._cards = {}  # task_id -> TaskCard
+        self._search = ""  # 任务搜索关键字（文件名/链接，大小写不敏感）
         self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
         self._prev_statuses = {}  # task_id -> status
@@ -867,6 +868,12 @@ class MainWindow(QMainWindow):
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
         fb.addStretch(1)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("搜索任务…")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setFixedWidth(200)
+        self.search_input.textChanged.connect(self._set_search)
+        fb.addWidget(self.search_input)
         if self._filter in self._filter_btns:
             self._filter_btns[self._filter].setChecked(True)
         layout.addWidget(filter_bar)
@@ -1060,12 +1067,15 @@ class MainWindow(QMainWindow):
             self._update_filter_counts(task_dict)
             _visible = 0
             for _tid, _card in self._cards.items():
-                _show = self._match_filter(task_dict.get(_tid, {}))
+                _show = (self._match_filter(task_dict.get(_tid, {}))
+                         and self._match_search(task_dict.get(_tid, {}), self._search))
                 _card.setVisible(_show)
                 if _show:
                     _visible += 1
             if _visible == 0:
-                self.empty_label.setText(self._filter_hint())
+                self.empty_label.setText(
+                    f"没有匹配「{self._search}」的任务" if self._search
+                    else self._filter_hint())
                 self.empty_label.show()
             else:
                 self.empty_label.hide()
@@ -1159,6 +1169,23 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._refresh()
+
+    def _set_search(self, text):
+        """按文件名/链接关键字过滤任务列表。"""
+        q = (text or "").strip().lower()
+        if q == self._search:
+            return
+        self._search = q
+        self._refresh()
+
+    @staticmethod
+    def _match_search(data, query):
+        """关键字匹配文件名或下载链接（大小写不敏感）；空关键字时全部通过。"""
+        q = (query or "").strip().lower()
+        if not q:
+            return True
+        return (q in str(data.get("filename", "")).lower()
+                or q in str(data.get("url", "")).lower())
 
     def _match_filter(self, data):
         f = self._filter

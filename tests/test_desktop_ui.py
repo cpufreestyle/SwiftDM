@@ -132,3 +132,14 @@ def test_window_geometry_saved_and_restored(qt_app, tmp_path):
         for k in s.allKeys():
             s.remove(k)
         s.sync()
+
+
+def test_match_search_matches_filename_and_url(qt_app):
+    import main_window as mw
+    m = mw.MainWindow._match_search
+    assert m({"filename": "Ubuntu-24.04.iso", "url": "https://x/y.bin"}, "ubuntu") is True
+    assert m({"filename": "a.bin", "url": "https://example.com/patch.zip"}, "patch") is True
+    assert m({"filename": "a.bin", "url": "https://example.com"}, "zzz") is False
+    assert m({"filename": "a.bin", "url": "https://example.com"}, "") is True
+    assert m({"filename": "a.bin", "url": "https://example.com"}, "  ") is True
+    assert m({}, "any") is False
