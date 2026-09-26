@@ -1458,3 +1458,14 @@ def test_task_detail_dialog_copy_details_button(qt_app):
     dlg.update_data(dict(data, filename="other.bin"))
     copy_btn[0].click()
     assert "文件名: other.bin" in QApplication.clipboard().text()
+
+
+def test_reason_hint_covers_download_failed():
+    """HTTP 分段失败是最高频的失败类型，桌面端必须给得出可操作提示。"""
+    import main_window as mw
+    hint = mw._reason_hint("download_failed")
+    assert "重试" in hint
+    # 与 Web 端同源的其它键仍然可用
+    assert "ffmpeg" in mw._reason_hint("needs_ffmpeg")
+    assert mw._reason_hint("") == ""
+    assert mw._reason_hint("unknown_reason") == ""

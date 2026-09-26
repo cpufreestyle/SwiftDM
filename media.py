@@ -541,6 +541,9 @@ def _reason_from_text(text):
 
 
 _MEDIA_HINTS = {
+    # download_failed 由 DownloadTask 的分段失败置位（最常见的失败类型），
+    # 桌面端卡片/详情面板依赖这张表给可操作提示，漏键就等于没有提示
+    "download_failed": "直链下载失败，可点击重试从已有分片继续",
     "drm_protected": "资源受 DRM 保护，无法下载（SwiftDM 不解密受保护内容）",
     "needs_ffmpeg": "缺少 ffmpeg：请安装 ffmpeg 并加入系统 PATH 后重试",
     "cookies_required": "该站点需要登录：请在浏览器登录后重试，或手动复制下载链接",
