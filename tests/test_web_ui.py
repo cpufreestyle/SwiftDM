@@ -642,3 +642,22 @@ def test_web_failed_count_and_filter_speak_the_same_language(page):
     assert 'title="失败与已取消的任务' in page
     assert "失败/取消" in page
     assert "已取消的任务不计入这里" in page
+def test_base_rules_stay_out_of_media_queries(page):
+    """基础样式不能被 @media 吞掉，否则桌面宽度下它们全部失效。
+
+    曾经 `.add-adv` / `.kind-badge` / `.sched-badge` 整段被写进
+    `@media (max-width: 600px)` 里：高级面板永远收不起来（默认就展开），
+    任务卡片的类型/定时徽章一个样式都没有（渲染成给文字）。
+    这里用括号深度扫一遍，硬例化“这些选择器只能出现在媒体查询外”。
+    """
+    css = page[page.index("<style>"):page.index("</style>")]
+    base_prefixes = (".add-adv", ".adv-tip", ".kind-badge", ".sched-badge")
+    depth = 0
+    for line in css.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("@media") or stripped.startswith("@supports"):
+            depth += 1
+            continue
+        if depth > 0 and stripped.startswith(base_prefixes):
+            pytest.fail("基础规则被 @media 吞了，桌面宽度下不会生效: " + stripped[:70])
+        depth += stripped.count("{") - stripped.count("}")

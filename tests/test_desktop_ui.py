@@ -16,6 +16,10 @@ pytest.importorskip("PyQt6.QtWidgets")
 from PyQt6.QtCore import QMimeData, QUrl
 from PyQt6.QtWidgets import QLabel
 
+import config
+
+_REAL_CONFIG_GET = config.get  # fixture 替身前先截下真身
+
 
 @pytest.fixture(scope="module")
 def qt_app():
@@ -954,8 +958,16 @@ def test_task_card_restyles_on_theme_switch(qt_app):
     assert mw.THEMES["dark"]["redText"] in failed.error_label.styleSheet()
 
 
-def test_settings_dialog_theme_option_and_preview(qt_app):
+def test_settings_dialog_theme_option_and_preview(qt_app, monkeypatch):
+    import config
     import main_window as mw
+
+    # 本机配置的 theme 会决定对话框的初始索引（setCurrentIndex 在信号连接之前就执行了）。
+    # 若本机已经是 light，下面的 setCurrentIndex(1) 因索引没变而不触发预览，
+    # 断言就会假失败——先把主题错死成 dark。
+    monkeypatch.setattr(config, "get",
+                        lambda key, *a: "dark" if key == "theme"
+                        else _REAL_CONFIG_GET(key, *a))
 
     dlg = mw.SettingsDialog()
     assert dlg.theme_combo.count() == 2

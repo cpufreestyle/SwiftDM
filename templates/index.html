@@ -590,12 +590,6 @@ body {
 .pulse { animation: pulse 1.5s infinite; }
 
 /* ===== 响应式 ===== */
-@media (max-width: 600px) {
-  .app { padding: 12px; gap: 12px; }
-  .task-top { flex-direction: column; }
-  .task-status { align-self: flex-end; margin-top: -28px; }
-  .add-bar { flex-wrap: wrap; }
-  .add-bar input { min-width: 100%; }
   /* 添加面板：默认收起，避免把主输入框挤得不像样 */
   .add-adv {
     display: none; gap: 12px; align-items: flex-end; flex-wrap: wrap;
@@ -618,6 +612,12 @@ body {
   .kind-badge.dash { background: var(--blue-soft); color: var(--blue-strong); }
   .kind-badge.video_page { background: var(--amber-soft); color: var(--amber); }
   .sched-badge { background: var(--accent-soft); color: var(--accent2); }
+@media (max-width: 600px) {
+  .app { padding: 12px; gap: 12px; }
+  .task-top { flex-direction: column; }
+  .task-status { align-self: flex-end; margin-top: -28px; }
+  .add-bar { flex-wrap: wrap; }
+  .add-bar input { min-width: 100%; }
   .batch-bar { flex-direction: column; gap: 8px; align-items: flex-start; }
 }
 /* 状态分段过滤（与桌面端一致） */
