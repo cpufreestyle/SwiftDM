@@ -1,4 +1,4 @@
-﻿import json
+import json
 import re
 
 import pytest
@@ -619,3 +619,26 @@ def test_card_progress_and_pick_box_are_labelled(page):
 def test_escape_html_is_declared_once(page):
     # 同名函数声明两次，后一份静默覆盖前一份，XSS 注释也跟着失效
     assert page.count("function escapeHtml(") == 1
+def test_web_settings_panel_scrolls_instead_of_clipping(page):
+    """设置面板比视口高时必须自己滚，底下的行不能变成点不到的死区。
+
+    实测 1280x900 下「定时任务 / 链路自检 / 依赖检测」整块被裁在视口外：
+    旧版 .modal-card 既没有 max-height 也没有 overflow，面板就是一块长条，
+    内容超出即不可达。这里把两条属性都钉死。
+    """
+    start = page.index(".modal-card {")
+    css = page[start:start + 400]
+    assert "max-height" in css, css
+    assert "calc(100vh" in css, css
+    assert "overflow-y: auto" in css, css
+
+
+def test_web_failed_count_and_filter_speak_the_same_language(page):
+    """统计卡的「失败」只算失败，筛选芯片的「失败」含已取消——口径不同就得写清楚。
+
+    否则顶栏写「失败 4」、芯片写「失败 211」，点进去一大半是「已取消」，
+    用户只会以为计数器坏了。
+    """
+    assert 'title="失败与已取消的任务' in page
+    assert "失败/取消" in page
+    assert "已取消的任务不计入这里" in page

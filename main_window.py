@@ -2093,6 +2093,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_resume_all)
 
         self.btn_retry_failed = QPushButton("↻ 重试失败")
+        self.btn_retry_failed.setToolTip("重试所有失败与已取消的任务（取消的任务也会从头开始）")
         self.btn_retry_failed.clicked.connect(self._retry_all_failed)
         toolbar.addWidget(self.btn_retry_failed)
 
@@ -2200,12 +2201,16 @@ class MainWindow(QMainWindow):
         # 纯键盘用户够不到「进行中/已完成/失败」，和 Web 端不一致。
         self._filter_btns = {}
         for _key, _label in [("all", "全部"), ("active", "进行中"),
-                             ("completed", "已完成"), ("failed", "失败")]:
+                             ("completed", "已完成"), ("failed", "失败/取消")]:
             _b = QPushButton(_label)
             _b.setObjectName("filterBtn")
             _b.setCheckable(True)
             _b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             _b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if _key == "failed":
+                # 这颗芯片的口径含「已取消」（两者都能重试），
+                # 文案与 tooltip 得说清，否则用户看着「失败」点进来却满满一屏已取消
+                _b.setToolTip("失败与已取消的任务（两者都能重试）")
             _b.clicked.connect(lambda _=False, k=_key: self._set_filter(k))
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
@@ -2983,7 +2988,8 @@ class MainWindow(QMainWindow):
         }[self._filter] if self._filter else "还没有下载任务\n粘贴链接，或从浏览器捕获，或把链接拖入窗口"
 
     def _update_filter_counts(self, task_dict):
-        labels = {"all": "全部", "active": "进行中", "completed": "已完成", "failed": "失败"}
+        # 与构造时的芯片文案保持一致：这颗的计数含「已取消」，名字得说清
+        labels = {"all": "全部", "active": "进行中", "completed": "已完成", "failed": "失败/取消"}
         counts = {
             "all": len(task_dict),
             "active": sum(1 for d in task_dict.values() if d.get("status") in ("downloading", "pending", "paused")),

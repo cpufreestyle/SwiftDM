@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 import pytest
 
@@ -7,6 +7,8 @@ import downloader
 import media
 from downloader import DownloadManager, DownloadTask
 from media import MediaTask
+
+_REAL_LOAD_HISTORY = downloader.DownloadManager._load_history
 
 
 @pytest.fixture(autouse=True)
@@ -322,3 +324,83 @@ def test_create_task_without_segments_follows_the_setting(tmp_path):
         assert m.create_task("https://c/v/a.bin", str(tmp_path)).segments == 8
     finally:
         config.set("segments", saved)
+def test_scheduled_pending_task_survives_restart(tmp_path, monkeypatch):
+    """重启不能把定时任务当中断处理。
+
+    历史里的 pending 任务向被标成「重启后中断」（不自动续传半成品），
+    但定时等待的任务不算中断：scheduler.restore() 只恢复状态仍是
+    pending 的任务，这里一改成已取消，重启后定时下载就永远起不来。
+    """
+    import config
+
+    monkeypatch.setattr(config, "get",
+                        lambda key, default=None: {"dl_7": 900.0} if key == "scheduled" else default)
+    m = DownloadManager()
+    back = m._reconstruct_task({"task_id": "dl_7", "url": "https://c/a.zip",
+                                "status": "pending", "filename": "a.zip"})
+    assert back.status == "pending", "定时等待中的任务不能被标记为重启后中断"
+    assert back.error == ""
+
+
+def test_plain_pending_task_is_still_cancelled_on_restart(tmp_path, monkeypatch):
+    """没有登记定时的 pending 任务该怎样还怎样：仍然当中断处理。"""
+    import config
+
+    monkeypatch.setattr(config, "get",
+                        lambda key, default=None: {} if key == "scheduled" else default)
+    m = DownloadManager()
+    back = m._reconstruct_task({"task_id": "dl_8", "url": "https://c/a.zip",
+                                "status": "pending", "filename": "a.zip"})
+    assert back.status == "cancelled"
+    assert back.error == "重启后中断（未自动续传）"
+
+
+def test_scheduled_task_ids_tolerates_broken_table(monkeypatch):
+    """配置里的定时表丢了/格式错了，不能把整个历史加载带崩。"""
+    import config
+
+    for bad in (None, "oops", [], 42):
+        monkeypatch.setattr(
+            config, "get",
+            lambda key, default=None, _b=bad: _b if key == "scheduled" else default)
+        assert downloader._scheduled_task_ids() == set()
+
+
+def test_load_history_keeps_scheduled_and_cancels_plain_pending(tmp_path, monkeypatch):
+    """整条链路：写盘的历史里同时有定时与非定时的 pending。"""
+    import config
+
+    monkeypatch.setattr(config, "get",
+                        lambda key, default=None: {"dl_7": 900.0} if key == "scheduled" else default)
+    hist = tmp_path / "history.json"
+    hist.write_text(json.dumps({"tasks": [
+        {"task_id": "dl_7", "url": "https://c/a.zip", "status": "pending",
+         "filename": "a.zip", "filepath": str(tmp_path / "a.zip")},
+        {"task_id": "dl_8", "url": "https://c/b.zip", "status": "pending",
+         "filename": "b.zip", "filepath": str(tmp_path / "b.zip")},
+    ]}), encoding="utf-8")
+
+    real_load = _REAL_LOAD_HISTORY          # import 时忘记截下真身，避开 autouse fixture 的空桩
+    m = DownloadManager()
+    monkeypatch.setattr(m, "_history_path", str(hist))
+    m._load_history = lambda: real_load(m)   # 实例属性阴影：只对这一个实例生效
+    m._load_history()
+    assert m.get_task("dl_7").status == "pending"
+    assert m.get_task("dl_8").status == "cancelled"
+def test_shared_config_writes_never_reach_the_real_file():
+    """跑测试不能改用户真实的 ~/.swiftdm/config.json。
+
+    曾经 Scheduler._persist() 在测试进程里把空调度表写回共享配置，
+    用户真实的定时下载表被冲成测试数据，重启后全部变成「已取消」。
+    """
+    import config
+
+    with open(config.CONFIG_PATH, "r", encoding="utf-8") as fh:
+        before = json.load(fh)
+
+    config.set("scheduled", {"dl_999": 1.0})
+    assert config.get("scheduled") == {"dl_999": 1.0}      # 覆写层照常生效
+
+    with open(config.CONFIG_PATH, "r", encoding="utf-8") as fh:
+        after = json.load(fh)
+    assert after == before, "测试把配置写回真实文件了"

@@ -544,7 +544,12 @@ body {
 .modal-card {
   width: 100%; max-width: 560px; background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; padding: 16px 18px; box-shadow: 0 18px 48px rgba(0,0,0,.45);
+  /* 设置面板比视口高时必须自己滚：否则「定时任务 / 诊断」两块直接被裁掉，点不到 */
+  max-height: calc(100vh - 96px); overflow-y: auto; overscroll-behavior: contain;
 }
+.modal-card::-webkit-scrollbar { width: 10px; }
+.modal-card::-webkit-scrollbar-track { background: transparent; }
+.modal-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-head h2 { font-size: 15px; margin: 0; }
 .modal-row { padding: 10px 0; border-top: 1px solid var(--border); }
@@ -680,7 +685,7 @@ textarea:focus-visible,
     <div class="stat-item overall"><span class="icon">&#128200;</span><span class="value" id="overallProgress">--</span></div>
     <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
-    <div class="stat-item"><span class="icon">&#10006;</span><span class="label">失败</span><span class="value" id="failedCount" style="color:var(--red)">0</span></div>
+    <div class="stat-item" title="下载失败的任务数；已取消的任务不计入这里"><span class="icon">&#10006;</span><span class="label">失败</span><span class="value" id="failedCount" style="color:var(--red)">0</span></div>
     <div class="stat-item"><span class="icon">&#9776;</span><span class="label">总计</span><span class="value" id="totalCount">0</span></div>
   </div>
 
@@ -743,7 +748,7 @@ textarea:focus-visible,
     <button class="filter-btn active" data-filter="all" aria-pressed="true" onclick="setFilter('all')">全部<span class="fc" id="fc-all">0</span></button>
     <button class="filter-btn" data-filter="active" aria-pressed="false" onclick="setFilter('active')">进行中<span class="fc" id="fc-active">0</span></button>
     <button class="filter-btn" data-filter="completed" aria-pressed="false" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
-    <button class="filter-btn" data-filter="failed" aria-pressed="false" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
+    <button class="filter-btn" data-filter="failed" aria-pressed="false" onclick="setFilter('failed')" title="失败与已取消的任务（两者都能重试）">失败/取消<span class="fc" id="fc-failed">0</span></button>
     <input type="text" id="searchInput" class="search-input" aria-label="搜索任务" placeholder="搜索任务…" oninput="setSearch(this.value)">
     <select id="sortSelect" aria-label="排序" class="sort-select" onchange="setSort(this.value)">
       <option value="default">默认</option>

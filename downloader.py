@@ -881,6 +881,22 @@ class DownloadTask:
         return self._dict_cache
 
 
+def _scheduled_task_ids():
+    """硬盘上登记为「定时开始」的任务 id 集合。
+
+    定时任务表由 scheduler 落盘（config["scheduled"]），启动加载历史时
+    它已经可读；用它区分「真的被中断的等待任务」与
+    「约好到点再开始的定时任务」。
+    """
+    try:
+        stored = config.get("scheduled") or {}
+        if not isinstance(stored, dict):
+            return set()
+        return {str(k) for k in stored}
+    except Exception:
+        return set()
+
+
 class DownloadManager:
     """下载管理器"""
 
@@ -1086,8 +1102,14 @@ class DownloadManager:
         task.downloaded = d.get("downloaded", 0)
         task.error = d.get("error", "")
         task.filepath = filepath
-        # 重启时仍在下载/暂停/等待中的任务视为中断（不自动续传半成品文件），标记为已取消
-        if task.status in ("downloading", "paused", "pending"):
+        # 重启时仍在下载/暂停/等待中的任务视为中断（不自动续传半成品文件），标记为已取消。
+        # 例外是定时等待：用户就是要它到点再开始，而 scheduler.restore()
+        # 只恢复状态仍是 pending 的任务——这里一旦改成已取消，
+        # 重启后定时下载就永远起不来（现象：设置面板的定时任务空一格，
+        # 任务变成「已取消 · 重启后中断」）。
+        if task.status in ("downloading", "paused") or (
+                task.status == "pending"
+                and str(task.task_id) not in _scheduled_task_ids()):
             task.status = "cancelled"
             if not task.error:
                 task.error = "重启后中断（未自动续传）"

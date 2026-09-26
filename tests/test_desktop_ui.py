@@ -2497,3 +2497,29 @@ def test_remove_task_unschedules_the_task(monkeypatch):
     mgr.save_history = lambda: None
     mgr.remove_task("ghost-1")
     assert unscheduled == ["ghost-1"], "删除不存在的任务也要清登记（幂等）"
+def test_failed_filter_chip_says_it_includes_cancelled(qt_app, monkeypatch):
+    """「失败」芯片的口径含已取消（与 Web 端同一张表），文案/tooltip 必须说明。
+
+    桌面端此前文案只写「失败」，而 _match_filter 里 failed 分支把 cancelled
+    也算进来：用户点「失败」看到一堆「已取消」只会以为筛选坏了。
+    """
+    from PyQt6.QtWidgets import QPushButton
+
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        chip = win._filter_btns["failed"]
+        # 刷新会把文案覆写成「标签 计数」，因此只能前缀断言
+        assert chip.text().startswith("失败/取消"), chip.text()
+        assert chip.toolTip(), "口径与别人不一样的芯片必须带 tooltip"
+
+
+def test_failed_filter_still_matches_cancelled_tasks(qt_app, monkeypatch):
+    """改名不改变语义：失败 + 已取消都还挂在「失败/取消」这一颗下面。"""
+    with _shown_main_window(qt_app, monkeypatch) as win:
+        win._filter = "failed"
+        assert win._match_filter({"status": "failed"}) is True
+        assert win._match_filter({"status": "cancelled"}) is True
+        assert win._match_filter({"status": "completed"}) is False
+        assert win._match_filter({"status": "downloading"}) is False
+
+        win._filter = "all"
+        assert win._match_filter({"status": "cancelled"}) is True
