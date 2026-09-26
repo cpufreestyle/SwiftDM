@@ -28,6 +28,7 @@ PAIRS = {
     "accent": "accent",
     "accent-hover": "accentHover",
     "accent2": "accent2",
+    "accent-ink": "onAccent",
     "green": "green",
     "orange": "orange",
     "red": "red",

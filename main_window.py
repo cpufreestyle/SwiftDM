@@ -512,6 +512,7 @@ THEMES = {
         "accent": "#6c5ce7",
         "accentHover": "#7d6ff0",
         "accent2": "#a29bfe",
+        "onAccent": "#ffffff",
         "green": "#00d2a0",
         "orange": "#ffa502",
         "orangeSoft": "#3d3320",
@@ -544,6 +545,7 @@ THEMES = {
         "accent": "#6c5ce7",
         "accentHover": "#5b4bd6",
         "accent2": "#8f80ff",
+        "onAccent": "#ffffff",
         "green": "#0a9d7c",
         "orange": "#d97a00",
         "orangeSoft": "#fbeed8",
@@ -585,7 +587,7 @@ QToolBar QPushButton:hover {
 }
 QToolBar QPushButton#btnAdd {
     background-color: $accent;
-    color: #fff;
+    color: $onAccent;
     border: none;
 }
 QToolBar QPushButton#btnAdd:hover {
@@ -733,7 +735,7 @@ QPushButton#filterBtn {
     padding:4px 14px; color:$textMuted; font-size:12px; font-weight:600;
 }
 QPushButton#filterBtn:hover { color:$text; border-color:$borderHover; }
-QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:#fff; }
+QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:$onAccent; }
 QToolTip {
     background-color: $surface2;
     color: $text;

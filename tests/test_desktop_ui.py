@@ -861,6 +861,20 @@ def test_qss_for_theme_renders_every_token(qt_app):
     assert mw._qss_for("neon") == mw._qss_for("dark")
 
 
+def test_qss_template_has_no_color_literals_at_all(qt_app):
+    import main_window as mw
+    import re as _re
+
+    # 比跨端版本（test_theme_tokens）更严：QSS 里一个十六进色都不能有，白色也得走令牌；
+    # 换主题时会把配色整花（与 Web 端 test_no_stray_hardcoded_colors_in_css 同一条准线）
+    template = mw.QSS_TEMPLATE.template
+    assert _re.findall(r"#[0-9a-fA-F]{3,8}\b", template) == []
+    assert "$onAccent" in template
+    for theme, tokens in mw.THEMES.items():
+        qss = mw._qss_for(theme)
+        assert tokens["onAccent"] in qss, theme
+
+
 def test_apply_theme_switches_stylesheet_and_cards(qt_app):
     import main_window as mw
 

@@ -378,12 +378,12 @@ def test_theme_controls_are_wired(page):
 
 
 def test_no_stray_hardcoded_colors_in_css(page):
-    # 除白色（用于带色背景的按钮/标签）外，SS 不应再出现硬编码颜色
+    # CSS 不应再出现硬编码颜色：颜色全部由 :root 下发的变量提供（含带色背景按钮的 var(--accent-ink)）
     css = page[:page.index("</style>")]
     css = css[css.index("<style>"):]
     css = re.sub(r':root(\[data-theme="light"\])? \{[\s\S]*?\}', '', css)
     css = re.sub(r"/\*[\s\S]*?\*/", "", css)
-    leftovers = [c for c in re.findall(r"#[0-9a-fA-F]{3,6}\b", css) if c != "#fff"]
+    leftovers = re.findall(r"#[0-9a-fA-F]{3,6}\b", css)
     assert not leftovers, leftovers
 
 
