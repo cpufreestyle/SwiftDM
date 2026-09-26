@@ -745,6 +745,10 @@ class DownloadTask:
             if self.status != "paused":
                 return
             self.status = "downloading"
+            # 同 pause/cancel/retry：立即失效 to_dict 缓存，否则会话内
+            # 任何 to_dict 调用（UI 500ms 刷新/SSE）都会把旧的
+            # status="paused" 缓存下来，读者看到的还是暂停状态。
+            self._invalidate_cache()
             with self._lock:
                 self._seg_done = [False] * self.segments
                 self._completion_handled = False

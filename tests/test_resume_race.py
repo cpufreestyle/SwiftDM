@@ -327,3 +327,25 @@ def test_concurrent_transitions_settle_without_deadlock(tmp_path, base_url):
     with open(task.filepath, "rb") as f:
         got = hashlib.sha256(f.read()).hexdigest()
     assert got == EXPECTED_SHA, "文件内容损坏：分段被并发写花"
+
+
+def test_resume_invalidates_to_dict_cache(tmp_path):
+    """resume() 翻转 status 后必须立即使 to_dict() 缓存失效。
+
+    pause 与 resume 之间任何一次 to_dict（桌面 UI 500ms 刷新 / SSE 推送）
+    都会把 status="paused" 缓存下来；resume 不失效缓存时，
+    /api/resume 随响应返回的仍是旧 paused 快照，Web 端点完
+    「继续」又显示暂停（二进制冒演里间歇性复现）。
+    """
+    task = downloader.DownloadTask("cacheprobe", "http://127.0.0.1/probe",
+                                   str(tmp_path), filename="probe.bin", segments=1)
+    task.status = "paused"
+    task.segments = 1
+    task._seg_done = [False]
+    task._segment_progress = [0]
+    task._run_segment = lambda idx: None
+    task._monitor_progress = lambda: None
+
+    assert task.to_dict()["status"] == "paused"  # 暂停态已被读取者缓存
+    task.resume()
+    assert task.to_dict()["status"] == "downloading"
