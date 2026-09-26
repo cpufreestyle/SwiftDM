@@ -10,6 +10,7 @@ import logging
 import re
 import string
 import subprocess
+from collections import deque
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QLabel, QProgressBar, QScrollArea, QFrame,
@@ -23,7 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QDateTime
 from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
                      QPainter, QBrush, QDrag, QShortcut, QKeySequence,
-                     QPolygon)
+                     QPolygon, QPen)
 from log_helper import setup_logging, QtLogHandler
 
 
@@ -844,6 +845,87 @@ def _status_colors(tokens):
         "cancelled": tokens["textMuted"],
     }
 
+
+class SpeedGraph(QWidget):
+    """怿违下载速度的实时曲线（与 Web 端画布同一套取舍）。
+
+    采样点由 _refresh() 每 500ms 推进一次；只保留最近 90 个点（约 45 秒），
+    画成折线 + 半透明填充。开源同类（IDM / Motrix / FDM）的速率图都是这个形状：
+    带宽是被跑满、被限速卡住还是已经停了，一眼可辨。
+    颜色只取主题令牌，不写死任何色值。
+    """
+
+    SAMPLES_MAX = 90
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._samples = deque(maxlen=self.SAMPLES_MAX)
+        self._theme = "dark"
+        self.setFixedHeight(26)
+        self.setMinimumWidth(96)
+        self.setAccessibleName("下载速度曲线")
+        self.setToolTip("实时总下载速度曲线（最近约 45 秒）")
+
+    def push(self, speed_bps):
+        """推进一个采样点；由 500ms 定时刷新驱动。"""
+        try:
+            v = float(speed_bps or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        self._samples.append(max(0.0, v))
+        self.update()
+
+    def clear(self):
+        self._samples.clear()
+        self.update()
+
+    def apply_theme(self, theme):
+        if theme in THEMES:
+            self._theme = theme
+            self.update()
+
+    def _points(self):
+        w, h = self.width(), self.height()
+        n = len(self._samples)
+        if not n or w <= 0 or h <= 0:
+            return []
+        ceiling = max(1.0, max(self._samples))
+        pts = []
+        for i, v in enumerate(self._samples):
+            x = w if n == 1 else (i / (n - 1)) * w
+            y = h - 3 - (v / ceiling) * (h - 5)
+            pts.append((x, y))
+        return pts
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        t = THEMES[self._theme]
+        w, h = self.width(), self.height()
+        # 底线
+        pen = QPen(QColor(t["border"]))
+        pen.setWidth(1)
+        p.setOpacity(0.5)
+        p.setPen(pen)
+        p.drawLine(0, h - 1, w, h - 1)
+        pts = self._points()
+        if not pts:
+            return
+        fill = QColor(t["accent2"])
+        fill.setAlpha(56)  # ≈ 0.22 透明度，与 Web 端填充同一感觉
+        poly = QPolygon([QPoint(0, h)] +
+                        [QPoint(int(round(x)), int(round(y))) for x, y in pts] +
+                        [QPoint(w, h)])
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(fill))
+        p.setOpacity(1.0)
+        p.drawPolygon(poly)
+        line = QPen(QColor(t["accent2"]))
+        line.setWidth(2)  # 1.5px 在高 DPI 下会被取整吞掉
+        line.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        line.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(line)
+        p.drawPolyline(QPolygon([QPoint(int(round(x)), int(round(y))) for x, y in pts]))
 
 class TaskCard(QFrame):
     """单个下载任务卡片"""
@@ -2165,6 +2247,9 @@ class MainWindow(QMainWindow):
         self.total_speed_label.setObjectName("speedLabel")
         header_layout.addWidget(self.total_speed_label)
 
+        self.speed_graph = SpeedGraph()
+        header_layout.addWidget(self.speed_graph)
+
         self.overall_label = QLabel("")
         self.overall_label.setObjectName("overallLabel")
         header_layout.addWidget(self.overall_label)
@@ -2319,6 +2404,9 @@ class MainWindow(QMainWindow):
             theme = "dark"
         self._theme = theme
         self.setStyleSheet(_qss_for(theme))
+        graph = getattr(self, "speed_graph", None)
+        if graph is not None:
+            graph.apply_theme(theme)
         t = THEMES[theme]
         for card in getattr(self, "_cards", {}).values():
             card.apply_theme(theme)
@@ -2491,6 +2579,7 @@ class MainWindow(QMainWindow):
 
             # 更新统计
             self.total_speed_label.setText(f"总速度: {format_speed(stats['total_speed'])}")
+            self.speed_graph.push(stats.get('total_speed', 0))
             self.stats_label.setText(
                 f"下载中: {stats['active']}  |  已完成: {stats['completed']}  |  "
                 f"失败: {stats['failed']}  |  暂停: {stats['paused']}  |  总计: {stats['total']}"

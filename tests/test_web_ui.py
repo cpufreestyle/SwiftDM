@@ -837,3 +837,75 @@ def test_cancelled_cards_do_not_wear_the_red_error_line(page):
     card = page[page.index("function createTaskCard"):]
     card = card[:card.index("function renderStats")]
     assert 'task.error && task.status === "failed"' in card, card[:4000]
+def test_stats_bar_has_live_speed_graph_canvas(page):
+    """总速度旁多一块实时速度曲线画布，与桌面端 SpeedGraph 同一取舍。"""
+    canvas = ('<canvas id="speedGraph" class="speed-graph" role="img" '
+              'aria-label="最近总下载速度曲线"></canvas>')
+    assert canvas in page
+    # 画布对读屏用户必须是图，不是一块没人念的空块
+    assert 'role="img"' in page
+    assert 'aria-label="最近总下载速度曲线"' in page
+
+
+def test_render_stats_feeds_the_speed_graph(page):
+    """每次 SSE 推送都把总速度压进采样环，否则曲线永远是空的。"""
+    fn = page[page.index("function renderStats"):]
+    fn = fn[:fn.index("// ===== 实时速度曲线")]
+    assert "pushSpeedSample(stats.total_speed);" in fn, fn
+
+
+def test_speed_graph_samples_stay_a_bounded_window(page):
+    """SSE 每 0.5s 推一次，采样环必须是定长环形缓冲，不能无限增长。"""
+    assert "const SPEED_SAMPLES_MAX = 90;" in page
+    assert "if (speedSamples.length > SPEED_SAMPLES_MAX) speedSamples.shift();" in page
+
+
+def test_speed_graph_colors_come_from_theme_tokens(page):
+    """线条 / 填充 / 基线色全部读 CSS 变量：切主题后下帧自动跟上。"""
+    region = page[page.index("function drawSpeedGraph"):]
+    region = region[:region.index("function pushSpeedSample")]
+    assert 'getPropertyValue("--accent2")' in region
+    assert 'getPropertyValue("--border")' in region
+    # 绘制代码里不许出现任何写死的色值（十六进制 / rgb() / hsl()）
+    for literal in ("#", "rgb(", "hsl("):
+        assert literal not in region, (literal, region)
+
+
+def test_speed_graph_reads_tokens_from_the_canvas_itself(page):
+    """取色必须落在画布元素上：:root[data-theme] 的变量沿 DOM 继承到每个后代，
+    换成 document.body 之流同样"能取到色"，但读的是别人的计算值拼出来的对象，
+    一旦有人把画布挪出 body（弹窗、Shadow DOM）颜色就悄悄失灵。"""
+    region = page[page.index("function drawSpeedGraph"):]
+    region = region[:region.index("function pushSpeedSample")]
+    assert 'getComputedStyle(el)' in region
+    assert "getComputedStyle(document.body)" not in region
+
+def test_speed_graph_repaints_on_theme_and_resize(page):
+    """切主题立刻重画（令牌值变了，画布还留着旧颜色）；窗口尺寸变化也要重画。"""
+    theme = page[page.index("function applyTheme"):]
+    theme = theme[:theme.index("function setTheme")]
+    assert "drawSpeedGraph();" in theme
+    assert 'window.addEventListener("resize", scheduleSpeedGraph);' in page
+
+
+def test_speed_graph_is_dpi_aware_and_frame_coalesced(page):
+    """高分屏要把画布按 devicePixelRatio 放大，否则线条发虚；
+    一帧最多画一次，SSE 抖动不会引发重复绘制。"""
+    region = page[page.index("function drawSpeedGraph"):]
+    region = region[:region.index("function pushSpeedSample")]
+    assert "devicePixelRatio" in region
+    assert "setTransform(dpr, 0, 0, dpr, 0, 0)" in region
+    sched = page[page.index("function scheduleSpeedGraph"):]
+    sched = sched[:sched.index("// ===== SSE")]
+    assert "if (speedGraphRaf) return;" in sched
+    assert "requestAnimationFrame" in sched
+
+
+def test_speed_graph_css_stays_on_tokens(page):
+    css = page[page.index("<style>"):page.index("</style>")]
+    rule = css[css.index(".stat-item .speed-graph"):]
+    rule = rule[:rule.index("}")]
+    for decl in ("width: 96px", "height: 24px",
+                 "background: var(--surface2)", "border: 1px solid var(--border)"):
+        assert decl in rule, rule
+    assert "#" not in rule, rule

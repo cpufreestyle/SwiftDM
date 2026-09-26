@@ -2535,3 +2535,67 @@ def test_failed_filter_still_matches_cancelled_tasks(qt_app, monkeypatch):
 
         win._filter = "all"
         assert win._match_filter({"status": "cancelled"}) is True
+def _render_speed_graph(qt_app, samples, theme="dark"):
+    import main_window as mw
+    g = mw.SpeedGraph()
+    g.apply_theme(theme)
+    g.resize(96, 26)
+    g.show()
+    qt_app.processEvents()
+    for s in samples:
+        g.push(s)
+    qt_app.processEvents()
+    img = g.grab().toImage()
+    g.hide()
+    return img
+
+
+def test_speed_graph_paints_the_samples(qt_app):
+    """有采样就必须画出非背景像素；一条平线（全 0）也要看得见。"""
+    from PyQt6.QtGui import QColor
+    empty = _render_speed_graph(qt_app, [])
+    flat = _render_speed_graph(qt_app, [0, 0, 0, 0])
+    wave = _render_speed_graph(qt_app, [0, 5_000_000, 0, 5_000_000])
+    bg = QColor(empty.pixel(0, 0))
+    def non_bg(img):
+        return [(x, y) for y in range(img.height()) for x in range(img.width())
+                if QColor(img.pixel(x, y)) != bg]
+    assert non_bg(flat), "全零采样至少该画出一条贴底基线"
+    assert len(non_bg(wave)) > len(non_bg(flat)), "起伏曲线要比直线画出更多像素"
+
+
+def test_speed_graph_separates_the_themes(qt_app):
+    """线条色取自主题令牌：暗/亮两套画出来的像素必须不同。"""
+    from PyQt6.QtGui import QColor
+    dark = _render_speed_graph(qt_app, [1_000_000, 4_000_000, 2_000_000], "dark")
+    light = _render_speed_graph(qt_app, [1_000_000, 4_000_000, 2_000_000], "light")
+    diff = sum(1 for y in range(dark.height()) for x in range(dark.width())
+               if QColor(dark.pixel(x, y)) != QColor(light.pixel(x, y)))
+    assert diff > 0, "两套主题必须渲染出不同颜色"
+
+
+def test_speed_graph_is_reachable_without_eyes(qt_app):
+    """曲线没有文字，读屏用户只能靠可访问名；tooltip 顺手带上窗口长度说明。"""
+    import main_window as mw
+    g = mw.SpeedGraph()
+    assert g.accessibleName() == "下载速度曲线"
+    assert "45" in g.toolTip(), g.toolTip()
+def test_speed_graph_window_is_bounded(qt_app):
+    import main_window as mw
+    g = mw.SpeedGraph()
+    for i in range(250):
+        g.push(i)
+    assert len(g._samples) == mw.SpeedGraph.SAMPLES_MAX == 90
+    assert g._samples[0] == 160 and g._samples[-1] == 249
+    g.push(-9)
+    assert g._samples[-1] == 0, "负速度钳到 0"
+    g.clear()
+    assert len(g._samples) == 0
+
+
+def test_main_window_feeds_the_speed_graph():
+    """_refresh 每轮把总速度喂给曲线，_apply_theme 切主题时重画。"""
+    src = io.open("main_window.py", encoding="utf-8").read()
+    assert "self.speed_graph = SpeedGraph()" in src
+    assert "self.speed_graph.push(stats.get('total_speed', 0))" in src
+    assert "graph.apply_theme(theme)" in src

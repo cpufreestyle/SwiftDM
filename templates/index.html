@@ -149,6 +149,17 @@ body {
 .stat-item.speed .value { color: var(--accent2); }
 .stat-item.active .value { color: var(--blue); }
 
+/* ===== 实时速度曲线（与桌面端 SpeedGraph 同一套取舍）===== */
+.stat-item .speed-graph {
+  width: 96px;
+  height: 24px;
+  margin-left: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex: none;
+}
+
 /* ===== 添加区域 ===== */
 .add-bar {
   display: flex;
@@ -649,7 +660,7 @@ textarea:focus-visible,
 
   <!-- 状态栏 -->
   <div class="stats-bar" id="statsBar">
-    <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span></div>
+    <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span><canvas id="speedGraph" class="speed-graph" role="img" aria-label="最近总下载速度曲线"></canvas></div>
     <div class="stat-item overall"><span class="icon">&#128200;</span><span class="value" id="overallProgress">--</span></div>
     <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
@@ -890,6 +901,14 @@ textarea:focus-visible,
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
+// ===== 实时速度曲线状态 =====
+// 必须声明在脚本最前面：applyTheme() 在层就会被调用，
+// 晚于它的 const 会落进 TDZ，drawSpeedGraph 一读就抛 ReferenceError，
+// 把整段脚本剔弃在半空里。
+const SPEED_SAMPLES_MAX = 90;
+const speedSamples = [];
+let speedGraphRaf = 0;
+
 // ===== 工具函数 =====
 function escapeHtml(s) {
   // 任务字段（filename/url/error）可被恶意服务器经 Content-Disposition 注入，
@@ -1368,6 +1387,7 @@ function applyTheme(pref) {
   if (sel) sel.value = p;
   const btn = document.getElementById("themeBtn");
   if (btn) btn.textContent = resolved === "light" ? "\u2600\ufe0e" : "\u263d\ufe0e";
+  drawSpeedGraph();
 }
 
 function setTheme(pref) {
@@ -1849,6 +1869,97 @@ function renderStats(stats) {
   document.getElementById("doneCount").textContent = stats.completed;
   document.getElementById("failedCount").textContent = stats.failed;
   document.getElementById("totalCount").textContent = stats.total;
+  pushSpeedSample(stats.total_speed);
+}
+
+// ===== 实时速度曲线（与桌面端 SpeedGraph 同一套取舍）=====
+// SSE 每 0.5s 推一次 stats.total_speed，这里只留最近 90 个采样点（约 45 秒），
+// 画成折线 + 渐变填充。开源同类（IDM / Motrix / FDM）的速率图都是这个形状：
+// 一眼看清带宽是被跑满、被限速卡住，还是已经停了。
+// 纯几何：把采样值映射到画布坐标（右上角留 1px、底部留 2px不给贴边）。
+function speedGraphPoints(samples, w, h) {
+  const pts = [];
+  if (!samples || !samples.length || w <= 0 || h <= 0) return pts;
+  const n = samples.length;
+  let ceil = 1;
+  for (let i = 0; i < n; i++) {
+    const v = Number(samples[i]) || 0;
+    if (v > ceil) ceil = v;
+  }
+  for (let i = 0; i < n; i++) {
+    const x = n === 1 ? w : (i / (n - 1)) * w;
+    const y = h - 2 - ((Number(samples[i]) || 0) / ceil) * (h - 3);
+    pts.push([x, y]);
+  }
+  return pts;
+}
+
+function drawSpeedGraph() {
+  const el = document.getElementById("speedGraph");
+  if (!el || !el.getContext) return;
+  const w = el.clientWidth, h = el.clientHeight;
+  if (w <= 0 || h <= 0) return;
+  const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+  const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+  if (el.width !== pw || el.height !== ph) { el.width = pw; el.height = ph; }
+  const ctx = el.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  // 颜色一律从主题令牌读：:root[data-theme] 切换后下帧自动跟上，不写死任何色值
+  const style = getComputedStyle(el);
+  const line = (style.getPropertyValue("--accent2") || "").trim();
+  const grid = (style.getPropertyValue("--border") || "").trim();
+  if (grid) {
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h - 0.5);
+    ctx.lineTo(w, h - 0.5);
+    ctx.stroke();
+  }
+  const pts = speedGraphPoints(speedSamples, w, h);
+  if (pts.length && line) {
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = line;
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (const pt of pts) ctx.lineTo(pt[0], pt[1]);
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    pts.forEach((pt, i) => { if (i) ctx.lineTo(pt[0], pt[1]); else ctx.moveTo(pt[0], pt[1]); });
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const cur = speedSamples.length ? speedSamples[speedSamples.length - 1] : 0;
+  let peak = 0;
+  for (const v of speedSamples) if (v > peak) peak = v;
+  el.title = "当前 " + formatSpeed(cur) + " · 峰值 " + formatSpeed(peak) +
+             " · 最近 " + Math.round(speedSamples.length * 0.5) + " 秒";
+}
+
+function pushSpeedSample(value) {
+  const v = Math.max(0, Number(value) || 0);
+  speedSamples.push(v);
+  if (speedSamples.length > SPEED_SAMPLES_MAX) speedSamples.shift();
+  scheduleSpeedGraph();
+}
+
+// 一帧最多画一次：SSE 抖动或 resize 连发都不会重复绘制
+function scheduleSpeedGraph() {
+  if (speedGraphRaf) return;
+  if (typeof requestAnimationFrame === "function") {
+    speedGraphRaf = requestAnimationFrame(() => { speedGraphRaf = 0; drawSpeedGraph(); });
+  } else {
+    drawSpeedGraph();
+  }
 }
 
 // ===== SSE 实时更新 =====
@@ -2376,6 +2487,8 @@ function connectSSE() {
 // 事实上“拖入链接”和“完成提示音”在打开设置面板之前就已经失效。
 refreshSettings();
 connectSSE();
+drawSpeedGraph();
+window.addEventListener("resize", scheduleSpeedGraph);
 </script>
 </body>
 </html>
