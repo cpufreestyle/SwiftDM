@@ -1382,6 +1382,9 @@ function createTaskCard(task) {
   if (task.eta) {
     metaHtml += `<span>&#9200; ${task.eta}</span>`;
   }
+  if (task.kind === "torrent") {
+    metaHtml += `<span>&#127793; ${task.seeds || 0}  &#128101; ${task.peers || 0}</span>`;
+  }
   if (task.status === "failed" && task.auto_retry_at) {
     const _remain = Math.max(0, Math.ceil(task.auto_retry_at - Date.now() / 1000));
     metaHtml += `<span class="retry-badge">&#8635; ${_remain > 0 ? _remain + "s 后" : "即将"}自动重试</span>`;

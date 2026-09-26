@@ -347,3 +347,12 @@ def test_stream_payload_includes_segment_fields(monkeypatch):
     assert task["segments_total"] == 2
     # 字段必须可 JSON 序列化，否则 SSE 推送会整帧失败
     json.loads(json.dumps(payload))
+
+
+def test_task_card_shows_bt_seeds_and_peers(page):
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert 'task.kind === "torrent"' in card
+    assert "task.seeds" in card and "task.peers" in card
+    # HTML 实体图标与桌面卡片一致（🌱 / 👥）
+    assert "&#127793;" in card and "&#128101;" in card

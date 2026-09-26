@@ -1434,3 +1434,27 @@ def test_notify_capture_surfaces_source_of_new_task(qt_app):
     assert title == "SwiftDM" and "movie.mkv" in body
     assert icon == QSystemTrayIcon.MessageIcon.Information
     assert host._tray_msg_kind == "info"   # 点击不触发任何动作
+
+
+def test_task_detail_dialog_copy_details_button(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QApplication, QPushButton
+
+    data = {"task_id": "t1", "filename": "movie.bin",
+            "url": "https://site/movie.bin", "save_dir": "C:/dl",
+            "status": "downloading", "progress": 10.0, "total_size": 100,
+            "downloaded": 10, "speed": 0, "eta": "18s", "kind": "http"}
+    dlg = mw.TaskDetailDialog("t1", data, fetch=None)
+    dlg._timer.stop()
+    copy_btn = [b for b in dlg.findChildren(QPushButton)
+                if b.text() == "复制详情"]
+    assert len(copy_btn) == 1
+    copy_btn[0].click()
+    text = QApplication.clipboard().text()
+    assert "文件名: movie.bin" in text
+    assert "保存目录: C:/dl" in text
+    assert "下载链接: https://site/movie.bin" in text
+    # 复制的就是当前刷新出来的内容
+    dlg.update_data(dict(data, filename="other.bin"))
+    copy_btn[0].click()
+    assert "文件名: other.bin" in QApplication.clipboard().text()

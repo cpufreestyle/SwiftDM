@@ -1507,6 +1507,9 @@ class TaskDetailDialog(QDialog):
                                   QDialogButtonBox.ButtonRole.ActionRole)
         btn_link.clicked.connect(
             lambda: self.action_requested.emit("copy_link", self._task_id))
+        btn_copy = btns.addButton("复制详情",
+                                  QDialogButtonBox.ButtonRole.ActionRole)
+        btn_copy.clicked.connect(self._copy_details)
         layout.addWidget(btns)
 
         self._timer = QTimer(self)
@@ -1597,6 +1600,18 @@ class TaskDetailDialog(QDialog):
         self.setWindowTitle(f"{filename} - 任务详情")
         self._rebuild_rows(_detail_rows(d))
         self._rebuild_segments(_segment_rows(d))
+
+    def _copy_details(self):
+        """把当前详情行复制成纯文本（反馈问题时可直接粘贴，省去手抄）。"""
+        rows = _detail_rows(getattr(self, "_last_data", None) or {})
+        if not rows:
+            return
+        QApplication.clipboard().setText(
+            "\n".join(f"{label}: {value}" for label, value in rows))
+        parent = self.parent()
+        status_bar = getattr(parent, "status_bar", None)
+        if status_bar is not None:
+            status_bar.showMessage("已复制任务详情", 3000)
 
     def _poll(self):
         """每 500ms 拉一次最新状态；任务已被删除则自动关闭面板。"""
