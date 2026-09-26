@@ -548,6 +548,10 @@ body {
             title="切换浅色/深色主题">&#127769;</button>
     <button class="btn btn-secondary btn-icon settings-btn" onclick="openDownloadDir()"
             title="打开下载目录">&#128193;</button>
+    <button class="btn btn-secondary btn-icon settings-btn" onclick="copyAllLinks()"
+            title="复制全部可见任务链接">&#128279;</button>
+    <button class="btn btn-secondary btn-icon settings-btn" onclick="exportTasksCsv()"
+            title="导出任务列表 CSV">&#128190;</button>
     <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn"
             onclick="openSettings()" title="限速 / 完成后动作 / 依赖检测">&#9881;</button>
   </div>
@@ -861,6 +865,43 @@ async function copyLink(id) {
   } catch (e) {
     showToast("复制失败", "error");
   }
+}
+
+// ===== 批量操作（与桌面端一致）=====
+function visibleTasks() {
+  return sortTasks(_lastTasks.filter(t => matchFilter(t) && matchSearch(t)));
+}
+
+async function copyAllLinks() {
+  const seen = {}, urls = [];
+  visibleTasks().forEach(t => {
+    if (t.url && !seen[t.url]) { seen[t.url] = 1; urls.push(t.url); }
+  });
+  if (!urls.length) { showToast("没有可复制的链接", "error"); return; }
+  try {
+    await navigator.clipboard.writeText(urls.join("\n"));
+    showToast("已复制 " + urls.length + " 个任务的链接");
+  } catch (e) {
+    showToast("复制失败", "error");
+  }
+}
+
+function exportTasksCsv() {
+  const list = visibleTasks();
+  if (!list.length) { showToast("没有可导出的任务", "error"); return; }
+  const esc = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  const rows = [["文件名", "链接", "状态", "总大小", "已下载", "速度"]]
+    .concat(list.map(t => [t.filename || "", t.url || "", t.status || "",
+                           t.total_size || 0, t.downloaded || 0, t.speed || 0]));
+  const csv = "\uFEFF" + rows.map(r => r.map(esc).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = "swiftdm-tasks.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showToast("已导出 " + list.length + " 个任务");
 }
 
 async function openFolder(id) {

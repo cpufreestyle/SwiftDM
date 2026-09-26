@@ -145,6 +145,21 @@ def test_web_has_task_search_box(page):
     assert "matchFilter(t) && matchSearch(t)" in page
 
 
+def test_web_has_batch_copy_and_export(page):
+    assert 'onclick="copyAllLinks()"' in page
+    assert 'onclick="exportTasksCsv()"' in page
+    assert "function visibleTasks" in page
+    assert "matchFilter(t) && matchSearch(t)" in page
+    body = page[page.index("function copyAllLinks"):]
+    body = body[:body.index("\n}")]
+    assert "navigator.clipboard.writeText(urls.join" in body
+    body = page[page.index("function exportTasksCsv"):]
+    body = body[:body.index("\n}")]
+    assert "swiftdm-tasks.csv" in body
+    assert "text/csv;charset=utf-8" in body
+    assert "\\uFEFF" in page        # BOM：Excel 直接打开中文不乱码
+
+
 def test_web_has_task_sorting(page):
     assert 'onchange="setSort(this.value)"' in page
     assert "function sortTasks" in page
