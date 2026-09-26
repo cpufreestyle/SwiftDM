@@ -91,3 +91,11 @@ def test_filter_selection_persisted(page):
     assert "localStorage.getItem(\"swiftdm.filter\")" in page
     assert "localStorage.setItem(\"swiftdm.filter\"" in page
     assert "function syncFilterButtons" in page
+
+
+def test_clear_completed_asks_confirmation_with_count(page):
+    start = page.index("async function clearCompleted")
+    body = page[start:start + 700]
+    assert "confirm(" in body
+    assert "不可恢复" in body
+    assert "_lastTasks" in body

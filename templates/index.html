@@ -834,8 +834,11 @@ async function resumeAll() {
 }
 
 async function clearCompleted() {
-  await api("/api/clear_completed", { method: "POST" });
-  showToast("已清除已完成任务");
+  const finished = _lastTasks.filter(t => t.status === "completed" || t.status === "cancelled" || t.status === "failed");
+  if (!finished.length) { showToast("没有可清除的任务"); return; }
+  if (!confirm(`将清除 ${finished.length} 个任务（已完成/已失败/已取消），此操作不可恢复。确定继续吗？`)) return;
+  const r = await api("/api/clear_completed", { method: "POST" });
+  showToast(`已清除 ${(r && r.cleared) || finished.length} 个任务`);
 }
 
 // ===== 渲染 =====

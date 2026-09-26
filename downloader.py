@@ -896,11 +896,13 @@ class DownloadManager:
             self._tasks.pop(task_id, None)
 
     def clear_completed(self):
+        """清除已完成/已失败/已取消的任务，返回清除数量。"""
         with self._lock:
             completed = [tid for tid, t in self._tasks.items() if t.status in ("completed", "cancelled", "failed")]
             for tid in completed:
                 self._tasks.pop(tid, None)
         self.save_history()
+        return len(completed)
 
     # ---------------- 历史记录持久化 ----------------
     def _reconstruct_task(self, d):

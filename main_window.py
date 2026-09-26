@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal, QThread, QMimeData, QUrl
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl
 from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QDrag, QShortcut, QKeySequence
 from log_helper import setup_logging, QtLogHandler
 
@@ -47,6 +47,35 @@ def _tray_tip(active, total_speed, total):
     if active > 0:
         return f"SwiftDM · ↓{format_speed(total_speed)} · 下载中 {active}/{total}"
     return "SwiftDM - 下载管理器"
+
+
+def _clear_confirm_text(n):
+    """Destructive clear-finished confirmation copy: state count + consequence."""
+    return f"将清除 {n} 个任务（已完成/已失败/已取消），此操作不可恢复。确定继续吗？"
+
+
+def _window_settings():
+    """窗口几何信息（大小/位置）持久化，重启后恢复上次布局。"""
+    return QSettings("SwiftDM", "SwiftDM")
+
+
+def _restore_window_geometry(win, settings):
+    """按上次保存的几何信息恢复窗口；无记录时返回 False。"""
+    data = settings.value("window/geometry")
+    if not data:
+        return False
+    try:
+        return bool(win.restoreGeometry(data))
+    except Exception:
+        return False
+
+
+def _save_window_geometry(win, settings):
+    """保存窗口几何信息（隐藏到托盘/退出前调用）。"""
+    try:
+        settings.setValue("window/geometry", win.saveGeometry())
+    except Exception:
+        pass
 
 
 def open_in_system(path):
@@ -694,7 +723,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("SwiftDM - 高速下载管理器")
         self.setMinimumSize(780, 560)
-        self.resize(860, 640)
+        if not _restore_window_geometry(self, _window_settings()):
+            self.resize(860, 640)  # 无历史记录时的默认尺寸
 
         # 暗色主题
         self.setStyleSheet(QSS)
@@ -925,6 +955,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时隐藏到托盘"""
+        _save_window_geometry(self, _window_settings())
         event.ignore()
         self.hide()
         self.tray.showMessage("SwiftDM", "已最小化到系统托盘，下载任务继续运行",
@@ -1247,9 +1278,20 @@ class MainWindow(QMainWindow):
 
     def _clear_completed(self):
         mgr = self._get_manager()
+        finished = [t for t in mgr.get_all_tasks()
+                    if t.status in ("completed", "cancelled", "failed")]
+        if not finished:
+            self.status_bar.showMessage("没有可清除的任务", 3000)
+            return
+        reply = QMessageBox.question(
+            self, "确认清除", _clear_confirm_text(len(finished)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         mgr.clear_completed()
         self._completed_tasks.clear()
-        self.status_bar.showMessage("已清除已完成的任务")
+        self.status_bar.showMessage(f"已清除 {len(finished)} 个任务")
 
     def _show_settings(self):
         dlg = SettingsDialog(self)
@@ -1301,4 +1343,5 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         self.tray.hide()
+        _save_window_geometry(self, _window_settings())
         QApplication.quit()

@@ -1,4 +1,4 @@
-"""桌面 UI 新增交互的单元测试（拖入链接解析 / 状态分段过滤）。
+"""桌面 UI 新增交互的单元测试（拖入链接解析 / 状态分段过滤 / 窗口几何持久化 / 清除确认）。
 
 仅覆盖纯逻辑，不依赖显示设备：通过 QT_QPA_PLATFORM=offscreen + QMimeData 完成；
 若运行环境缺少 PyQt6 或离屏平台不可用则自动跳过，避免影响无界面 CI。
@@ -102,3 +102,33 @@ def test_title_and_tray_helpers_surface_activity():
     assert mw._tray_tip(0, 0, 5) == "SwiftDM - 下载管理器"
     assert "下载中 2/8" in mw._tray_tip(2, 1536, 8)
 
+
+
+def test_clear_confirm_text_mentions_count_and_consequence():
+    import main_window as mw
+    text = mw._clear_confirm_text(3)
+    assert "3" in text
+    assert "不可恢复" in text
+
+
+def test_window_geometry_saved_and_restored(qt_app, tmp_path):
+    import main_window as mw
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QWidget
+    s = QSettings(str(tmp_path / "geo_test.ini"), QSettings.Format.IniFormat)
+    try:
+        # 无记录：不动窗口几何，返回 False
+        assert mw._restore_window_geometry(QWidget(), s) is False
+        # 脏数据不能炸，也不能污染窗口
+        s.setValue("window/geometry", b"not-a-real-geometry")
+        assert mw._restore_window_geometry(QWidget(), s) is False
+        # 正常往返：保存后能被 Qt 接受并恢复
+        w = QWidget()
+        w.resize(1024, 768)
+        mw._save_window_geometry(w, s)
+        assert s.contains("window/geometry")
+        assert mw._restore_window_geometry(QWidget(), s) is True
+    finally:
+        for k in s.allKeys():
+            s.remove(k)
+        s.sync()

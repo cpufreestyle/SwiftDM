@@ -215,8 +215,8 @@ def remove_task(task_id):
 
 @app.route("/api/clear_completed", methods=["POST"])
 def clear_completed():
-    manager.clear_completed()
-    return jsonify({"success": True})
+    n = manager.clear_completed()
+    return jsonify({"success": True, "cleared": n})
 
 
 @app.route("/api/pause_all", methods=["POST"])
