@@ -54,6 +54,25 @@ def _clear_confirm_text(n):
     return f"将清除 {n} 个任务（已完成/已失败/已取消），此操作不可恢复。确定继续吗？"
 
 
+FINISH_ACTIONS = ("none", "shutdown", "suspend", "beep")
+FINISH_ACTION_LABELS = {"none": "无动作", "shutdown": "关机",
+                        "suspend": "睡眠", "beep": "提示音"}
+
+
+def _finish_countdown_text(action, remaining):
+    """「全部下载完成后动作」工具栏文案；无动作/已到点/非法值返回 None 表示隐藏按钮。"""
+    if not action or action == "none":
+        return None
+    try:
+        left = int(remaining or 0)
+    except (TypeError, ValueError):
+        return None
+    if left <= 0:
+        return None
+    label = FINISH_ACTION_LABELS.get(action, action)
+    return f"{left}s 后{label}"
+
+
 def _window_settings():
     """窗口几何信息（大小/位置）持久化，重启后恢复上次布局。"""
     return QSettings("SwiftDM", "SwiftDM")
@@ -178,6 +197,14 @@ QToolBar QPushButton#btnAdd {
 }
 QToolBar QPushButton#btnAdd:hover {
     background-color: #7d6ff0;
+}
+QToolBar QPushButton#btnFinishCountdown {
+    background-color: #3d3320;
+    color: #ffa502;
+    border: 1px solid #ffa502;
+}
+QToolBar QPushButton#btnFinishCountdown:hover {
+    background-color: #4d3f28;
 }
 QLineEdit {
     background-color: #1a1a26;
@@ -646,6 +673,22 @@ class SettingsDialog(QDialog):
         rate_row.addWidget(QLabel("KB/s"))
         layout.addRow("下载限速:", rate_row)
 
+        # 「全部下载完成后」动作：与 Web 端设置面板共用 scheduler 单例
+        from scheduler import scheduler as _dl_scheduler
+        self.finish_combo = QComboBox()
+        for _action in FINISH_ACTIONS:
+            self.finish_combo.addItem(FINISH_ACTION_LABELS[_action], _action)
+        _current_action = _dl_scheduler.get_finish_action()
+        _current_idx = FINISH_ACTIONS.index(_current_action) if _current_action in FINISH_ACTIONS else 0
+        self.finish_combo.setCurrentIndex(_current_idx)
+        self.finish_combo.setToolTip(
+            "任务列表里再没有下载中/等待中/已暂停的任务后，开始 60 秒倒计时\n"
+            "关机: 倒计时结束执行系统关机\n"
+            "睡眠: 倒计时结束让系统睡眠\n"
+            "提示音: 倒计时结束播放提示音\n"
+            "倒计时期间工具栏显示剩余时间，点击可取消")
+        layout.addRow("全部下载完成后:", self.finish_combo)
+
         self.monitor_check = QComboBox()
         self.monitor_check.addItems(["启用", "禁用"])
         self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
@@ -699,6 +742,7 @@ class SettingsDialog(QDialog):
             "monitor": self.monitor_check.currentIndex() == 0,
             "proxy_mode": proxy_mode,
             "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
+            "finish_action": self.finish_combo.currentData() or "none",
         }
 
 
@@ -876,6 +920,15 @@ class MainWindow(QMainWindow):
         self.monitor_label = QLabel("  🌐 监控已启用")
         self.monitor_label.setStyleSheet("font-size: 11px; color: #00d2a0; font-weight: 600;")
         toolbar.addWidget(self.monitor_label)
+
+        # 「全部下载完成后」倒计时：仅倒计时进行中显示，点击取消
+        self.finish_btn = QPushButton("")
+        self.finish_btn.setObjectName("btnFinishCountdown")
+        self.finish_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.finish_btn.setVisible(False)
+        self.finish_btn.setToolTip("全部下载完成后的倒计时进行中，点击取消")
+        self.finish_btn.clicked.connect(self._cancel_finish_action)
+        toolbar.addWidget(self.finish_btn)
 
     def _setup_central(self):
         central = QWidget()
@@ -1072,6 +1125,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(_status_title(stats["active"], stats["total_speed"], stats["total"]))
             self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"], stats["total"]))
             self._update_overall(tasks)
+            self._update_finish_countdown()
 
             if not tasks:
                 self._update_filter_counts({})
@@ -1458,6 +1512,29 @@ class MainWindow(QMainWindow):
             return
         self.status_bar.showMessage(f"已打开下载目录: {path}", 4000)
 
+    def _update_finish_countdown(self):
+        """按调度器状态刷新工具栏倒计时按钮（桌面/Web 共用 scheduler 单例）。"""
+        try:
+            from scheduler import scheduler as _dl_scheduler
+            st = _dl_scheduler.status()
+        except Exception:
+            return
+        text = _finish_countdown_text(st.get("finish_action"), st.get("remaining"))
+        if text:
+            self.finish_btn.setText(text)
+            self.finish_btn.setVisible(True)
+        else:
+            self.finish_btn.setVisible(False)
+
+    def _cancel_finish_action(self):
+        """取消「全部下载完成后」倒计时（工具栏按钮点击）。"""
+        from scheduler import scheduler as _dl_scheduler
+        res = _dl_scheduler.cancel_finish_action()
+        if res.get("cancelled"):
+            label = FINISH_ACTION_LABELS.get(res.get("action"), "完成后动作")
+            self.status_bar.showMessage(f"已取消「{label}」倒计时", 5000)
+        self._update_finish_countdown()
+
     def _show_settings(self):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -1499,6 +1576,9 @@ class MainWindow(QMainWindow):
             rl = settings.get("rate_limit") or 0
             set_rate(rl)
             config.set("rate_limit", rl)
+            # 「全部下载完成后」动作：应用到调度器（与 Web 端共用单例；重启后重置为无动作）
+            from scheduler import scheduler as _dl_scheduler
+            _dl_scheduler.set_finish_action(settings.get("finish_action", "none"))
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(

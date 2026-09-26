@@ -172,3 +172,36 @@ def test_sorted_task_ids_orders_and_stays_stable():
     assert mw._sorted_task_ids(tasks, "size") == ["b", "c", "a"]     # 倒序，同值按 id
     assert mw._sorted_task_ids(tasks, "progress") == ["c", "a", "b"]
     assert mw._sorted_task_ids(tasks, "speed") == ["b", "a", "c"]
+
+
+def test_finish_countdown_text_hidden_and_labeled():
+    import main_window as mw
+
+    assert mw._finish_countdown_text("none", 30) is None
+    assert mw._finish_countdown_text(None, 30) is None
+    assert mw._finish_countdown_text("", 30) is None
+    assert mw._finish_countdown_text("shutdown", 0) is None
+    assert mw._finish_countdown_text("shutdown", -5) is None
+    assert mw._finish_countdown_text("shutdown", 42) == "42s 后关机"
+    assert mw._finish_countdown_text("suspend", 7) == "7s 后睡眠"
+    assert mw._finish_countdown_text("beep", 1) == "1s 后提示音"
+    assert mw._finish_countdown_text("mystery", 3) == "3s 后mystery"
+
+
+def test_finish_countdown_text_tolerates_junk_remaining():
+    import main_window as mw
+
+    assert mw._finish_countdown_text("shutdown", None) is None
+    assert mw._finish_countdown_text("shutdown", "abc") is None
+
+
+def test_settings_dialog_exposes_finish_action(qt_app):
+    import main_window as mw
+
+    dlg = mw.SettingsDialog()
+    labels = [dlg.finish_combo.itemText(i) for i in range(dlg.finish_combo.count())]
+    data = [dlg.finish_combo.itemData(i) for i in range(dlg.finish_combo.count())]
+    assert labels == ["无动作", "关机", "睡眠", "提示音"]
+    assert data == ["none", "shutdown", "suspend", "beep"]
+    settings = dlg.get_settings()
+    assert settings["finish_action"] in mw.FINISH_ACTIONS
