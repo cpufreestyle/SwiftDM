@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `c3906ea`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 12 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `555d2f6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 12 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、最后把筛选芯片全部接进 Tab 顺序。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义。
 
-本轮共 12 个 commit（HEAD = `c3906ea`，`git status -sb` 与 origin/main 0/0）：
+本轮共 13 个 commit（HEAD = `555d2f6`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -139,7 +139,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 卡片按钮（`_btn_style`）：描边本来就是彩色，焦点环改用淡填充，否则改描边颜色也看不出来；带 `tooltip` 的按钮把 tooltip 同步成 `setAccessibleName`（顶部那个「📋」图标按钮之前没有任何可读名字）。
    - 其余无名控件：「···」溢出按钮、倒计时按钮（文字是动态的）、卡片进度条、搜索框、排序下拉、紧凑开关全部补 `setAccessibleName`。
    - 测试：`tests/test_desktop_ui.py` 新增三组——离屏渲染对比（两套主题 × 五类按钮，要求焦点环落在最外一圈）、名字源码级守卫、卡片行为级断言；变异测试 8/8 全红。
-验证：全量 pytest 355 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 8/8 均能把新增守卫打红。
+验证：全量 pytest 355 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 8/8、扩展 popup 8/8 均能把新增守卫打红。
 `build_exe.py` 重建（exit 0）+ `test_binary.py` 全过（`=== 全部测试通过 ===`）：本轮改的 `main_window.py` 参与打包，桌面 QSS 与控件属性的改动以二进制端到端复测为准；打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
 离屏渲染实测：修复前同一按钮聚焦前后像素完全一致（原生焦点框被 QSS 重画吃掉），修复后最外一圈出现强调色描边；两套主题下都成立。
 
@@ -152,12 +152,27 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      容器默认顺序就等于控件创建顺序，已经就是视觉阅读顺序（日志面板默认排在最后），所以不需要 `setTabOrder` 显式链。
    - `tests/test_desktop_ui.py`：新增两组行为级护卫——真实主窗口下从 url_input 一站站 Tab 到任务区（隔离本机 `history.json`）、
      芯片互斥 + 每颗都 Tab 得到；变异测试 4/4 均变红。
+12. **扩展 popup 补上焦点环、页签语义与按下态**（`555d2f6`）：popup 是三端里唯一还没对齐的一块——Web 端上一轮已加
+    `:focus-visible`，桌面端已补 QSS 焦点环，而 popup 里所有按钮都是 `border:none`，键盘聚焦时画面毫无变化。
+   - `extension/popup.html`：新增 `:focus-visible` 焦点环（强调色描边 + 2px 偏移），颜色只走令牌；选中页签底色本就是强调色，
+     同色描边会糊在一起，另给 `.tab.active:focus-visible` 换亮一号的 `--accent2`；
+   - 页签容器声明 `role="tablist"` + `aria-label="面板切换"`，三个 button 补 `role="tab"` / `aria-selected` / `aria-controls`，
+     三个面板补 `role="tabpanel"` / `aria-labelledby`，读屏用户能听到「任务页签，已选中」；
+   - 暂停按钮补 `aria-pressed`（初始 `true`，与文案「暂停」对应）；
+   - `extension/popup.js`：`showPanel()` 在刷 `className` 后同步写 `aria-selected`（这是上一轮 `PANELS` 集中遍历的延伸，
+     新增面板只要进 PANELS 就自动带上）；`updateUI()` 末尾写 `aria-pressed`，与按钮文案同源；
+   - 测试：`tests/test_popup_panels.js` 的 `makeEl` 桩补 `setAttribute`/`getAttribute`，新增两组——源码级断言 CSS 形状
+     （焦点环走令牌、有偏移、选中页签用 accent2、tablist 与 tabpanel 双向挂名）与两个行为级断言（切换页签时 aria-selected
+     三个值同时翻转；`loadStatus()` 回来后 `aria-pressed` 与按钮文案同步，暂停/启用两个方向都测）；变异测试 8/8 全红。
+   - 踩坑记录：桩里 `document.addEventListener` 是空函数，`loadStatus()` 不会自动跑，直接调 `updateUI()` 只会看到初始值
+     `enabled = true`，所以行为级用例要先 `sandbox.loadStatus()`；该测试文件是 UTF-8 带 BOM，读写要 `utf-8-sig`，
+     写回时补回 BOM，否则 diff 多一行无关改动。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- （已关账）Web 与桌面端均已补上焦点环与 aria-属性；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
+- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
