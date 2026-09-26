@@ -570,6 +570,11 @@ body {
 .finish-status { font-size: 12px; color: var(--amber); }
 .chip.busy { background: var(--surface2, rgba(127,127,127,.15)); color: var(--text2); }
 .sched-list { font-size: 12px; color: var(--text2); }
+.sched-list .sched-row {
+  display: flex; align-items: center; gap: 8px; justify-content: space-between;
+  padding: 2px 0;
+}
+.sched-list .sched-row .sched-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ===== 动画 ===== */
 @keyframes pulse {
@@ -1752,6 +1757,13 @@ function syncDetailModal() {
   renderDetail(task);
 }
 
+function pendingActionHtml(task) {
+  // 定时等待中的任务只有「取消定时」一个动作（取消登记 + 任务置为已取消，
+  // 之后还能从卡片重试），删除留给勾选批量操作；与桌面端 pending 卡片对齐。
+  const label = task.scheduled_at ? "取消定时" : "取消";
+  return `<button class="btn btn-danger btn-sm" onclick="cancelTask('${task.task_id}')">&#10006; ${label}</button>`;
+}
+
 function createTaskCard(task) {
   const card = document.createElement("div");
   card.className = `task-card ${task.status}`;
@@ -1823,6 +1835,8 @@ function createTaskCard(task) {
       <button class="btn btn-secondary btn-sm" onclick="openFolder('${task.task_id}')" title="打开所在文件夹">打开文件夹</button>
       <button class="btn btn-danger btn-sm" onclick="removeTask('${task.task_id}')">&#128465; 删除</button>
     `;
+  } else if (task.status === "pending") {
+    actionsHtml = pendingActionHtml(task);
   }
 
   card.innerHTML = `
@@ -2200,11 +2214,29 @@ function renderCapabilities(caps) {
 
 function renderScheduled(list) {
   const box = document.getElementById("scheduledList");
+  if (!box) return;
   if (!list.length) { box.textContent = "无"; return; }
   box.innerHTML = list.map(s => {
     const when = new Date(s.start_at * 1000).toLocaleString();
-    return `<div>${escapeHtml(when)} · ${escapeHtml(s.task_id)}</div>`;
+    // 文件名优先：task_id 对用户没有任何意义（找不到任务是哪个时再退回 id）
+    const t = _tasksById[s.task_id] || {};
+    const name = t.filename || s.task_id;
+    return `<div class="sched-row">`
+      + `<span class="sched-name" title="${escapeHtml(s.task_id)}">`
+      + `${escapeHtml(when)} · ${escapeHtml(name)}</span>`
+      + `<button class="btn btn-danger btn-sm" onclick="cancelScheduled('${s.task_id}')">取消</button>`
+      + `</div>`;
   }).join("");
+}
+
+async function cancelScheduled(taskId) {
+  // 取消登记 + 任务置为已取消（走既有的 /api/cancel，不新增后端语义）；
+  // 之后从列表消失，任务卡片变成「已取消」，仍可重试
+  const res = await api(`/api/cancel/${taskId}`, { method: "POST" });
+  if (res && res.success === false) { showToast("取消定时失败", "error"); return; }
+  showToast("已取消该定时任务");
+  const s = await api("/api/settings");
+  if (s && s.scheduled) renderScheduled(s.scheduled);
 }
 
 // Web-only 没有系统托盘，倒计时靠 SSE 通知；只在「刚开始倒数」那一刻提示一次。

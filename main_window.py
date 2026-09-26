@@ -865,6 +865,7 @@ class TaskCard(QFrame):
         self.filepath = task_data.get("filepath", "")
         self._drag_start_pos = None
         self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
+        self._built_scheduled = bool(task_data.get("scheduled_at"))  # 右键菜单区分「取消/取消定时」
         self.url = task_data.get("url", "")
         self.setObjectName("taskCard")
         self.setStyleSheet(self._card_qss())
@@ -1105,6 +1106,14 @@ class TaskCard(QFrame):
             self._add_action_btn(bottom, "▶ 继续", "green", "resume")
             self._add_action_btn(bottom, "✕ 取消", "red", "cancel")
 
+        elif status == "pending":
+            # 定时等待中：只有一个「取消定时」。此前 pending 一张按钮都不摆，
+            # 用户想叫停一个还没开始的定时任务只能整条删除（删完调度表里还留幽灵条目）。
+            # 取消后任务变「已取消」，卡片上还能重试，比删除轻一级。
+            self._add_action_btn(
+                bottom, "✕ 取消定时" if task_data.get("scheduled_at") else "✕ 取消",
+                "red", "cancel")
+
         elif status in ("failed", "cancelled", "completed"):
             if status in ("failed", "cancelled"):
                 self._add_action_btn(bottom, "↻ 重试", "blue", "retry")
@@ -1281,6 +1290,8 @@ class TaskCard(QFrame):
             add("打开文件", "open")
         elif status in ("failed", "cancelled"):
             add("重试", "retry")
+        elif status == "pending":
+            add("取消定时" if getattr(self, "_built_scheduled", False) else "取消", "cancel")
         add("查看详情", "details")
         if status != "pending":
             # 下载中/暂停/失败/取消都能定位目录；失败时可查看分片残留决定是否手动续传
@@ -1295,6 +1306,7 @@ class TaskCard(QFrame):
         """更新卡片显示"""
         self.filepath = task_data.get("filepath", "")
         status = task_data.get("status", "pending")
+        self._built_scheduled = bool(task_data.get("scheduled_at"))
         prog = task_data.get("progress", 0)
         total_size = task_data.get("total_size", 0)
         downloaded = task_data.get("downloaded", 0)
@@ -2692,6 +2704,13 @@ class MainWindow(QMainWindow):
             else:
                 self.status_bar.showMessage(f"当前状态不支持重试: {task.status}", 5000)
         elif action == "cancel":
+            # 先取消登记再取消任务：Flask 的 /api/cancel 一直是这个顺序，
+            # 桌面端此前漏了 unschedule，删掉定时任务后会留下到点才自愈的幽灵条目
+            try:
+                from scheduler import scheduler as _dl_scheduler
+                _dl_scheduler.unschedule(task_id)
+            except Exception:
+                pass
             task.cancel()
         elif action == "remove":
             mgr.remove_task(task_id)

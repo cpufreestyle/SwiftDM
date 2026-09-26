@@ -964,6 +964,14 @@ class DownloadManager:
                 task.cancel()
             self._tasks.pop(task_id, None)
         self._cancel_auto_retry(task_id)
+        # 删除即取消登记：桌面端此前漏了这一步，删掉定时任务后 scan() 到点前
+        # 调度表里一直挂着幽灵条目（Web 设置面板的「定时任务」列表看得见它）。
+        # Flask 的 /api/remove 早就先 unschedule 再调这里，这里补上同一步骤。
+        try:
+            from scheduler import scheduler as _sched
+            _sched.unschedule(task_id)
+        except Exception:
+            pass
 
     def clear_completed(self):
         """清除已完成/已失败/已取消的任务，返回清除数量。"""

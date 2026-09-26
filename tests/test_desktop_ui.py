@@ -2379,3 +2379,121 @@ def test_ctrl_f_focuses_search_box_and_ctrl_a_selects_visible(qt_app, monkeypatc
         qt_app.processEvents()
         assert win.focusWidget() is win.search_input, (
             f"Ctrl+F 后焦点在 {_widget_name(win.focusWidget())}，应该落在搜索框")
+
+# ===== 定时任务的取消入口（此前 pending 卡片一个按钮都没有） =====
+
+def test_pending_card_offers_cancel_schedule(qt_app):
+    """定时等待中的任务要能「取消定时」：取消登记 + 任务转已取消（比重试轻、比删除轻）。
+
+    此前 pending 在 _build_ui 的三个分支里全部落空，一张按钮都不摆，
+    想叫停还没开始的定时任务只能整条删除——而删除在过去甚至不会清调度表。
+    """
+    import main_window as mw
+    from PyQt6.QtWidgets import QPushButton
+
+    scheduled = mw.TaskCard({"task_id": "t1", "filename": "late.iso",
+                             "status": "pending", "scheduled_at": 1770000000})
+    # findChildren 连隐藏的「···」溢出按钮一起捞，按业务按钮过滤
+    action_texts = [b.text() for b in scheduled.findChildren(QPushButton)
+                    if b.text() not in ("☐", "···")]
+    assert action_texts == ["✕ 取消定时"], action_texts
+
+    # 没有定时信息的 pending（理论上很短命）文案退化成「取消」
+    plain = mw.TaskCard({"task_id": "t2", "filename": "x.iso", "status": "pending"})
+    plain_texts = [b.text() for b in plain.findChildren(QPushButton)
+                   if b.text() not in ("☐", "···")]
+    assert plain_texts == ["✕ 取消"], plain_texts
+
+
+def test_pending_card_context_menu_offers_cancel_schedule(qt_app, monkeypatch):
+    """右键菜单与卡片按钮同一套动作：pending -> 取消定时。"""
+    import main_window as mw
+    from PyQt6.QtCore import QPointF
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "late.iso", "status": "pending",
+                        "scheduled_at": 1770000000})
+    seen = []
+    monkeypatch.setattr(mw.QMenu, "addAction",
+                        lambda self, text, slot=None: seen.append(text))
+    monkeypatch.setattr(mw.QMenu, "exec", lambda self, pos=None: None)
+    card.contextMenuEvent(type("E", (), {"globalPos": staticmethod(lambda: QPointF(0, 0))})())
+    assert "取消定时" in seen and "查看详情" in seen, seen
+
+
+def test_cancel_action_unschedules_before_cancelling(qt_app):
+    """取消/删除定时任务必须先取消登记，否则调度表里留着幽灵条目。"""
+    import main_window as mw
+    import scheduler
+
+    order = []
+
+    class _Task:
+        task_id = "t1"
+        status = "pending"
+        filename = "late.iso"
+        url = "http://x/late.iso"
+        filepath = ""
+
+        def cancel(self):
+            order.append("cancel")
+
+    class _Mgr:
+        def __init__(self):
+            self.removed = []
+            self.saved = 0
+
+        def get_task(self, tid):
+            return _Task()
+
+        def remove_task(self, tid):
+            self.removed.append(tid)
+
+        def save_history(self):
+            self.saved += 1
+
+    class _Bar:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, text, timeout=0):
+            self.messages.append(text)
+
+    class _Host:
+        def __init__(self):
+            self._mgr = _Mgr()
+            self.status_bar = _Bar()
+
+        def _get_manager(self):
+            return self._mgr
+
+    class _Sched:
+        def unschedule(self, tid):
+            order.append(("unschedule", tid))
+
+    orig = scheduler.scheduler
+    scheduler.scheduler = _Sched()
+    try:
+        mw.MainWindow._handle_action(_Host(), "cancel", "t1")
+    finally:
+        scheduler.scheduler = orig
+    assert order == [("unschedule", "t1"), "cancel"], order
+
+
+def test_remove_task_unschedules_the_task(monkeypatch):
+    """删除任务 = 取消登记：桌面端删除定时任务后不能再有幽灵条目。"""
+    import threading
+
+    import downloader
+    import scheduler
+
+    unscheduled = []
+    monkeypatch.setattr(scheduler, "scheduler",
+                        type("S", (), {"unschedule": lambda self, t: unscheduled.append(t)})())
+    mgr = object.__new__(downloader.DownloadManager)
+    mgr._tasks = {}
+    mgr._lock = threading.Lock()
+    mgr._auto_retry_lock = threading.Lock()
+    mgr._auto_retry_state = {}
+    mgr.save_history = lambda: None
+    mgr.remove_task("ghost-1")
+    assert unscheduled == ["ghost-1"], "删除不存在的任务也要清登记（幂等）"
