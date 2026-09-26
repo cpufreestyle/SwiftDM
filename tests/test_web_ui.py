@@ -145,6 +145,16 @@ def test_web_has_task_search_box(page):
     assert "matchFilter(t) && matchSearch(t)" in page
 
 
+def test_web_has_compact_mode_toggle(page):
+    assert 'onclick="toggleCompact()"' in page
+    assert "localStorage.getItem(\"swiftdm.compact\")" in page
+    assert "localStorage.setItem(\"swiftdm.compact\"" in page
+    assert ".task-list.compact .task-meta { display: none; }" in page
+    body = page[page.index("function applyCompact"):]
+    body = body[:body.index("\n}")]
+    assert 'classList.toggle("compact"' in body
+
+
 def test_web_settings_modal_is_grouped(page):
     assert '<div class="modal-section">下载</div>' in page
     assert '<div class="modal-section">界面与诊断</div>' in page

@@ -242,6 +242,11 @@ body {
 .task-card.failed { border-color: rgba(255,94,122,0.3); }
 .task-card.downloading { border-color: rgba(108,92,231,0.3); }
 
+.task-list.compact .task-card { padding: 8px 12px; }
+.task-list.compact .task-url,
+.task-list.compact .task-meta { display: none; }
+.task-list.compact .task-progress { margin-top: 6px; }
+
 .task-top {
   display: flex;
   align-items: flex-start;
@@ -628,6 +633,8 @@ body {
       <option value="progress">进度</option>
       <option value="speed">速度</option>
     </select>
+    <button class="filter-btn" id="compactBtn" onclick="toggleCompact()"
+            title="紧凑模式：隐藏次要信息，一屏看更多任务（会被记住）">≡ 紧凑</button>
   </div>
 
   <!-- 下载列表 -->
@@ -1058,6 +1065,23 @@ function sortTasks(list) {
   return a;
 }
 function syncSortSelect(){ const el = document.getElementById("sortSelect"); if (el) el.value = sortKey; }
+
+// ===== 紧凑模式（与桌面端一致）=====
+let compactMode = false;
+try { compactMode = localStorage.getItem("swiftdm.compact") === "1"; } catch (e) {}
+function toggleCompact() {
+  compactMode = !compactMode;
+  try { localStorage.setItem("swiftdm.compact", compactMode ? "1" : "0"); } catch (e) {}
+  applyCompact();
+  renderTasks(_lastTasks);
+}
+function applyCompact() {
+  const btn = document.getElementById("compactBtn");
+  if (btn) btn.classList.toggle("active", compactMode);
+  const list = document.getElementById("taskList");
+  if (list) list.classList.toggle("compact", compactMode);
+}
+ applyCompact();
  syncSortSelect();
 let searchQuery = "";
 function setSearch(q) {
