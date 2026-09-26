@@ -101,6 +101,33 @@ def _format_rate_kbps(bytes_per_sec):
     return "" if value <= 0 else str(value // 1024)
 
 
+SORT_KEYS = ("default", "name", "size", "progress", "speed")
+SORT_LABELS = {"default": "默认", "name": "文件名", "size": "大小",
+               "progress": "进度", "speed": "速度"}
+
+
+def _sort_key_for(data, key):
+    """返回任务在指定排序键下的值；倒序指标（大小/进度/速度）取负。"""
+    if key == "name":
+        return str(data.get("filename", "")).lower()
+    if key == "size":
+        return -int(data.get("total_size") or 0)
+    if key == "progress":
+        total = int(data.get("total_size") or 0)
+        done = int(data.get("downloaded") or 0)
+        return -(done / total) if total > 0 else 0.0
+    if key == "speed":
+        return -int(data.get("speed") or 0)
+    return 0
+
+
+def _sorted_task_ids(task_dict, sort_key):
+    """按排序键返回任务 id 顺序；default 保持添加顺序（同值时用 id 破平，结果稳定）。"""
+    if sort_key == "default":
+        return list(task_dict)
+    return sorted(task_dict, key=lambda tid: (_sort_key_for(task_dict[tid], sort_key), tid))
+
+
 def open_in_system(path):
     """跨平台用系统默认程序打开文件/目录（os.startfile 仅 Windows 可用）。"""
     try:
@@ -887,6 +914,12 @@ class MainWindow(QMainWindow):
             self._filter = _saved if _saved in ("all", "active", "completed", "failed") else "all"
         except Exception:
             self._filter = "all"
+        try:
+            import config as _cfg
+            _saved_sort = _cfg.get("sort")
+            self._sort = _saved_sort if _saved_sort in SORT_KEYS else "default"
+        except Exception:
+            self._sort = "default"
         self._filter_group = QButtonGroup(self)
         self._filter_group.setExclusive(True)
         self._filter_btns = {}
@@ -901,6 +934,13 @@ class MainWindow(QMainWindow):
             self._filter_btns[_key] = _b
             fb.addWidget(_b)
         fb.addStretch(1)
+        self.sort_combo = QComboBox()
+        for _key in SORT_KEYS:
+            self.sort_combo.addItem(SORT_LABELS[_key], _key)
+        self.sort_combo.setCurrentIndex(max(0, SORT_KEYS.index(self._sort)))
+        self.sort_combo.setToolTip("任务列表排序方式")
+        self.sort_combo.currentIndexChanged.connect(self._set_sort)
+        fb.addWidget(self.sort_combo)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("搜索任务…")
         self.search_input.setClearButtonEnabled(True)
@@ -1096,6 +1136,22 @@ class MainWindow(QMainWindow):
                     # 插入到布局中（在 stretch 之前）
                     self.task_layout.insertWidget(self.task_layout.count() - 1, card)
 
+            # 排序：按所选键重排卡片；顺序未变则跳过，避免每 500ms 重排引发风样
+            _desired = _sorted_task_ids(task_dict, self._sort)
+            _current = []
+            for _i in range(self.task_layout.count()):
+                _item = self.task_layout.itemAt(_i)
+                _widget = _item.widget() if _item else None
+                _tid = getattr(_widget, "task_id", None)
+                if _tid is not None:
+                    _current.append(_tid)
+            if _current != _desired:
+                for _tid in _desired:
+                    _card = self._cards.get(_tid)
+                    if _card is not None:
+                        self.task_layout.removeWidget(_card)
+                        self.task_layout.insertWidget(self.task_layout.count() - 1, _card)
+
             # 分类过滤：只显示当前分段可见的卡片
             self._update_filter_counts(task_dict)
             _visible = 0
@@ -1199,6 +1255,22 @@ class MainWindow(QMainWindow):
         try:
             import config
             config.set("filter", key)
+        except Exception:
+            pass
+        self._refresh()
+
+    def _set_sort(self, index):
+        """切换任务列表排序方式，并持久化便于重启后保持。"""
+        try:
+            key = SORT_KEYS[index]
+        except IndexError:
+            return
+        if key == self._sort:
+            return
+        self._sort = key
+        try:
+            import config
+            config.set("sort", key)
         except Exception:
             pass
         self._refresh()

@@ -484,6 +484,9 @@ body {
   border-radius:16px; padding:5px 12px; font-size:12px; width:180px; outline:none; }
 .search-input:focus { border-color: var(--accent); }
 .search-input::placeholder { color: var(--text2); }
+.sort-select { margin-left:8px; background: var(--surface2); border:1px solid var(--border); color: var(--text);
+  border-radius:16px; padding:5px 10px; font-size:12px; outline:none; cursor:pointer; }
+.sort-select:focus { border-color: var(--accent); }
 .filter-empty { color: var(--text2); font-size:13px; text-align:center; padding:28px 0; }
 </style>
 </head>
@@ -562,6 +565,13 @@ body {
     <button class="filter-btn" data-filter="completed" onclick="setFilter('completed')">已完成<span class="fc" id="fc-completed">0</span></button>
     <button class="filter-btn" data-filter="failed" onclick="setFilter('failed')">失败<span class="fc" id="fc-failed">0</span></button>
     <input type="text" id="searchInput" class="search-input" placeholder="搜索任务…" oninput="setSearch(this.value)">
+    <select id="sortSelect" class="sort-select" onchange="setSort(this.value)">
+      <option value="default">默认</option>
+      <option value="name">文件名</option>
+      <option value="size">大小</option>
+      <option value="progress">进度</option>
+      <option value="speed">速度</option>
+    </select>
   </div>
 
   <!-- 下载列表 -->
@@ -875,6 +885,27 @@ function matchFilter(t) {
   }
 }
 
+let sortKey = "default";
+try { const _ss = localStorage.getItem("swiftdm.sort");
+     if (["default","name","size","progress","speed"].indexOf(_ss) >= 0) sortKey = _ss;
+} catch (e) {}
+function _pct(t) { return t.total_size > 0 ? (t.downloaded || 0) / t.total_size : 0; }
+function setSort(k) {
+  if (k === sortKey) return;
+  sortKey = k;
+  try { localStorage.setItem("swiftdm.sort", k); } catch (e) {}
+  renderTasks(_lastTasks);
+}
+function sortTasks(list) {
+  const a = list.slice();
+  if (sortKey === "name") a.sort((x, y) => String(x.filename || "").localeCompare(String(y.filename || "")));
+  else if (sortKey === "size") a.sort((x, y) => (y.total_size || 0) - (x.total_size || 0));
+  else if (sortKey === "progress") a.sort((x, y) => _pct(y) - _pct(x));
+  else if (sortKey === "speed") a.sort((x, y) => (y.speed || 0) - (x.speed || 0));
+  return a;
+}
+function syncSortSelect(){ const el = document.getElementById("sortSelect"); if (el) el.value = sortKey; }
+ syncSortSelect();
 let searchQuery = "";
 function setSearch(q) {
   const v = (q || "").trim().toLowerCase();
@@ -949,9 +980,9 @@ function renderTasks(tasks) {
 
   document.getElementById("taskCountLabel").textContent = `共 ${tasks.length} 个任务`;
 
-  const active = view.filter(t => t.status === "downloading");
-  const completed = view.filter(t => t.status === "completed");
-  const other = view.filter(t => t.status !== "downloading" && t.status !== "completed");
+  const active = sortTasks(view.filter(t => t.status === "downloading"));
+  const completed = sortTasks(view.filter(t => t.status === "completed"));
+  const other = sortTasks(view.filter(t => t.status !== "downloading" && t.status !== "completed"));
 
   container.innerHTML = "";
   [...active, ...other, ...completed].forEach(task => {

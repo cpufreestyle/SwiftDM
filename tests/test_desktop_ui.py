@@ -158,3 +158,17 @@ def test_parse_and_format_rate_limit_kbps():
     assert mw._format_rate_kbps(None) == ""
     assert mw._format_rate_kbps(512 * 1024) == "512"
     assert mw._format_rate_kbps(1536) == "1"
+
+
+def test_sorted_task_ids_orders_and_stays_stable():
+    import main_window as mw
+    tasks = {
+        "a": {"filename": "b.iso", "total_size": 10, "downloaded": 5, "speed": 1},
+        "b": {"filename": "A.iso", "total_size": 100, "downloaded": 10, "speed": 9},
+        "c": {"filename": "c.iso", "total_size": 100, "downloaded": 90, "speed": 0},
+    }
+    assert mw._sorted_task_ids(tasks, "default") == ["a", "b", "c"]
+    assert mw._sorted_task_ids(tasks, "name") == ["b", "a", "c"]      # 大小写不敏感
+    assert mw._sorted_task_ids(tasks, "size") == ["b", "c", "a"]     # 倒序，同值按 id
+    assert mw._sorted_task_ids(tasks, "progress") == ["c", "a", "b"]
+    assert mw._sorted_task_ids(tasks, "speed") == ["b", "a", "c"]

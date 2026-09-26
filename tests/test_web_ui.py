@@ -143,3 +143,12 @@ def test_web_has_task_search_box(page):
     assert "function setSearch" in page
     assert "function matchSearch" in page
     assert "matchFilter(t) && matchSearch(t)" in page
+
+
+def test_web_has_task_sorting(page):
+    assert 'onchange="setSort(this.value)"' in page
+    assert "function sortTasks" in page
+    assert "localStorage.getItem(\"swiftdm.sort\")" in page
+    assert "localStorage.setItem(\"swiftdm.sort\"" in page
+    body = page[page.index("function renderTasks"):][:1600]
+    assert "sortTasks(view.filter(t => t.status === \"downloading\"))" in body
