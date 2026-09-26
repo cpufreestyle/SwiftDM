@@ -164,6 +164,17 @@ def _tasks_export_text(task_dict, ordered_ids):
     return buf.getvalue()
 
 
+def _reason_hint(reason):
+    """已知失败原因码 -> 可操作提示（与 Web 端 REASON_HINTS 同源，取 media._MEDIA_HINTS）。"""
+    if not reason:
+        return ""
+    try:
+        from media import _MEDIA_HINTS
+    except Exception:
+        return ""
+    return _MEDIA_HINTS.get(reason, "")
+
+
 def _fail_summary_text(items):
     """把一批新失败任务汇总成一条状态栏文案；空列表返回 None。
 
@@ -473,6 +484,7 @@ class TaskCard(QFrame):
         """)
         self._compact = False
         self._error_text = ""
+        self._error_reason = ""
         self.setMinimumHeight(CARD_HEIGHTS["default"][0])
         self._base_max_height = CARD_HEIGHTS["default"][1]
         self.setMaximumHeight(self._base_max_height)
@@ -639,7 +651,8 @@ class TaskCard(QFrame):
             "border: 1px solid #ff5e7a55; border-radius: 6px; padding: 6px 8px; margin-top: 2px;"
         )
         layout.addWidget(self.error_label)
-        self._apply_error_visibility(status, task_data.get("error", ""))
+        self._apply_error_visibility(status, task_data.get("error", ""),
+                                     task_data.get("error_reason", ""))
 
     # 允许从已完成卡片的文件区域拖出文件（如拖到资源管理器、聊天窗口等）
     def mousePressEvent(self, event):
@@ -681,19 +694,27 @@ class TaskCard(QFrame):
             f"QPushButton:hover{{background:{color}22;}}"
         )
 
-    def _apply_error_visibility(self, status, err):
-        """失败且有错误信息时显示原因，并解除高度限制以保证完整可见。"""
+    def _apply_error_visibility(self, status, err, reason=""):
+        """失败且有错误信息时显示原因，并解除高度限制以保证完整可见。
+
+        reason 为已知原因码（如 needs_ffmpeg）时附加一行可操作提示，
+        与 Web 端任务卡片保持一致。
+        """
         self._error_text = err or ""
+        self._error_reason = reason or ""
+        hint = _reason_hint(self._error_reason)
+        detail = f"⚠ 失败原因: {self._error_text}"
+        if hint:
+            detail += f"\n💡 {hint}"
         if status == "failed" and err and not self._compact:
-            self.error_label.setText(f"⚠ 失败原因: {err}")
+            self.error_label.setText(detail)
             self.error_label.show()
             self.setMaximumHeight(16777215)  # 解除上限，完整显示多行错误
         else:
             self.error_label.hide()
             self.setMaximumHeight(self._base_max_height)
         # 紧凑模式下把失败原因放进工具提示，不占高度
-        self.setToolTip(f"⚠ 失败原因: {self._error_text}"
-                        if self._compact and self._error_text else "")
+        self.setToolTip(detail if self._compact and self._error_text else "")
 
     def set_compact(self, on):
         """紧凑模式：压低高度、隐藏次要信息（大小/ETA/失败详情）。"""
@@ -703,7 +724,8 @@ class TaskCard(QFrame):
         self.setMinimumHeight(lo)
         self.size_label.setVisible(not self._compact)
         self.eta_label.setVisible(not self._compact)
-        self._apply_error_visibility(self._built_status, self._error_text)
+        self._apply_error_visibility(self._built_status, self._error_text,
+                                     self._error_reason)
 
     def contextMenuEvent(self, event):
         """右键菜单：按状态提供 暂停/继续/重试/打开/复制链接/删除。"""
@@ -786,7 +808,8 @@ class TaskCard(QFrame):
         self.eta_label.setText(f"⏱ {eta}" if eta and status == "downloading" else "")
 
         # 失败原因显示
-        self._apply_error_visibility(status, task_data.get("error", ""))
+        self._apply_error_visibility(status, task_data.get("error", ""),
+                                     task_data.get("error_reason", ""))
 
 
 class SettingsDialog(QDialog):

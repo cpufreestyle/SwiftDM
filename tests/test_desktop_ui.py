@@ -510,3 +510,24 @@ def test_tray_tip_surfaces_failures_and_countdown():
     assert tip2.endswith("· 12s 后关机")
     # countdown 为 None/空时不会留導助分隔符
     assert mw._tray_tip(0, 0, 5, countdown=None) == "SwiftDM - 下载管理器"
+
+
+def test_failed_card_shows_actionable_reason_hint(qt_app):
+    import main_window as mw
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.mp4",
+                        "status": "failed", "total_size": 0,
+                        "downloaded": 0, "error": "ffmpeg not found",
+                        "error_reason": "needs_ffmpeg"})
+    # 原始错误 + 可操作提示（与 Web 端同源）都要出现
+    assert "ffmpeg not found" in card.error_label.text()
+    assert "PATH" in card.error_label.text()
+    # 紧凑模式：提示进 tooltip，不占卡片高度
+    card.set_compact(True)
+    assert not card.error_label.isVisible()
+    assert "ffmpeg not found" in card.toolTip()
+    assert "PATH" in card.toolTip()
+    # 无原因码时不应出现提示行
+    card2 = mw.TaskCard({"task_id": "t2", "filename": "y.bin",
+                         "status": "failed", "total_size": 0,
+                         "downloaded": 0, "error": "HTTP 404"})
+    assert card2.error_label.text() == "⚠ 失败原因: HTTP 404"
