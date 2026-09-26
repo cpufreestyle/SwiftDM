@@ -259,3 +259,23 @@ def test_no_entry_point_hard_codes_the_thread_count():
             if bare_int.search(args):
                 offenders.append("%s: %s" % (path, " ".join(args.split())[:60]))
     assert offenders == [], "hard-coded thread count in create_task: " + " | ".join(offenders)
+
+
+def test_create_task_without_segments_follows_the_setting(tmp_path):
+    """Omitting segments must resolve the shared setting, not a bare 8.
+
+    Every entry point (API, capture, monitor, drag-and-drop) passes an
+    explicit clamped count now, so the signature default is the last place a
+    stale literal could hide.
+    """
+    import config
+
+    m = DownloadManager()
+    saved = config.get("segments")
+    try:
+        config.set("segments", 12)
+        assert m.create_task("https://c/v/a.bin", str(tmp_path)).segments == 12
+        config.set("segments", 0)  # not configured -> built-in default wins
+        assert m.create_task("https://c/v/a.bin", str(tmp_path)).segments == 8
+    finally:
+        config.set("segments", saved)

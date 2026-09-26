@@ -904,8 +904,12 @@ class DownloadManager:
         self._load_history()
         self._start_saver()
 
-    def create_task(self, url, save_dir, filename=None, segments=8, kind="auto",
+    def create_task(self, url, save_dir, filename=None, segments=None, kind="auto",
                     referer=None, cookies_netscape=None, resolution=None):
+        if segments is None:
+            # omitting the count now follows the shared "segments" setting,
+            # same as every other entry point, instead of a bare 8
+            segments = config.clamp_segments(config.get("segments"))
         with self._lock:
             self._counter += 1
             task_id = f"dl_{self._counter}"
