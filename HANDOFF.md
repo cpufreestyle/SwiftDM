@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `2b23aa6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `fbb7004`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -409,6 +409,17 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      否则运行时类名如 `media-kind video/dash` 会被误报成死规则）；两个文件现在均无死规则。
    - 新守卫：`test_css_selectors_do_not_reference_classes_that_never_exist`，另外我们在美化样式表时，一定要先把
      样式表从页面里面剔掉再搜索 class/id，否则选择器自己就会匹配到自己。
+25. **`--card` 从未定义，对话框和高级面板一直是透明的**（`fbb7004`）：Playwright 实拍设置面板时
+    用 getComputedStyle 量了一口 `.modal-card` 的背景，结果是 `rgba(0, 0, 0, 0)`；`.add-adv` 同样。
+    原因：两处都用 `var(--card)` 当背景，但两套 `:root` 主题里根本没定义过这个变量。
+    CSS 不会报错，`background` 静默变 transparent，所以一直靠遮罩 + 模糊在背后穽道里花样头补上。
+    修复：两套主题各补一条 `--card`（暗#22222e／亮#ffffff，即高台面板色调），并把它登记进 `tests/test_theme_tokens.py` 的 WEB_ONLY。
+   - 守卫：`test_every_css_variable_used_is_defined_in_a_theme`，**按主题**判定而不是取并集；
+     取并集的版本会放过"只从暗色删掉"的变异。
+   - 顺带修了个三端口径分岔：已取消任务卡之前也会渲染红色的"重启后中断"行（桌面端只在 `status == failed` 时显示），
+     现在改为只对 failed 显示，原因仍然能在详情弹窗里看到；变异测试取掉限定即红。
+   - 本轮还做了一轮实拍走查：定时任务卡片（角标、“取消定时”按钮、设置面板列表、取消后表单刷新）、
+     分段进度条（3/8 段三态正常）、详情弹窗、搜索空态均无异常；浅色主题下各面板也复核无溢出。
 ---
 
 ## 6. 关键文件速查
