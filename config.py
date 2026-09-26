@@ -34,6 +34,28 @@ _DEFAULTS = {
 }
 
 
+# Thread-count ceiling shared by the desktop settings panel and the Web API
+SEGMENTS_MAX = 32
+
+
+def clamp_segments(value, default=None):
+    """Normalise a thread count so every entry point agrees.
+
+    Never raises: a missing, empty, non-numeric, or non-positive value means
+    "not configured", so the built-in default wins instead of silently
+    collapsing to a single thread.
+    """
+    if default is None:
+        default = _DEFAULTS["segments"]
+    try:
+        segments = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    if segments < 1:
+        return default
+    return min(SEGMENTS_MAX, segments)
+
+
 def _load():
     """读取磁盘配置并与默认值合并（坏文件/缺字段都安全回退）。"""
     global _cache

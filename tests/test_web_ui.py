@@ -32,6 +32,29 @@ def test_add_task_sends_new_fields(page):
     assert re.search(r"JSON\.stringify\(\{[^}]*kind", payload), "kind 必须直接出现在请求体里"
     for key in ("url", "segments", "kind", "resolution", "start_at"):
         assert key in payload, key
+    # 线程数不能再写死 8：设置面板里改了得生效
+    assert "segments: defaultSegments()" in payload, payload[:200]
+
+
+def test_new_task_thread_count_comes_from_settings(page):
+    """默认线程数由 /api/settings 下发，/拖入、剪贴板复制都要走同一个来源。"""
+    assert "defaultSegmentsCache" in page
+    assert "res.default_segments" in page
+    assert "function syncSegmentsInput" in page
+    assert "async function applySegments" in page
+    # 两个入口都不能再写死 8
+    assert "segments: 8" not in page, "还有地方写死了 segments: 8"
+    assert 'id="segmentsInput"' in page and 'id="applySegments"' in page
+    # 空值不能静默通过
+    body = page[page.index("async function applySegments"):][:220]
+    assert 'showToast(' in body and '"error"' in body, body   # 非法输入要报错，不能静默通过
+
+
+def test_settings_segments_row_in_download_group(page):
+    dl = page.index('<div class="modal-section">下载</div>')
+    ui = page.index('<div class="modal-section">界面与诊断</div>')
+    for needle in ('id="segmentsInput"', 'id="dirInput"', 'id="proxySelect"'):
+        assert dl < page.index(needle) < ui, needle
 
 
 def test_start_at_is_converted_to_epoch_seconds(page):
@@ -144,6 +167,56 @@ def test_web_has_task_search_box(page):
     assert "function setSearch" in page
     assert "function matchSearch" in page
     assert "matchFilter(t) && matchSearch(t)" in page
+
+
+def test_default_thread_count_is_a_real_setting(monkeypatch):
+    """设置面板的「下载线程数」必须真的生效，不能只是个附带作用的字段。
+
+    之前 /api/add 硬编码 `or 8`，桌面端 _create_and_start 也写死 8，
+    结果 config 里的 segments 被读了一眼就没人用。
+    """
+    import app as appmod
+    import config
+
+    appmod.app.config["TESTING"] = True
+    client = appmod.app.test_client()
+
+    saved = config.get("segments")
+
+    def _set(value):
+        config.set("segments", value)
+
+    created = []
+
+    class _Mgr:
+        def create_task(self, *args, **kwargs):
+            created.append(args[3])
+            raise _Stop()
+
+    class _Stop(Exception):
+        pass
+
+    monkeypatch.setattr(appmod, "manager", _Mgr())
+    try:
+        for value, expected in ((3, 3), (32, 32), (1, 1), (99, 32), (0, 8)):
+            _set(value)
+            created.clear()
+            try:
+                client.post("/api/add", json={"url": "http://127.0.0.1:1/x.bin"})
+            except _Stop:
+                pass
+            assert created == [expected], (value, created)
+
+        # 显式给出线程数时仍然优先，且同样要钳制
+        _set(4)
+        created.clear()
+        try:
+            client.post("/api/add", json={"url": "http://127.0.0.1:1/x.bin", "segments": 100})
+        except _Stop:
+            pass
+        assert created == [32], created
+    finally:
+        _set(saved)
 
 
 def test_web_has_compact_mode_toggle(page):
@@ -305,7 +378,7 @@ def test_theme_controls_are_wired(page):
 
 
 def test_no_stray_hardcoded_colors_in_css(page):
-    # 除白色（用于带色背景的按钮/标频）外，SS 不应再出现硬编码颜色
+    # 除白色（用于带色背景的按钮/标签）外，SS 不应再出现硬编码颜色
     css = page[:page.index("</style>")]
     css = css[css.index("<style>"):]
     css = re.sub(r':root(\[data-theme="light"\])? \{[\s\S]*?\}', '', css)

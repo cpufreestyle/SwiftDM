@@ -1207,8 +1207,8 @@ class SettingsDialog(QDialog):
         form.addRow("下载目录:", dir_row)
 
         self.segments_spin = QSpinBox()
-        self.segments_spin.setRange(1, 32)
-        self.segments_spin.setValue(int(config.get("segments")))
+        self.segments_spin.setRange(1, config.SEGMENTS_MAX)
+        self.segments_spin.setValue(config.clamp_segments(config.get("segments")))
         self.segments_spin.setToolTip("多线程分段数，越大速度越快但占用更多资源")
         form.addRow("下载线程数:", self.segments_spin)
 
@@ -2554,12 +2554,20 @@ class MainWindow(QMainWindow):
         else:
             self.overall_label.setText("")
 
-    def _create_and_start(self, url, filename=None, segments=8, save_dir=None,
+    def _threads_default(self):
+        """读取设置面板的默认线程数；配置是唯一事实来源，
+        不再在函数签名里固定 8。"""
+        import config as _cfg
+        return _cfg.clamp_segments(_cfg.get("segments"))
+
+
+    def _create_and_start(self, url, filename=None, segments=None, save_dir=None,
                           start_at=None):
         from downloader import manager
         save_dir = save_dir or self.download_dir
         os.makedirs(save_dir, exist_ok=True)
-        task = manager.create_task(url, save_dir, filename, segments or 8)
+        task = manager.create_task(
+            url, save_dir, filename, segments or self._threads_default())
         if start_at:
             # 与 Web /api/add 一致：定时任务先不启动，交给调度器到点拉起
             from scheduler import scheduler as _dl_scheduler

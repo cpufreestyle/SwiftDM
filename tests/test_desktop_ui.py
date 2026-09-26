@@ -458,6 +458,49 @@ def test_tray_icon_stays_inside_the_badge(qt_app):
             assert extent == BADGE_BOUNDS, (theme, state, extent)
 
 
+def test_desktop_uses_configured_thread_count(qt_app, monkeypatch):
+    """桌面端新任务也得跟设置面板的线程数走；之前函数签名写死 8。"""
+    import main_window as mw
+    import config
+
+    saved = config.get("segments")
+
+    class _Mgr:
+        def __init__(self):
+            self.seen = []
+
+        def create_task(self, *args, **kwargs):
+            self.seen.append(args[3])
+            raise RuntimeError("stop")
+
+    class _Host:
+        _threads_default = mw.MainWindow._threads_default
+
+    host = _Host()
+    host.download_dir = "C:/does-not-matter"
+    mgr = _Mgr()
+    monkeypatch.setattr("downloader.manager", mgr)
+    try:
+        for value, expected in ((3, 3), (32, 32), (None, 8)):
+            config.set("segments", value)
+            mgr.seen.clear()
+            try:
+                mw.MainWindow._create_and_start(host, "http://127.0.0.1:1/x.bin")
+            except RuntimeError:
+                pass
+            assert mgr.seen == [expected], (value, mgr.seen)
+        # 显式传参仍然最优先
+        config.set("segments", 4)
+        mgr.seen.clear()
+        try:
+            mw.MainWindow._create_and_start(host, "http://127.0.0.1:1/x.bin", segments=16)
+        except RuntimeError:
+            pass
+        assert mgr.seen == [16], mgr.seen
+    finally:
+        config.set("segments", saved)
+
+
 def test_card_height_bounds_for_compact_and_default():
     import main_window as mw
 

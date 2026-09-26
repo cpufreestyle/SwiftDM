@@ -29,6 +29,7 @@ setup_logging()
 # 监听配置（可被环境变量覆盖，便于预览代理 / 局域网访问）
 SWIFTDM_HOST = os.environ.get("SWIFTDM_HOST", "0.0.0.0")
 SWIFTDM_PORT = int(os.environ.get("SWIFTDM_PORT", "5000"))
+# Thread-count ceiling comes from config.SEGMENTS_MAX so both UIs agree.
 
 app = Flask(__name__)
 CORS(app)
@@ -36,6 +37,19 @@ CORS(app)
 # 默认下载目录：统一从共享配置读取（桌面 UI 设置的目录对 Web 端同样生效）
 DEFAULT_DOWNLOAD_DIR = config.get_download_dir()
 os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
+
+
+
+
+def _clamp_segments(value, default=8):
+    """Thread counts are clamped to 1-32 (see config.clamp_segments)."""
+    return config.clamp_segments(value, default)
+
+
+def _default_segments():
+    """Reads the "default threads" setting; used when a new task omits segments
+    instead of always assuming 8."""
+    return _clamp_segments(config.get("segments"), 8)
 
 
 def _with_schedule(task):
@@ -69,12 +83,15 @@ def add_task():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     filename = (data.get("filename") or "").strip() or None
-    try:
-        segments = int(data.get("segments") or 8)
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "线程数必须是 1-32 的整数"}), 400
-    # 钳制到 1-32：无上限线程数会造成资源耗尽
-    segments = max(1, min(32, segments))
+    raw_segments = data.get("segments")
+    if raw_segments is None or str(raw_segments).strip() == "":
+        # no explicit count: fall back to the setting instead of a hard-coded 8
+        segments = _default_segments()
+    else:
+        try:
+            segments = _clamp_segments(int(float(raw_segments)))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "线程数必须是 1-32 的整数"}), 400
     save_dir = data.get("save_dir") or config.get_download_dir()
     kind = (data.get("kind") or "auto").strip().lower()
     referer = (data.get("referer") or "").strip() or None
@@ -278,6 +295,9 @@ def settings():
         if "finish_action" in data:
             # 持久化，重启后仍生效（与桌面端设置共用同一份配置）
             config.set("finish_action", scheduler.set_finish_action(data["finish_action"]))
+        if "segments" in data:
+            # default threads: shares the clamp rule with /api/add
+            config.set("segments", _clamp_segments(data["segments"], 8))
         # 下载目录：持久化到共享配置，Web / 桌面 / 浏览器捕获三端统一生效
         if "download_dir" in data:
             new_dir = str(data["download_dir"]).strip()
@@ -296,7 +316,8 @@ def settings():
     st = scheduler.status()
     return jsonify({
         "download_dir": config.get_download_dir(),
-        "default_segments": config.get("segments"),
+        "default_segments": _default_segments(),
+        "segments_max": config.SEGMENTS_MAX,
         "proxy_mode": get_proxy_mode(),
         "proxy_modes": ["env", "direct", "custom"],
         "rate_limit": get_rate(),

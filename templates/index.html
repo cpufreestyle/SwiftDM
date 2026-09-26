@@ -759,6 +759,15 @@ body {
     </div>
 
     <div class="modal-row">
+      <div class="modal-label">下载线程数</div>
+      <div class="modal-controls">
+        <input type="number" min="1" max="32" step="1" id="segmentsInput" style="width:110px">
+        <button class="btn btn-primary btn-sm" id="applySegments" onclick="applySegments()">应用</button>
+      </div>
+      <div class="modal-note">新任务的默认分段数；越大越快但占用资源更多，单个任务还可以单独指定。</div>
+    </div>
+
+    <div class="modal-row">
       <div class="modal-label">下载目录</div>
       <div class="modal-controls">
         <input type="text" id="dirInput" style="width:100%;max-width:260px" placeholder="如 D:/Downloads">
@@ -933,7 +942,7 @@ async function addTask() {
   const res = await api("/api/add", {
     method: "POST",
     body: JSON.stringify({
-      url, segments: 8,
+      url, segments: defaultSegments(),
       kind: opts.kind, resolution: opts.resolution, start_at: opts.start_at
     }),
   });
@@ -1027,7 +1036,7 @@ function extractDropUrls(dt) {
 
 async function enqueueUrl(url) {
   try {
-    const res = await api("/api/add", { method: "POST", body: JSON.stringify({ url, segments: 8 }) });
+    const res = await api("/api/add", { method: "POST", body: JSON.stringify({ url, segments: defaultSegments() }) });
     if (res.success) return true;
     showToast(res.error || `添加失败: ${url.slice(0, 40)}`, "error");
   } catch (err) {
@@ -1681,7 +1690,9 @@ async function refreshSettings() {
     document.getElementById("rateInput").value = B2KB(res.rate_limit);
   }
   document.getElementById("finishAction").value = res.finish_action || "none";
+  if (typeof res.default_segments === "number") defaultSegmentsCache = res.default_segments;
   syncDirInput(res);
+  syncSegmentsInput(res);
   syncProxyInputs(res);
   renderFinishStatus(res);
   renderCapabilities(res.capabilities || {});
@@ -1700,6 +1711,32 @@ async function applyRate() {
 
 // 下载目录 / 代理：后端 /api/settings 早就支持，只是 Web 端没有入口，
 // 结果 HEADLESS 时想改目录或换代理只能去手改配置文件。
+// Default thread count: /api/add used to hard-code 8, so the setting had no effect.
+let defaultSegmentsCache = null;
+function defaultSegments() { return defaultSegmentsCache || 8; }
+function syncSegmentsInput(res) {
+  if (typeof res.segments_max === "number") {
+    const box = document.getElementById("segmentsInput");
+    if (box) box.max = String(res.segments_max);
+  }
+  const input = document.getElementById("segmentsInput");
+  if (input && document.activeElement !== input) input.value = defaultSegments();
+}
+
+async function applySegments() {
+  const raw = document.getElementById("segmentsInput").value;
+  const value = parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < 1) {
+    showToast("线程数必须是大于 0 的整数", "error");
+    return;
+  }
+  const res = await api("/api/settings",
+    { method: "POST", body: JSON.stringify({ segments: value }) });
+  if (res && res.success) showToast(`新任务默认线程数已更新为 ${res.default_segments}`);
+  else showToast((res && res.error) || "设置失败", "error");
+  refreshSettings();
+}
+
 const PROXY_PRESETS = ["env", "direct"];
 
 function isPresetProxyMode(mode) {
