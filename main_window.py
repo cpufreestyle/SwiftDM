@@ -17,9 +17,10 @@ from PyQt6.QtWidgets import (
     QFormLayout, QSpinBox, QComboBox, QListWidget, QListWidgetItem,
     QGroupBox,
     QButtonGroup,
-    QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit
+    QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit,
+    QCheckBox, QDateTimeEdit
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QDateTime
 from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
                      QPainter, QBrush, QDrag, QShortcut, QKeySequence,
                      QPolygon)
@@ -1048,6 +1049,18 @@ class AddDialog(QDialog):
         self.seg_spin.setValue(8)
         layout.addRow("线程数:", self.seg_spin)
 
+        # 定时开始（与 Web 端「定时下载」对齐）：默认十分钟后，未勾选则立即下载
+        self.sched_check = QCheckBox("定时开始")
+        self.sched_time = QDateTimeEdit()
+        self.sched_time.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.sched_time.setDateTime(QDateTime.currentDateTime().addSecs(600))
+        self.sched_time.setEnabled(False)
+        self.sched_check.toggled.connect(self.sched_time.setEnabled)
+        sched_row = QHBoxLayout()
+        sched_row.addWidget(self.sched_check)
+        sched_row.addWidget(self.sched_time, 1)
+        layout.addRow("", sched_row)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -1059,11 +1072,17 @@ class AddDialog(QDialog):
             self.dir_edit.setText(d)
 
     def get_data(self):
+        start_at = None
+        if self.sched_check.isChecked():
+            when = self.sched_time.dateTime()
+            if when.toSecsSinceEpoch() > int(time.time()):
+                start_at = float(when.toSecsSinceEpoch())
         return {
             "url": self.url_edit.text().strip(),
             "filename": self.name_edit.text().strip() or None,
             "dir": self.dir_edit.text().strip() or None,
             "segments": self.seg_spin.value(),
+            "start_at": start_at,
         }
 
 
@@ -1567,7 +1586,8 @@ class MainWindow(QMainWindow):
                 return
             try:
                 self._create_and_start(data["url"], data["filename"],
-                                       data["segments"], data["dir"] or self.download_dir)
+                                       data["segments"], data["dir"] or self.download_dir,
+                                       data.get("start_at"))
                 self.url_input.clear()
             except Exception as e:
                 self.logger.exception("添加下载失败")
@@ -1811,14 +1831,23 @@ class MainWindow(QMainWindow):
         else:
             self.overall_label.setText("")
 
-    def _create_and_start(self, url, filename=None, segments=8, save_dir=None):
+    def _create_and_start(self, url, filename=None, segments=8, save_dir=None,
+                          start_at=None):
         from downloader import manager
         save_dir = save_dir or self.download_dir
         os.makedirs(save_dir, exist_ok=True)
         task = manager.create_task(url, save_dir, filename, segments or 8)
-        task.start()
-        manager.save_history()
-        self.status_bar.showMessage(f"已添加: {task.filename}")
+        if start_at:
+            # 与 Web /api/add 一致：定时任务先不启动，交给调度器到点拉起
+            from scheduler import scheduler as _dl_scheduler
+            _dl_scheduler.schedule(task.task_id, float(start_at))
+            manager.save_history()
+            self.status_bar.showMessage(
+                f"已定时: {task.filename}", 5000)
+        else:
+            task.start()
+            manager.save_history()
+            self.status_bar.showMessage(f"已添加: {task.filename}")
         return task
 
     @staticmethod

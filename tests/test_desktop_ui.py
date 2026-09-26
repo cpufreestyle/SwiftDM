@@ -568,3 +568,23 @@ def test_task_card_marks_scheduled_pending(qt_app):
                       "scheduled_at": None})
     assert card.status_label.text() == "⏳ 等待中"
     assert "⏰" not in card.size_label.text()
+
+
+def test_add_dialog_exposes_schedule_option(qt_app):
+    import main_window as mw
+    from PyQt6.QtCore import QDateTime
+    dlg = mw.AddDialog()
+    # 默认不定时：get_data 不带 start_at（立即下载）
+    dlg.url_edit.setText("https://example.com/x.bin")
+    assert dlg.get_data()["start_at"] is None
+    assert not dlg.sched_time.isEnabled()
+    # 勾选后可编辑，默认十分钟后
+    dlg.sched_check.setChecked(True)
+    assert dlg.sched_time.isEnabled()
+    when = dlg.sched_time.dateTime()
+    assert when.toSecsSinceEpoch() > int(__import__("time").time()) + 60
+    data = dlg.get_data()
+    assert data["start_at"] == float(when.toSecsSinceEpoch())
+    # 未来时间才算定时；过去时间视为立即下载
+    dlg.sched_time.setDateTime(QDateTime.currentDateTime().addSecs(-60))
+    assert dlg.get_data()["start_at"] is None
