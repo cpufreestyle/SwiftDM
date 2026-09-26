@@ -394,3 +394,63 @@ def test_settings_dialog_exposes_finish_action(qt_app):
     assert sound_data == list(notify_sound.NOTIFY_SOUNDS)
     assert settings["notify_sound"] in notify_sound.NOTIFY_SOUNDS
     notify_sound.set_sound("none")
+
+
+def test_pause_all_and_resume_all_only_touch_active_tasks(qt_app):
+    import main_window as mw
+
+    class _Task:
+        def __init__(self, status):
+            self.status = status
+            self.paused = False
+            self.resumed = False
+
+        def pause(self):
+            self.paused = True
+            self.status = "paused"
+
+        def resume(self):
+            self.resumed = True
+            self.status = "downloading"
+
+    class _Mgr:
+        def __init__(self, tasks):
+            self.tasks = tasks
+            self.saved = 0
+
+        def get_all_tasks(self):
+            return self.tasks
+
+        def save_history(self):
+            self.saved += 1
+
+    class _Bar:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, text, timeout=0):
+            self.messages.append(text)
+
+    class _Host:
+        def __init__(self, mgr):
+            self._mgr = mgr
+            self.status_bar = _Bar()
+
+        def _get_manager(self):
+            return self._mgr
+
+    tasks = [_Task("downloading"), _Task("paused"), _Task("completed")]
+    mgr = _Mgr(tasks)
+    host = _Host(mgr)
+    mw.MainWindow._pause_all(host)
+    assert tasks[0].paused and tasks[0].status == "paused"
+    assert not tasks[1].paused and not tasks[2].paused
+    assert mgr.saved == 1
+    assert any("暂停" in m for m in host.status_bar.messages)
+
+    host.status_bar.messages.clear()
+    mw.MainWindow._resume_all(host)
+    assert tasks[0].resumed and tasks[1].resumed
+    assert not tasks[2].resumed
+    assert mgr.saved == 2
+    assert any("恢复" in m for m in host.status_bar.messages)
