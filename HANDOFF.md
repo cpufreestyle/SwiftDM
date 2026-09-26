@@ -1,6 +1,6 @@
 # SwiftDM 交接文档（Handoff）
 
-> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-26。
+> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-27。
 > 项目根目录：`D:\ai share\repo\SwiftDM\`（唯一主副本）
 > （git 仓库，远程 `cpufreestyle/SwiftDM`，GitHub）
 > 交付物/构建产物位于 `dist/SwiftDM.exe`。
@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `1a15e83`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 10 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `cded294`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 11 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端。
 
-本轮共 10 个 commit（HEAD = `1a15e83`，`git status -sb` 与 origin/main 0/0）：
+本轮共 11 个 commit（HEAD = `cded294`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -134,16 +134,20 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 任务卡片的进度条暴露为 `role="progressbar"`（带 aria-valuenow / min / max），多选框补 `aria-label`；筛选区加 `role="group"`，筛选与紧凑芯片由 `syncFilterButtons` / `applyCompact` 维护 `aria-pressed`；`advToggle` / `settingsBtn` 维护 `aria-expanded`；
    - 顺手修两个真 bug：`setFilter` / `syncFilterButtons` 用的 `.filter-btn` 选择器连紧凑按钮一起匹配，切换筛选会把紧凑按钮的 active 状态抹掉（现收窄为 `.filter-btn[data-filter]`）；`escapeHtml` 被声明了两次，后一份静默覆盖前一份，带 XSS 说明的那份根本没生效；
    - 测试：`tests/test_web_ui.py` 新增 6 组断言（焦点环与减弱动态、图标按钮可访问名、模态框与 toast 宣读、芯片按下态、进度条与多选框、`escapeHtml` 只声明一次）；变异测试 7/7 全红。
-
-验证：全量 pytest 349 passed / 1 skipped；12 个 node 测试全绿；变异测试 7/7 均能把新增守卫打红。
-`build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）；`extension/` 不参与打包（`SwiftDM.spec` 只收 `templates/`），本轮未再重建二进制，改动靠源码级守卫与沙箱测试覆盖。
-打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
+10. **桌面端补上可见焦点环与可访问名**（`cded294`）：之前 Qt 端所有 QPushButton 都由 QSS 重画，原生焦点框被吃掉——离屏渲染对比过，聚焦前后像素完全一致，纯键盘用户在桌面端也看不见焦点落在哪。
+   - `main_window.py` QSS：给 QToolBar 按钮、`#btnAdd`、`#btnFinishCountdown`、筛选芯片分别补强调色焦点环；已选中的芯片底色就是强调色，描边改用正文色才看得见；仅键盘聚焦时显形，鼠标点击不出现。
+   - 卡片按钮（`_btn_style`）：描边本来就是彩色，焦点环改用淡填充，否则改描边颜色也看不出来；带 `tooltip` 的按钮把 tooltip 同步成 `setAccessibleName`（顶部那个「📋」图标按钮之前没有任何可读名字）。
+   - 其余无名控件：「···」溢出按钮、倒计时按钮（文字是动态的）、卡片进度条、搜索框、排序下拉、紧凑开关全部补 `setAccessibleName`。
+   - 测试：`tests/test_desktop_ui.py` 新增三组——离屏渲染对比（两套主题 × 五类按钮，要求焦点环落在最外一圈）、名字源码级守卫、卡片行为级断言；变异测试 8/8 全红。
+验证：全量 pytest 353 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 8/8 均能把新增守卫打红。
+`build_exe.py` 重建（exit 0）+ `test_binary.py` 全过（`=== 全部测试通过 ===`）：本轮改的 `main_window.py` 参与打包，桌面 QSS 与控件属性的改动以二进制端到端复测为准；打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
+离屏渲染实测：修复前同一按钮聚焦前后像素完全一致（原生焦点框被 QSS 重画吃掉），修复后最外一圈出现强调色描边；两套主题下都成立。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- （已关账）Web 端已补上焦点环与 aria-属性；桌面端 `main_window.py` 仍然没有 `setAccessibleName` / `setTabOrder`，待下一轮。
+- （已关账）Web 与桌面端均已补上焦点环与 aria-属性。只剩 `setTabOrder` 还没有显式排过（默认顺序已经可用），待下一轮。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
