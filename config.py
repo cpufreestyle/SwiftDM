@@ -24,6 +24,7 @@ _DEFAULTS = {
     "segments": 8,
     "rate_limit": 0,  # 全局下载限速（字节/秒，0 = 不限速）
     "finish_action": "none",  # 全部下载完成后的动作：none/shutdown/suspend/beep
+    "notify_sound": "none",  # 完成提示音：none/beep/system
     "monitor_enabled": True,
 }
 

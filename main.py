@@ -195,6 +195,8 @@ def main():
     _set_proxy(config.get("proxy_mode"))
     from throttle import set_rate as _set_rate
     _set_rate(config.get("rate_limit"))  # 恢复上次的全局限速
+    from notify_sound import set_sound as _set_sound
+    _set_sound(config.get("notify_sound"))  # 恢复完成提示音选择
     os.makedirs(config.get_download_dir(), exist_ok=True)
 
     # 3. 启动浏览器监控 HTTP 服务器

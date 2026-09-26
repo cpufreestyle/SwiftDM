@@ -788,6 +788,22 @@ class SettingsDialog(QDialog):
             "倒计时期间工具栏显示剩余时间，点击可取消")
         layout.addRow("全部下载完成后:", self.finish_combo)
 
+        # 完成提示音：任务下载完成时的声音提醒（默认关闭）
+        import notify_sound
+        self.sound_combo = QComboBox()
+        for _key in notify_sound.NOTIFY_SOUNDS:
+            self.sound_combo.addItem(notify_sound.NOTIFY_SOUND_LABELS[_key], _key)
+        _cur_sound = notify_sound.get_sound()
+        self.sound_combo.setCurrentIndex(
+            notify_sound.NOTIFY_SOUNDS.index(_cur_sound)
+            if _cur_sound in notify_sound.NOTIFY_SOUNDS else 0)
+        self.sound_combo.setToolTip(
+            "任务下载完成时播放声音\n"
+            "关闭: 仅托盘气泡 + 状态栏\n"
+            "提示音: 三声短中\n"
+            "系统音: 播放操作系统提示音")
+        layout.addRow("完成提示音:", self.sound_combo)
+
         self.monitor_check = QComboBox()
         self.monitor_check.addItems(["启用", "禁用"])
         self.monitor_check.setCurrentIndex(0 if config.get("monitor_enabled") else 1)
@@ -842,6 +858,7 @@ class SettingsDialog(QDialog):
             "proxy_mode": proxy_mode,
             "rate_limit": _parse_rate_kbps(self.rate_edit.text()),
             "finish_action": self.finish_combo.currentData() or "none",
+            "notify_sound": self.sound_combo.currentData() or "none",
         }
 
 
@@ -1350,7 +1367,12 @@ class MainWindow(QMainWindow):
             self.logger.exception("刷新任务列表失败")
 
     def _notify_complete(self, task_data):
-        """下载完成通知"""
+        """下载完成通知（托盘气泡 + 状态栏 + 可选提示音）"""
+        try:
+            import notify_sound
+            notify_sound.play()
+        except Exception:
+            pass
         name = task_data.get("filename", "文件")
         self.tray.showMessage(
             "✅ 下载完成",
@@ -1785,6 +1807,10 @@ class MainWindow(QMainWindow):
             from scheduler import scheduler as _dl_scheduler
             _dl_scheduler.set_finish_action(settings.get("finish_action", "none"))
             config.set("finish_action", _dl_scheduler.get_finish_action())
+            # 完成提示音：应用并持久化（重启后仍生效）
+            import notify_sound as _notify_sound
+            _notify_sound.set_sound(settings.get("notify_sound", "none"))
+            config.set("notify_sound", _notify_sound.get_sound())
             self.logger.info("设置已保存，下载代理模式: %s，下载目录: %s，监控: %s",
                              settings.get("proxy_mode", "env"), self.download_dir, settings["monitor"])
             self.status_bar.showMessage(

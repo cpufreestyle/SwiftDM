@@ -287,6 +287,7 @@ def test_task_card_selection_property_and_click_signal(qt_app):
 
 def test_settings_dialog_exposes_finish_action(qt_app):
     import main_window as mw
+    import notify_sound
 
     dlg = mw.SettingsDialog()
     labels = [dlg.finish_combo.itemText(i) for i in range(dlg.finish_combo.count())]
@@ -295,3 +296,12 @@ def test_settings_dialog_exposes_finish_action(qt_app):
     assert data == ["none", "shutdown", "suspend", "beep"]
     settings = dlg.get_settings()
     assert settings["finish_action"] in mw.FINISH_ACTIONS
+    sound_labels = [dlg.sound_combo.itemText(i)
+                    for i in range(dlg.sound_combo.count())]
+    sound_data = [dlg.sound_combo.itemData(i)
+                   for i in range(dlg.sound_combo.count())]
+    assert sound_labels == [notify_sound.NOTIFY_SOUND_LABELS[k]
+                           for k in notify_sound.NOTIFY_SOUNDS]
+    assert sound_data == list(notify_sound.NOTIFY_SOUNDS)
+    assert settings["notify_sound"] in notify_sound.NOTIFY_SOUNDS
+    notify_sound.set_sound("none")
