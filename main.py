@@ -218,7 +218,8 @@ def main():
             if t.url == url and t.status in ("downloading", "paused", "pending"):
                 print(f"[Monitor] URL 已存在任务中，跳过: {url[:60]}...")
                 return
-        task = manager.create_task(url, save_dir, filename, 8)
+        task = manager.create_task(
+            url, save_dir, filename, config.clamp_segments(config.get("segments")))
         task.start()
         print(f"[Monitor] 浏览器捕获下载: {task.filename}")
         _win = _ui_ref["window"]

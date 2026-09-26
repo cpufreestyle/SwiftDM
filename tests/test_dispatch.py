@@ -127,3 +127,135 @@ def test_api_add_start_at_defers_start(client, tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert calls and calls[0][0] == "sched" and calls[0][2] == 2000000000
     assert resp.get_json()["task"]["scheduled_at"] == 2000000000
+
+
+def _segments_stub_manager():
+    """Manager stub: records the thread count, aborts before any real start."""
+
+    class _Stop(Exception):
+        pass
+
+    class _StubManager:
+        def __init__(self):
+            self.calls = []
+
+        def get_all_tasks(self):
+            return []
+
+        def create_task(self, url, save_dir, filename, segments, *args, **kwargs):
+            self.calls.append((url, save_dir, filename, segments))
+            raise _Stop
+
+    return _StubManager(), _Stop
+
+
+@pytest.mark.parametrize("value,expected", [(3, 3), (16, 16), (99, 32), (0, 8)])
+def test_browser_capture_reads_the_segments_setting(tmp_path, monkeypatch, value,
+                                                    expected):
+    """The browser-capture entry point must follow the "segments" setting.
+
+    This handler used to pass a literal 8, so captures silently ignored the
+    thread count configured in both settings UIs.
+    """
+    import config
+    from browser_monitor import BrowserCaptureHandler
+
+    manager, stop = _segments_stub_manager()
+    handler = BrowserCaptureHandler.__new__(BrowserCaptureHandler)
+    handler.manager = manager
+    monkeypatch.setattr(config, "get_download_dir", lambda: str(tmp_path))
+    saved = config.get("segments")
+    try:
+        config.set("segments", value)
+        try:
+            handler._add_download("https://c/v/a.bin", None)
+        except stop:
+            pass
+        assert manager.calls == [("https://c/v/a.bin", str(tmp_path), None, expected)]
+    finally:
+        config.set("segments", saved)
+
+
+@pytest.mark.parametrize("value,expected", [(3, 3), (16, 16), (99, 32), (0, 8)])
+def test_monitor_auto_add_reads_the_segments_setting(tmp_path, monkeypatch, value,
+                                                      expected):
+    """The monitor thread auto-add path must follow "segments" as well."""
+    import config
+    import downloader
+    from browser_monitor import BrowserMonitor
+
+    class _Task:
+        filename = "a.bin"
+
+        def start(self):
+            pass
+
+    created = []
+
+    def create_task(url, save_dir, filename, segments, *args, **kwargs):
+        created.append((url, save_dir, filename, segments))
+        return _Task()
+
+    monkeypatch.setattr(config, "get_download_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(downloader.manager, "create_task", create_task)
+    saved = config.get("segments")
+    try:
+        config.set("segments", value)
+        BrowserMonitor()._auto_add("https://c/v/a.bin")
+        assert created == [("https://c/v/a.bin", str(tmp_path), None, expected)]
+    finally:
+        config.set("segments", saved)
+
+
+def test_no_entry_point_hard_codes_the_thread_count():
+    """No create_task call site may pass a literal thread count.
+
+    app.py, main_window.py and browser_monitor.py all resolve the count from
+    config now, so a bare literal in any call site would silently fork the
+    setting again.  The one legitimate literal is downloader.py signature
+    default (segments=8), which the "def " head check below skips.
+    """
+    import os
+    import re
+    import subprocess
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=root, capture_output=True, check=True)
+        paths = [p for p in listed.stdout.decode("utf-8", "replace").splitlines()
+                 if p.endswith((".py", ".js", ".html"))]
+    except (OSError, subprocess.CalledProcessError):
+        paths = []
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs
+                       if d not in (".git", "__pycache__", "build", "dist")]
+            for name in files:
+                if name.startswith("_") or not name.endswith((".py", ".js", ".html")):
+                    continue
+                paths.append(os.path.relpath(os.path.join(base, name), root)
+                             .replace(os.sep, "/"))
+
+    bare_int = re.compile("(?<![A-Za-z0-9_.])[0-9]+(?![A-Za-z0-9_.])")
+    offenders = []
+    for path in paths:
+        if path.startswith(("tests/", "docs/")):
+            continue
+        with open(os.path.join(root, path), encoding="utf-8") as handle:
+            src = handle.read()
+        for match in re.finditer(r"create_task\(", src):
+            head = src[max(0, match.start() - 20):match.start()].splitlines()[-1]
+            if "def " in head:
+                continue
+            depth, end = 1, match.end()
+            while end < len(src) and depth:
+                if src[end] == "(":
+                    depth += 1
+                elif src[end] == ")":
+                    depth -= 1
+                end += 1
+            args = src[match.end():end - 1]
+            if bare_int.search(args):
+                offenders.append("%s: %s" % (path, " ".join(args.split())[:60]))
+    assert offenders == [], "hard-coded thread count in create_task: " + " | ".join(offenders)

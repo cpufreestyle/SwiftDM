@@ -93,7 +93,8 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
                 return
         save_dir = config.get_download_dir()
         os.makedirs(save_dir, exist_ok=True)
-        task = self.manager.create_task(url, save_dir, filename, 8)
+        task = self.manager.create_task(
+            url, save_dir, filename, config.clamp_segments(config.get("segments")))
         task.start()
 
 
@@ -205,6 +206,7 @@ class BrowserMonitor:
             return
         save_dir = config.get_download_dir()
         os.makedirs(save_dir, exist_ok=True)
-        task = manager.create_task(url, save_dir, None, 8)
+        task = manager.create_task(
+            url, save_dir, None, config.clamp_segments(config.get("segments")))
         task.start()
         print(f"[Monitor] 自动添加下载: {task.filename}")
