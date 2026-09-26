@@ -1726,10 +1726,22 @@ class MainWindow(QMainWindow):
             ("Up", lambda: self._move_selection(-1)),
             ("Down", lambda: self._move_selection(1)),
             ("Return", lambda: self._open_selected_task()),
+            # Esc 关详情面板：和 Web 端保持一致（Web 端 Esc 关详情，设置是模态对话框，
+            # Qt 自带默认行为）。没开面板时不做任何事，不和其它功能抢键。
+            ("Escape", self._close_task_detail),
         ):
             _sc = QShortcut(QKeySequence(_seq), self)
             _sc.activated.connect(_slot)
             self._shortcuts.append((_seq, _sc))
+
+    def _close_task_detail(self):
+        """Esc 关闭当前托盘/任务详情面板；未打开时空转。"""
+        dlg = getattr(self, "_detail_dialog", None)
+        if dlg is None:
+            return
+        # 走 reject() 而不是 hide()：finished 信号释放引用，避免再次打开时挂到旧面板
+        dlg.reject()
+        dlg.deleteLater()
 
     def _setup_toolbar(self):
         toolbar = QToolBar("主工具栏")

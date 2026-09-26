@@ -85,6 +85,8 @@ def test_keyboard_shortcuts_registered(qt_app):
             self._shortcuts = []
             self.url_input = QLineEdit()
 
+        _close_task_detail = mw.MainWindow._close_task_detail
+
         def _add_download(self):  # pragma: no cover - just a slot target
             pass
 
@@ -92,6 +94,43 @@ def test_keyboard_shortcuts_registered(qt_app):
     mw.MainWindow._setup_shortcuts(host)
     seqs = sorted(seq for seq, _ in host._shortcuts)
     assert "Ctrl+N" in seqs and "Ctrl+F" in seqs, seqs
+    # Esc 关详情面板，和 Web 端对齐
+    assert "Escape" in seqs, seqs
+
+
+def test_escape_closes_task_detail(qt_app):
+    """Esc 只在详情面板开着时才生效，不能吃掉其它场景的 Esc。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QDialog
+
+    class _Dlg(QDialog):
+        def __init__(self):
+            super().__init__()
+            self.rejected_count = 0
+
+        def reject(self):
+            self.rejected_count += 1
+            super().reject()
+
+    class _Host:
+        def __init__(self):
+            self._detail_dialog = None
+
+    host = _Host()
+    # 没开面板：不报错、不做事
+    mw.MainWindow._close_task_detail(host)
+    assert host._detail_dialog is None
+
+    dlg = _Dlg()
+    host._detail_dialog = dlg
+    mw.MainWindow._close_task_detail(host)
+    assert dlg.rejected_count == 1
+    # finished 信号同步触发 _detail_dialog_closed；这里手动模拟一遍
+    mw.MainWindow._detail_dialog_closed(host)
+    assert host._detail_dialog is None
+    # 二次 Esc 不要再拋错
+    mw.MainWindow._close_task_detail(host)
+    assert dlg.rejected_count == 1
 
 
 def test_title_and_tray_helpers_surface_activity():
