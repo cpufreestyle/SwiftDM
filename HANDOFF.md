@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `072c60f`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 14 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `9dded5c`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 15 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、并给动态列表按钮补上可访问名。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，并修掉长文件名撑破弹窗行高的布局缺陷。
 
-本轮共 14 个 commit（HEAD = `072c60f`，`git status -sb` 与 origin/main 0/0）：
+本轮共 15 个 commit（HEAD = `9dded5c`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -139,7 +139,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 卡片按钮（`_btn_style`）：描边本来就是彩色，焦点环改用淡填充，否则改描边颜色也看不出来；带 `tooltip` 的按钮把 tooltip 同步成 `setAccessibleName`（顶部那个「📋」图标按钮之前没有任何可读名字）。
    - 其余无名控件：「···」溢出按钮、倒计时按钮（文字是动态的）、卡片进度条、搜索框、排序下拉、紧凑开关全部补 `setAccessibleName`。
    - 测试：`tests/test_desktop_ui.py` 新增三组——离屏渲染对比（两套主题 × 五类按钮，要求焦点环落在最外一圈）、名字源码级守卫、卡片行为级断言；变异测试 8/8 全红。
-验证：全量 pytest 355 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 8/8、扩展 popup 9/9 均能把新增守卫打红。
+验证：全量 pytest 355 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 8/8、扩展 popup 15/15 均能把新增守卫打红。
 `build_exe.py` 重建（exit 0）+ `test_binary.py` 全过（`=== 全部测试通过 ===`）：本轮改的 `main_window.py` 参与打包，桌面 QSS 与控件属性的改动以二进制端到端复测为准；打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
 离屏渲染实测：修复前同一按钮聚焦前后像素完全一致（原生焦点框被 QSS 重画吃掉），修复后最外一圈出现强调色描边；两套主题下都成立。
 
@@ -181,11 +181,23 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 踩坑记录：`tests/test_extension_panel.js` 与 `test_popup_panels.js` 各有一份重复的 `makeEl` 桩，
      只改一个会漏——这次就是改了 popup_panels 的桩、extension_panel 那份还是老的，当场 `setAttribute is not a function`；
      另外点击回调在桩里是同步回调的，handler 返回 `undefined` 时走的是失败分支（「重试」），别误写成「添加中」。
+14. **修掉扩展 popup 长文件名撑破行高**（`9dded5c`）：媒体/任务行是 260px 宽的 flex 行，
+    名字列 `flex: 1` 但没写 `min-width: 0`——flex 子项默认 `min-width:auto`，长文件名不肯收缩，
+    把「下载」按钮整个顶出弹窗；更隐蔽的是 `text-overflow: ellipsis` 写在 `.media-name` 上，
+    而文字其实在它的子 `div` 里，省略号一个字符都没生效。
+   - `extension/popup.html`：`.media-name` 补 `min-width: 0`，省略号下沉到真正包着文字的子元素
+     （新增 `.media-name > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }`）；
+   - 截断会丢信息，所以 `renderItem` / `taskRow` 给整行 `label` 加 `title` 悬浮提示，
+     带上「文件名 · 清晰度 · 大小」或「文件名 · 失败原因」；
+   - 测试：`tests/test_popup_panels.js` 新增 ⑨——源码级断言 CSS 三段形状（min-width 归零、
+     省略号在子元素且不在父级、子元素不换行）+ 行为级断言两条 `title` 的完整内容；变异测试 6/6 全红。
+   - 踩坑记录：这是「既有缺陷被旧写法掩盖」的典型——`.media-name` 上有 `overflow:hidden`，
+     视觉上像被裁掉了，实际是整行超宽后被 body 裁的；动手前先在浏览器里量一行真实宽度。
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮也带上了对象名；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
+- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
