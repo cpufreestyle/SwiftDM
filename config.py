@@ -26,6 +26,9 @@ _DEFAULTS = {
     "finish_action": "none",  # 全部下载完成后的动作：none/shutdown/suspend/beep
     "notify_sound": "none",  # 完成提示音：none/beep/system
     "compact": False,  # 任务列表紧凑模式（隐藏次要信息，一屏更多任务）
+    # Status-filter and sort keys of the task list, shared with the Web UI
+    "filter": "all",
+    "sort": "default",
     "monitor_enabled": True,
     "theme": "dark",  # 桌面端界面主题：dark / light
     "auto_retry": 0,  # 失败自动重试次数（0 = 关闭），退透间隔 30s/1m/2m/5m

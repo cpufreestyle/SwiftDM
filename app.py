@@ -48,6 +48,17 @@ def _clamp_segments(value, default=8):
     return config.clamp_segments(value, default)
 
 
+# UI preference vocabularies shared with the desktop settings dialog
+THEMES = ("auto", "light", "dark")
+FILTER_KEYS = ("all", "active", "completed", "failed")
+SORT_KEYS = ("default", "name", "size", "progress", "speed")
+
+
+def _one_of(value, allowed, default):
+    """Return value when it is one of the allowed keys, else the default."""
+    return value if value in allowed else default
+
+
 def _default_segments():
     """Reads the "default threads" setting; used when a new task omits segments
     instead of always assuming 8."""
@@ -319,6 +330,16 @@ def settings():
         if "compact" in data:
             # compact list mode: the desktop persists this too, so share it
             config.set("compact", bool(data["compact"]))
+        if "theme" in data:
+            # shared theme: the desktop dialog offers dark/light, the Web
+            # adds "auto" (follow the OS)
+            config.set("theme", _one_of(data["theme"], THEMES, "auto"))
+        if "filter" in data:
+            # status filter seed: same keys as the desktop filter bar
+            config.set("filter", _one_of(data["filter"], FILTER_KEYS, "all"))
+        if "sort" in data:
+            # sort key: same keys as the desktop sort menu
+            config.set("sort", _one_of(data["sort"], SORT_KEYS, "default"))
         if "auto_retry" in data:
             # downloader re-reads this on every failure, so no restart is needed
             config.set("auto_retry", _clamp_auto_retry(data["auto_retry"]))
@@ -364,6 +385,9 @@ def settings():
         "notify_sounds": notify_sound.NOTIFY_SOUND_LABELS,
         "browser_capture": BROWSER_CAPTURE_ENABLED,
         "compact": bool(config.get("compact")),
+        "theme": config.get("theme"),
+        "filter": config.get("filter"),
+        "sort": config.get("sort"),
         "finish_countdown": st["remaining"],
         "scheduled": st["scheduled"],
         "capabilities": {"ffmpeg": ffmpeg_status(), "ytdlp": ytdlp_available()},

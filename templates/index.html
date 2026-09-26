@@ -839,7 +839,7 @@ body {
           <option value="dark">深色</option>
         </select>
       </div>
-      <div class="modal-note">默认跟随系统主题；浅色主题目前仅 Web 端提供。</div>
+      <div class="modal-note">与桌面端共用同一份主题设置；「跟随系统」仅 Web 端生效。</div>
     </div>
 
     <div class="modal-row">
@@ -1284,6 +1284,9 @@ function setTheme(pref) {
   themePref = pref;
   try { localStorage.setItem("swiftdm.theme", pref); } catch (e) {}
   applyTheme(pref);
+  // shared with the desktop settings dialog; localStorage is only a cache
+  api("/api/settings", { method: "POST", body: JSON.stringify({ theme: pref }) })
+    .then(res => { if (!res || !res.success) showToast("主题保存失败", "error"); });
 }
 
 function toggleTheme() {
@@ -1328,6 +1331,8 @@ function setSort(k) {
   if (k === sortKey) return;
   sortKey = k;
   try { localStorage.setItem("swiftdm.sort", k); } catch (e) {}
+  api("/api/settings", { method: "POST", body: JSON.stringify({ sort: k }) })
+    .then(res => { if (!res || !res.success) showToast("排序保存失败", "error"); });
   renderTasks(_lastTasks);
 }
 function sortTasks(list) {
@@ -1383,6 +1388,8 @@ function currentFilterLabel() {
 function setFilter(f) {
   currentFilter = f;
   try { localStorage.setItem("swiftdm.filter", f); } catch (e) {}
+  api("/api/settings", { method: "POST", body: JSON.stringify({ filter: f }) })
+    .then(res => { if (!res || !res.success) showToast("筛选保存失败", "error"); });
   document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.dataset.filter === f));
   renderTasks(_lastTasks);
   syncFilterButtons();
@@ -1741,6 +1748,9 @@ async function refreshSettings() {
   syncSoundOptions(res);
   syncCaptureInput(res);
   syncCompactInput(res);
+  syncThemeInput(res);
+  syncFilterInput(res);
+  syncSortInput(res);
   renderFinishStatus(res);
   renderCapabilities(res.capabilities || {});
   renderScheduled(res.scheduled || []);
@@ -1850,6 +1860,34 @@ async function applySound() {
 function syncCaptureInput(res) {
   const sel = document.getElementById("captureSelect");
   if (sel) sel.value = res.browser_capture ? "1" : "0";
+}
+
+// theme / filter / sort used to live in localStorage only while the desktop
+// read and wrote the same keys in the shared config, so each UI remembered its
+// own value. The server is now authoritative; localStorage only caches the
+// value for the first paint before /api/settings answers.
+function syncThemeInput(res) {
+  const p = ["auto", "light", "dark"].indexOf(res.theme) >= 0 ? res.theme : "auto";
+  if (p === themePref) return;
+  themePref = p;
+  try { localStorage.setItem("swiftdm.theme", p); } catch (e) {}
+  applyTheme(p);
+}
+function syncFilterInput(res) {
+  if (["all", "active", "completed", "failed"].indexOf(res.filter) < 0) return;
+  if (res.filter === currentFilter) return;
+  currentFilter = res.filter;
+  try { localStorage.setItem("swiftdm.filter", currentFilter); } catch (e) {}
+  syncFilterButtons();
+  if (typeof renderTasks === "function") renderTasks(_lastTasks);
+}
+function syncSortInput(res) {
+  if (["default", "name", "size", "progress", "speed"].indexOf(res.sort) < 0) return;
+  if (res.sort === sortKey) return;
+  sortKey = res.sort;
+  try { localStorage.setItem("swiftdm.sort", sortKey); } catch (e) {}
+  syncSortSelect();
+  if (typeof renderTasks === "function") renderTasks(_lastTasks);
 }
 
 function syncCompactInput(res) {

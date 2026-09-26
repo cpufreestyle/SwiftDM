@@ -494,3 +494,50 @@ def test_web_keyboard_shortcuts_match_desktop(page):
     assert body.index("detailModal") < body.index("settingsModal")
     assert "preventDefault" in page
     assert '"focus_url"' in page and '"focus_search"' in page
+
+
+def test_ui_preferences_are_shared_with_the_desktop(page):
+    """theme / filter / sort must go through /api/settings, not just localStorage.
+
+    The desktop dialog reads and writes the same keys in the shared config; the
+    Web used to keep private localStorage copies, so switching between the two
+    UIs lost the theme, filter and sort choices.
+    """
+    for needle in ("function syncThemeInput(res)", "function syncFilterInput(res)",
+                   "function syncSortInput(res)"):
+        assert needle in page, needle
+    body = page[page.index("async function refreshSettings"):]
+    body = body[:body.index("\n}")]
+    for call in ("syncThemeInput(res)", "syncFilterInput(res)", "syncSortInput(res)"):
+        assert call in body, call
+    assert "JSON.stringify({ theme: pref })" in page
+    assert "JSON.stringify({ filter: f })" in page
+    assert "JSON.stringify({ sort: k })" in page
+
+
+def test_settings_api_round_trips_ui_preferences(monkeypatch):
+    """POST /api/settings persists theme/filter/sort and GET echoes them back."""
+    import config
+
+    appmod.app.config["TESTING"] = True
+    client = appmod.app.test_client()
+    saved = {key: config.get(key) for key in ("theme", "filter", "sort")}
+    try:
+        resp = client.post("/api/settings", json={"theme": "light",
+                                                  "filter": "failed",
+                                                  "sort": "speed"})
+        assert resp.status_code == 200 and resp.get_json()["success"]
+        assert config.get("theme") == "light"
+        assert config.get("filter") == "failed"
+        assert config.get("sort") == "speed"
+        got = client.get("/api/settings").get_json()
+        assert (got["theme"], got["filter"], got["sort"]) == ("light", "failed", "speed")
+        # unknown values fall back instead of poisoning the shared config
+        client.post("/api/settings", json={"theme": "neon", "filter": "nope",
+                                           "sort": "chaos"})
+        assert config.get("theme") == "auto"
+        assert config.get("filter") == "all"
+        assert config.get("sort") == "default"
+    finally:
+        for key, value in saved.items():
+            config.set(key, value)
