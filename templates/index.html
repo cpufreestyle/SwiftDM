@@ -500,6 +500,8 @@ body {
       <h1>SwiftDM</h1>
       <div class="sub">高速多线程下载管理器 <span id="connStatus" style="color:var(--green)">&#9679; 已连接</span></div>
     </div>
+    <button class="btn btn-secondary btn-icon settings-btn" onclick="openDownloadDir()"
+            title="打开下载目录">&#128193;</button>
     <button class="btn btn-secondary btn-icon settings-btn" id="settingsBtn"
             onclick="openSettings()" title="限速 / 完成后动作 / 依赖检测">&#9881;</button>
   </div>
@@ -848,6 +850,13 @@ async function resumeAll() {
   await api("/api/resume_all", { method: "POST" });
   showToast("已恢复全部下载");
 }
+
+async function openDownloadDir() {
+  const r = await api("/api/open_download_dir", { method: "POST" });
+  if (r && r.success) showToast("已打开下载目录");
+  else showToast("打开失败: " + ((r && r.error) || "未知错误"));
+}
+
 
 async function retryAllFailed() {
   const failed = _lastTasks.filter(t => t.status === "failed" || t.status === "cancelled");

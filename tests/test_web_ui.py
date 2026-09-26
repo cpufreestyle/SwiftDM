@@ -152,3 +152,23 @@ def test_web_has_task_sorting(page):
     assert "localStorage.setItem(\"swiftdm.sort\"" in page
     body = page[page.index("function renderTasks"):][:1600]
     assert "sortTasks(view.filter(t => t.status === \"downloading\"))" in body
+
+
+def test_open_download_dir_button(page):
+    assert 'onclick="openDownloadDir()"' in page
+    assert '"/api/open_download_dir"' in page
+
+
+def test_open_download_dir_endpoint_creates_and_reveals(monkeypatch, tmp_path):
+    import os as _os
+    target = str(tmp_path / "downloads")
+    revealed = []
+    monkeypatch.setattr(appmod.config, "get_download_dir", lambda: target)
+    monkeypatch.setattr(appmod, "_reveal_in_file_manager", lambda p: revealed.append(p))
+    appmod.app.config["TESTING"] = True
+    resp = appmod.app.test_client().post("/api/open_download_dir")
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["path"] == target
+    assert _os.path.isdir(target)          # 目录不存在时先创建，不能直接报错
+    assert revealed == [target]

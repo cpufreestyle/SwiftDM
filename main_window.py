@@ -857,6 +857,10 @@ class MainWindow(QMainWindow):
         btn_clear.clicked.connect(self._clear_completed)
         toolbar.addWidget(btn_clear)
 
+        btn_open_dir = QPushButton("📂 打开目录")
+        btn_open_dir.clicked.connect(self._open_download_dir)
+        toolbar.addWidget(btn_open_dir)
+
         toolbar.addSeparator()
 
         self.btn_log = QPushButton("📜 日志")
@@ -1441,6 +1445,18 @@ class MainWindow(QMainWindow):
         mgr.clear_completed()
         self._completed_tasks.clear()
         self.status_bar.showMessage(f"已清除 {len(finished)} 个任务")
+
+    def _open_download_dir(self):
+        """在系统文件管理器中打开当前下载目录。"""
+        import config as _cfg
+        path = _cfg.get_download_dir()
+        try:
+            os.makedirs(path, exist_ok=True)
+            open_in_system(path)
+        except OSError as e:
+            self.status_bar.showMessage(f"打开目录失败: {e}", 5000)
+            return
+        self.status_bar.showMessage(f"已打开下载目录: {path}", 4000)
 
     def _show_settings(self):
         dlg = SettingsDialog(self)

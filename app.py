@@ -3,7 +3,9 @@ IDM 风格下载管理器 —— Flask Web 后端
 """
 import os
 import json
+import sys
 import time
+import subprocess
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
 from downloader import manager, DownloadManager, get_proxy_mode, set_proxy_mode
@@ -192,11 +194,31 @@ def open_file(task_id):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def _reveal_in_file_manager(path):
+    """跳到系统文件管理器中的指定路径（跨平台）。"""
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: P201
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+@app.route("/api/open_download_dir", methods=["POST"])
+def open_download_dir():
+    """在系统文件管理器中打开当前下载目录（目录不存在时先创建）。"""
+    path = config.get_download_dir()
+    try:
+        os.makedirs(path, exist_ok=True)
+        _reveal_in_file_manager(path)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({"success": True, "path": path})
+
+
 @app.route("/api/open_folder/<task_id>", methods=["POST"])
 def open_folder(task_id):
     """Reveal the task file in the OS file manager (cross-platform)."""
-    import sys as _sys
-    import subprocess as _sp
     task = manager.get_task(task_id)
     if not task:
         return jsonify({"success": False, "error": "task not found"}), 404
@@ -205,12 +227,7 @@ def open_folder(task_id):
     if not folder or not os.path.isdir(folder):
         return jsonify({"success": False, "error": "folder not found"}), 404
     try:
-        if _sys.platform == "win32":
-            os.startfile(folder)  # noqa: P201
-        elif _sys.platform == "darwin":
-            _sp.Popen(["open", folder])
-        else:
-            _sp.Popen(["xdg-open", folder])
+        _reveal_in_file_manager(folder)
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
