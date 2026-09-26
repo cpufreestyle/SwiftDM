@@ -736,6 +736,31 @@ QPushButton#filterBtn {
 }
 QPushButton#filterBtn:hover { color:$text; border-color:$borderHover; }
 QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:$onAccent; }
+
+/* ===== 键盘焦点环 =====
+   QPushButton 全部由 QSS 重画，原生焦点框被吃掉，纯键盘用户完全看不到焦点落在哪。
+   这里补一条与 Web 端 :focus-visible 同语义的强调色描边；仅键盘聚焦时显形，鼠标点击不出现。 */
+QToolBar QPushButton:focus {
+    border: 1px solid $accent;
+    background-color: $hover;
+}
+QToolBar QPushButton#btnAdd:focus {
+    border: 1px solid $onAccent;
+    background-color: $accentHover;
+}
+QToolBar QPushButton#btnFinishCountdown:focus {
+    border: 1px solid $orange;
+    background-color: $orangeHover;
+}
+QPushButton#filterBtn:focus {
+    border: 1px solid $accent;
+    background-color: $hover;
+}
+/* 已选中的芯片底色就是强调色，描边改用正文色才看得见 */
+QPushButton#filterBtn:checked:focus {
+    border: 1px solid $text;
+    background-color: $accent;
+}
 QToolTip {
     background-color: $surface2;
     color: $text;
@@ -855,6 +880,8 @@ class TaskCard(QFrame):
         btn = QPushButton(text)
         if tooltip:
             btn.setToolTip(tooltip)
+            # 图标按钮的文字部分唯一能拿当可访问名，把工具提示同步过去
+            btn.setAccessibleName(tooltip)
         btn.setStyleSheet(self._btn_style(self._tokens[color_key]))
         btn.clicked.connect(lambda: self.action_triggered.emit(action, self.task_id))
         layout.addWidget(btn)
@@ -913,6 +940,8 @@ class TaskCard(QFrame):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(int(prog))
         self.progress_bar.setTextVisible(False)
+        # 文字不可见，不给可访问名的话读屏软件对这条什么都不会说
+        self.progress_bar.setAccessibleName("下载进度")
 
         prog_layout = QHBoxLayout()
         prog_layout.setSpacing(8)
@@ -976,6 +1005,7 @@ class TaskCard(QFrame):
         # “···”溢出按钮：窄窗口时承载放不下的操作（默认隐藢）
         self._more_btn = QPushButton("···")
         self._more_btn.setToolTip("更多操作")
+        self._more_btn.setAccessibleName("更多操作")
         self._more_btn.setStyleSheet(self._btn_style(self._tokens["textMuted"]))
         self._more_btn.clicked.connect(self._show_overflow_menu)
         self._more_btn.hide()
@@ -1075,6 +1105,8 @@ class TaskCard(QFrame):
             f"QPushButton{{background:transparent;border:1px solid {color};"
             f"border-radius:4px;padding:3px 10px;color:{color};font-size:11px;font-weight:600;}}"
             f"QPushButton:hover{{background:{color}22;}}"
+            # 卡片按钮自带彩色描边，焦点环改用淡填充，否则描边变色也看不出来
+            f"QPushButton:focus{{border:1px solid {color};background:{color}33;}}"
         )
 
     def _apply_error_visibility(self, status, err, reason=""):
@@ -1919,6 +1951,8 @@ class MainWindow(QMainWindow):
         self.finish_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.finish_btn.setVisible(False)
         self.finish_btn.setToolTip("全部下载完成后的倒计时进行中，点击取消")
+        # 文字是动态倒计时，不写死可访问名就什么都报不出来
+        self.finish_btn.setAccessibleName("取消下载完成后的倒计时")
         self.finish_btn.clicked.connect(self._cancel_finish_action)
         toolbar.addWidget(self.finish_btn)
 
@@ -1990,6 +2024,7 @@ class MainWindow(QMainWindow):
             self.sort_combo.addItem(SORT_LABELS[_key], _key)
         self.sort_combo.setCurrentIndex(max(0, SORT_KEYS.index(self._sort)))
         self.sort_combo.setToolTip("任务列表排序方式")
+        self.sort_combo.setAccessibleName("任务列表排序方式")
         self.sort_combo.currentIndexChanged.connect(self._set_sort)
         fb.addWidget(self.sort_combo)
         self.compact_btn = QPushButton("≡ 紧凑")
@@ -1998,10 +2033,12 @@ class MainWindow(QMainWindow):
         self.compact_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.compact_btn.setChecked(self._compact)
         self.compact_btn.setToolTip("紧凑模式：隐藏次要信息，一屏看更多任务（可选择会被记住）")
+        self.compact_btn.setAccessibleName("紧凑模式")
         self.compact_btn.clicked.connect(self._set_compact)
         fb.addWidget(self.compact_btn)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("搜索任务…")
+        self.search_input.setAccessibleName("搜索任务")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.setFixedWidth(200)
         self.search_input.textChanged.connect(self._set_search)

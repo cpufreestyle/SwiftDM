@@ -3,6 +3,7 @@
 仅覆盖纯逻辑，不依赖显示设备：通过 QT_QPA_PLATFORM=offscreen + QMimeData 完成；
 若运行环境缺少 PyQt6 或离屏平台不可用则自动跳过，避免影响无界面 CI。
 """
+import io
 import json
 import os
 
@@ -1744,3 +1745,129 @@ def test_zero_speed_reads_as_zero_not_unknown():
     assert mw.format_speed(None) == "0 B/s"
     assert mw.format_speed(1536) == "1.5 KB/s"
     assert mw.format_speed(1048576) == "1.0 MB/s"
+
+
+def _focus_pixel_diff(app, qss, objname, toolbar=False, checkable=False, checked=False):
+    """在离屏环境里渲染两个相同的按钮，返回只聚焦其中一个前后像素变化的坐标。
+
+    空列表 = 焦点前后一模一样，也就是说键盘用户完全看不见焦点落在哪。
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QPushButton, QToolBar, QVBoxLayout, QWidget
+
+    holder = QWidget()
+    outer = QVBoxLayout(holder)
+    tb = QToolBar() if toolbar else None
+    if tb is not None:
+        outer.addWidget(tb)
+
+    def mk():
+        b = QPushButton("全部暂停")
+        if objname:
+            b.setObjectName(objname)
+        if checkable:
+            b.setCheckable(True)
+            b.setChecked(checked)
+        (tb.addWidget(b) if tb is not None else outer.addWidget(b))
+        return b
+
+    a, b = mk(), mk()
+    holder.setStyleSheet(qss)
+    holder.resize(460, 240)
+    holder.show()
+    app.processEvents()
+    b.setFocus(Qt.FocusReason.TabFocusReason)
+    app.processEvents()
+    ia, ib = a.grab().toImage(), b.grab().toImage()
+    holder.hide()
+    return [(x, y) for y in range(min(ia.height(), ib.height()))
+            for x in range(min(ia.width(), ib.width()))
+            if QColor(ia.pixel(x, y)) != QColor(ib.pixel(x, y))]
+
+
+def test_desktop_buttons_show_a_keyboard_focus_ring(qt_app):
+    """桌面端原生焦点框被 QSS 吃掉，之前聚焦前后像素完全一致。
+
+    与 Web 端 :focus-visible 同一条准线：强调色描边、仅键盘聚焦才显形。
+    """
+    import main_window as mw
+
+    cases = (("toolbar", dict(objname="", toolbar=True)),
+             ("toolbar-add", dict(objname="btnAdd", toolbar=True)),
+             ("toolbar-countdown", dict(objname="btnFinishCountdown", toolbar=True)),
+             ("filter-chip", dict(objname="filterBtn")),
+             ("filter-chip-checked", dict(objname="filterBtn",
+                                          checkable=True, checked=True)))
+    for theme in mw.THEMES:
+        qss = mw._qss_for(theme)
+        for label, kwargs in cases:
+            diff = _focus_pixel_diff(qt_app, qss, **kwargs)
+            assert diff, f"{theme} {label}: 聚焦前后像素无变化，焦点环没生效"
+            # 焦点环必须落在最外一圈，否则只是底色变化，弱光下仍然看不出
+            assert min(y for _, y in diff) == 0, f"{theme} {label}"
+            assert max(y for _, y in diff) == max(p[1] for p in diff), f"{theme} {label}"
+
+
+def test_nameless_desktop_widgets_expose_accessible_names(qt_app):
+    """没有文字的工具按钮和输入框，对读屏软件原本是空的。"""
+    import main_window as mw
+
+    src = io.open(mw.__file__, encoding="utf-8").read()
+    for needle in (
+        'self._more_btn.setAccessibleName("更多操作")',
+        'self.finish_btn.setAccessibleName("取消下载完成后的倒计时")',
+        'self.progress_bar.setAccessibleName("下载进度")',
+        'self.search_input.setAccessibleName("搜索任务")',
+        'self.sort_combo.setAccessibleName("任务列表排序方式")',
+        'self.compact_btn.setAccessibleName("紧凑模式")',
+    ):
+        assert needle in src, needle
+
+
+def test_card_action_buttons_use_tooltip_as_accessible_name(qt_app):
+    """卡片顶部的图标按钮（“📋”）没有文字，
+    只能把 tooltip 同步成可访问名。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QPushButton
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "url": "https://a/x.bin",
+                        "status": "downloading", "total_size": 0, "downloaded": 0})
+    tipped = [b for b in card.findChildren(QPushButton) if b.toolTip()]
+    assert tipped, "卡片里至少要有一个带工具提示的按钮"
+    for btn in tipped:
+        assert btn.accessibleName() == btn.toolTip(), btn.text()
+    assert "QPushButton:focus" in tipped[0].styleSheet()
+    assert card.progress_bar.accessibleName() == "下载进度"
+
+
+def test_desktop_card_focus_ring_is_visible(qt_app):
+    """卡片按钮自带彩色描边，焦点环改用淡填充（否则描边变色也看不出来）。"""
+    import main_window as mw
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "url": "https://a/x.bin",
+                        "status": "completed", "total_size": 10, "downloaded": 10})
+    host = QWidget()
+    QVBoxLayout(host).addWidget(card)
+    host.resize(600, 400)
+    host.show()
+    qt_app.processEvents()
+    # 必须拍同一个按钮：卡片按钮各自用不同的语义色，换按钮比就比出配色差异而不是焦点环。
+    # “⋯⋯”溢出按钮默认是隐藏的，拍它只会得到一张空白图。
+    target = next(b for b in card.findChildren(QPushButton) if b.isVisible())
+    # 窗口展示时第一个按钮已经自动拿到焦点，先撤掉才能拍到未聚焦的底片
+    target.clearFocus()
+    qt_app.processEvents()
+    ia = target.grab().toImage()
+    target.setFocus(Qt.FocusReason.TabFocusReason)
+    qt_app.processEvents()
+    ib = target.grab().toImage()
+    assert target.hasFocus(), "聚焦没生效，这次对比没意义"
+    host.hide()
+    diff = [(x, y) for y in range(min(ia.height(), ib.height()))
+            for x in range(min(ia.width(), ib.width()))
+            if QColor(ia.pixel(x, y)) != QColor(ib.pixel(x, y))]
+    assert diff, "卡片按钮聚焦前后像素无变化"
