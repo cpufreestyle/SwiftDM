@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `1d9502d`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 8 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `ca64fd7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 9 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -77,11 +77,11 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ---
 
-## 5. 最近一轮已完成的工作（2026-09-26，已推送）
+## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；末尾追加扩展 popup 主题化改造。
 
-本轮共 8 个 commit（HEAD = `1d9502d`，`git status -sb` 与 origin/main 0/0）：
+本轮共 9 个 commit（HEAD = `ca64fd7`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -120,16 +120,26 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 视觉：.task-card.focused 用强调色描边加 1px 光环，筛选栏新增 .kbd-hint 提示「↑↓ 选择任务 · Enter 打开」；
    - 测试：tests/test_web_shortcuts.js 的 sandbox 补卡片桩（id/classList/scrollIntoView）与 openFile、_focusTaskId，覆盖新动作、钳制、焦点失效、空列表、轮询重贴、输入控件让位；跨 realm 数组改用 deepEqual 断言；
    - tests/test_web_ui.py：renderTasks 的切片窗口从写死 1600 字符改为「切到下一个函数定义」，排序守护不再随函数行数漂移（本轮新增焦点簿记行数后原窗口已失效）。
+8. **扩展 popup 完成主题化改造，三端调色板完全统一**（`ca64fd7`）：`extension/popup.html` 有 51 处硬编码 hex 色值，主界面切换主题时 popup 不会跟着变，浅色系统下看起来很不协调。
+   - `extension/popup.html`：51 处色值全部换成 `var(--x)` 令牌，变量名与 Web 端 `:root` 同名（19 个）；文件顶部新增两套调色板（`:root` 深色、`:root[data-theme="light"]` 浅色），与桌面端两种主题及 Web 端 `:root` 变量逐个对应；
+   - 配套修正：`.badge` / `.badge.warn` 由「实色底 + 深色字」改为「柔色底 + 饱和字」；`.media-sub` / `.media-empty` 由 `--faint` 提到 `--text2`（可读性）；`.btn-reset:hover` 改用 `var(--red-soft)`；`.footer` / `.btn-dl[disabled]` 改用 `--faint`；
+   - 浅色主题的 `--on-green` 定为 `#06231b` 而非白色：白字在 `#0a9d7c` 上对比度仅 3.43，深色字为 4.85，超过 4.5:1 的门槛；
+   - `extension/popup.js`：新增 `systemPrefersLight()` / `resolveTheme(pref)` / `applyTheme(pref)` / `loadTheme()`，`DOMContentLoaded` 里 `loadTheme()` 排在 `loadStatus()` 之前，避免首帧主题错误；优先级为显式设置 > 跟随系统；
+   - `extension/background.js`：消息桥新增 `getSettings` 分支，转发 `GET /api/settings`，供 popup 读取 theme 设置，分支排在 `getTasks` 之前；
+   - 测试：`tests/test_theme_tokens.py` 以 POPUP_TOKENS（popup ↔ Web ↔ 桌面端三端映射，None 表示该端暂无对应令牌）、POPUP_ONLY、POPUP_TEXT_PAIRS、POPUP_CHIP_TINTS 取代原 POPUP_MAP，新增 5 组断言：调色板与共享主题一致、只声明已登记变量、无字面色值（先去掉 HTML 实体，否则 `&#11015;` 误报）、芯片共用柔色、文字对比度 ≥ 4.5、popup 跟随应用设置；
+   - `tests/test_extension_panel.js`：sandbox 补 `matchMedia` 与 `documentElement.dataset` 桩，消息顺序断言改为 `['getSettings','getStatus']` 并用注释说明主题必须排在最前。
 
-验证：全量 pytest 336 passed / 1 skipped；12 个 node 测试全绿；
-`build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）。
+验证：全量 pytest 343 passed / 1 skipped；12 个 node 测试全绿；
+`build_exe.py` 重建 + `test_binary.py` 全过（`main_window.py`/`templates/` 参与打包）；`extension/` 不参与打包（`SwiftDM.spec` 只收 `templates/`），本轮未再重建二进制，改动靠源码级守卫与沙箱测试覆盖。
 打包后的 EXE 起 --web-only 服务，已确认返回的页面含 stepFocus/setFocusTask/focusableCardIds 与 kbd-hint 提示。
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- 扩展 popup 的 CSS 只有 10 条选择器纳入令牌守护（POPUP_MAP），其余规则可逐条补齐。
+- 三端都没有键盘与读屏支持：`templates/index.html` 的 `aria-` / `role=` / `tabindex` / `focus-visible` 计数均为 0，桌面端 `main_window.py` 也没有 `setAccessibleName` / `setTabOrder`；建议先补 `:focus-visible` 焦点环与关键控件的 `aria-label`。
+- `prefers-reduced-motion` 还没生效：`.pulse` 等动画在系统开启「减弱动态效果」时依旧会动。
+- （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
 
