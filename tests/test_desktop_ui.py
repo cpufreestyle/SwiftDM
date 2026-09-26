@@ -770,3 +770,156 @@ def test_drop_event_adds_local_torrent_files(qt_app):
     plain = _mime(urls=[QUrl.fromLocalFile("D:/dl/x.txt")], text="hello")
     assert mw.MainWindow._urls_from_mime(plain) == []
     assert mw.MainWindow._torrent_paths_from_mime(plain) == []
+def _open_folder_button(card):
+    from PyQt6.QtWidgets import QPushButton
+    for btn in card.findChildren(QPushButton):
+        if btn.text().endswith("\u6253\u5f00\u6587\u4ef6\u5939"):
+            return btn
+    return None
+
+
+@pytest.mark.parametrize("status", ["downloading", "paused", "failed", "cancelled"])
+def test_task_card_has_open_folder_button_in_active_states(qt_app, status):
+    """\u4e0b\u8f7d\u4e2d/\u6682\u505c/\u5931\u8d25/\u53d6\u6d88\u90fd\u53ef\u4e00\u952e\u5b9a\u4f4d\u76ee\u5f55\uff0c\u65b9\u4fbf\u67e5\u770b\u5206\u7247\u6b8f\u7559\u3002"""
+    import main_window as mw
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "status": status,
+                        "total_size": 100, "downloaded": 3, "speed": 0})
+    btn = _open_folder_button(card)
+    assert btn is not None, status
+    got = []
+    card.action_triggered.connect(lambda action, tid: got.append((action, tid)))
+    btn.click()
+    assert got == [("open_folder", "t1")]
+
+
+def test_pending_card_has_no_open_folder_button(qt_app):
+    import main_window as mw
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "status": "pending"})
+    assert _open_folder_button(card) is None
+
+
+def test_completed_card_offers_exactly_one_open_folder(qt_app):
+    """completed \u5206\u652f\u81ea\u5e26\u201c\u6253\u5f00\u6587\u4ef6\u5939\u201d\uff0c\u4e0d\u80fd\u88ab\u901a\u7528\u5206\u652f\u91cd\u590d\u6e32\u67d3\u3002"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QPushButton
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "status": "completed", "total_size": 10, "downloaded": 10})
+    texts = [b.text() for b in card.findChildren(QPushButton)
+             if b.text().endswith("\u6253\u5f00\u6587\u4ef6\u5939")]
+    assert texts == ["\U0001f5c1 \u6253\u5f00\u6587\u4ef6\u5939"]
+
+
+def test_context_menu_open_folder_entry_and_action(qt_app, monkeypatch):
+    import main_window as mw
+
+    created = []
+
+    class _FakeAction:
+        def __init__(self, text, slot=None):
+            self.text = text
+            self._slot = slot
+
+        def trigger(self):
+            if self._slot:
+                self._slot()
+
+    class FakeMenu:
+        def __init__(self, parent=None):
+            self.actions = []
+            created.append(self)
+
+        def addAction(self, text, slot=None):
+            act = _FakeAction(text, slot)
+            self.actions.append(act)
+            return act
+
+        def addSeparator(self):
+            self.actions.append(_FakeAction("---sep---"))
+
+        def exec(self, pos=None):
+            pass
+
+    monkeypatch.setattr(mw, "QMenu", FakeMenu)
+
+    class _Ev:
+        def globalPos(self):
+            return None
+
+    def menu_for(status):
+        card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                            "url": "https://site/x.bin", "status": status})
+        emitted = []
+        card.action_triggered.connect(lambda a, t: emitted.append((a, t)))
+        card.contextMenuEvent(_Ev())
+        texts = [a.text for a in created[-1].actions]
+        folder_acts = [a for a in created[-1].actions if a.text ==
+                       "\u6253\u5f00\u6587\u4ef6\u5939"]
+        return texts, folder_acts, emitted
+
+    for status in ("downloading", "paused", "failed", "cancelled"):
+        texts, folder_acts, emitted = menu_for(status)
+        assert "\u6253\u5f00\u6587\u4ef6\u5939" in texts, (status, texts)
+        assert len(folder_acts) == 1, (status, texts)
+        folder_acts[0].trigger()
+        assert emitted == [("open_folder", "t1")]
+
+    texts, folder_acts, _ = menu_for("pending")
+    assert "\u6253\u5f00\u6587\u4ef6\u5939" not in texts, texts
+
+
+def test_handle_action_open_folder_reports_missing_dir(qt_app, tmp_path, monkeypatch):
+    import main_window as mw
+
+    opened = []
+    monkeypatch.setattr(mw, "open_in_system", lambda p: opened.append(p))
+
+    class _Task:
+        def __init__(self, filepath):
+            self.filepath = filepath
+
+    class _Mgr:
+        def __init__(self, task):
+            self._task = task
+            self.saved = 0
+
+        def get_task(self, tid):
+            return self._task
+
+        def save_history(self):
+            self.saved += 1
+
+    class _Bar:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, text, timeout=0):
+            self.messages.append(text)
+
+    class _Host:
+        def __init__(self, mgr):
+            self._mgr = mgr
+            self.status_bar = _Bar()
+
+        def _get_manager(self):
+            return self._mgr
+
+    good = tmp_path / "a.bin"
+    good.write_bytes(b"x")
+
+    host = _Host(_Mgr(_Task(str(good))))
+    mw.MainWindow._handle_action(host, "open_folder", "t1")
+    assert opened == [str(tmp_path)]
+    assert any(str(tmp_path) in m for m in host.status_bar.messages)
+
+    missing = str(tmp_path / "gone" / "a.bin")
+    host2 = _Host(_Mgr(_Task(missing)))
+    mw.MainWindow._handle_action(host2, "open_folder", "t1")
+    assert any("\u4e0d\u5b58\u5728" in m for m in host2.status_bar.messages)
+    assert opened == [str(tmp_path)]
+
+    host3 = _Host(_Mgr(_Task("")))
+    mw.MainWindow._handle_action(host3, "open_folder", "t1")
+    assert any("\u672a\u77e5\u6587\u4ef6\u8def\u5f84" in m for m in host3.status_bar.messages)
+    assert host3._mgr.saved == 1

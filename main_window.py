@@ -789,6 +789,9 @@ class TaskCard(QFrame):
         if status == "completed" and task_data.get("total_size", 0) > 0:
             self._add_action_btn(bottom, "📂 打开文件", "blue", "open")
             self._add_action_btn(bottom, "🗁 打开文件夹", "accent2", "open_folder")
+        elif status in ("downloading", "paused", "failed", "cancelled"):
+            # 非 pending 状态都可能已有分片残留：一键定位目录，方便排查/手动续传
+            self._add_action_btn(bottom, "🗁 打开文件夹", "accent2", "open_folder")
 
         layout.addLayout(bottom)
 
@@ -888,9 +891,11 @@ class TaskCard(QFrame):
             add("继续", "resume")
         elif status == "completed":
             add("打开文件", "open")
-            add("打开文件夹", "open_folder")
         elif status in ("failed", "cancelled"):
             add("重试", "retry")
+        if status != "pending":
+            # 下载中/暂停/失败/取消都能定位目录；失败时可查看分片残留决定是否手动续传
+            add("打开文件夹", "open_folder")
         if self.url:
             add("复制链接", "copy_link")
         menu.addSeparator()
