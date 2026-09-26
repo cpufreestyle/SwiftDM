@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `13ccd1c`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 16 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `eb6a2d3`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 17 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -79,9 +79,9 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 ## 5. 最近一轮已完成的工作（2026-09-27，已推送）
 
-主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，最后把桌面端缺失的键盘导航提示补齐。
+主题：设置项的“最后一段路”——灭重写死的线程数、把 Web 端三个私有偏好接进共享配置、删掉死接口；后续追加扩展 popup 主题化改造与 Web 端键盘焦点环、无障碍属性；末尾再把同一套落到桌面端、把筛选芯片全部接进 Tab 顺序，最后补齐扩展 popup 的焦点环与 aria 语义、给动态列表按钮补上可访问名，修掉长文件名撑破弹窗行高的布局缺陷，把桌面端缺失的键盘导航提示补齐，并清掉 Web 端文件里三个把 CSS 规则打死的游离 BOM。
 
-本轮共 16 个 commit（HEAD = `13ccd1c`，`git status -sb` 与 origin/main 0/0）：
+本轮共 17 个 commit（HEAD = `eb6a2d3`，`git status -sb` 与 origin/main 0/0）：
 
 1. **所有入口都读 segments 设置**（`d93c66f`）：`browser_monitor.py` 两处（HTTP 捕获、监控线程自动添加）与 `main.py` 的捕获回调原先写死 `create_task(..., 8)`，
    改为 `config.clamp_segments(config.get("segments"))`，与 `app.py`/`main_window.py` 一致。
@@ -139,7 +139,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 卡片按钮（`_btn_style`）：描边本来就是彩色，焦点环改用淡填充，否则改描边颜色也看不出来；带 `tooltip` 的按钮把 tooltip 同步成 `setAccessibleName`（顶部那个「📋」图标按钮之前没有任何可读名字）。
    - 其余无名控件：「···」溢出按钮、倒计时按钮（文字是动态的）、卡片进度条、搜索框、排序下拉、紧凑开关全部补 `setAccessibleName`。
    - 测试：`tests/test_desktop_ui.py` 新增三组——离屏渲染对比（两套主题 × 五类按钮，要求焦点环落在最外一圈）、名字源码级守卫、卡片行为级断言；变异测试 8/8 全红。
-验证：全量 pytest 356 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 7/7、桌面 13/13、扩展 popup 15/15 均能把新增守卫打红。
+验证：全量 pytest 358 passed / 1 skipped；12 个 node 测试全绿；变异测试 Web 10/10、桌面 13/13、扩展 popup 15/15 均能把新增守卫打红。
 `build_exe.py` 重建（exit 0）+ `test_binary.py` 全过（`=== 全部测试通过 ===`）：本轮改的 `main_window.py` 参与打包，桌面 QSS 与控件属性的改动以二进制端到端复测为准；打包后的 EXE 起 --web-only 服务，已确认返回页面含 outline-offset / prefers-reduced-motion、role="dialog"、aria-live、aria-valuenow、aria-pressed、filter-btn[data-filter] 与 setPanelExpanded。
 离屏渲染实测：修复前同一按钮聚焦前后像素完全一致（原生焦点框被 QSS 重画吃掉），修复后最外一圈出现强调色描边；两套主题下都成立。
 
@@ -206,11 +206,25 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      必须拿伸缩位当边界才真的锁住分组；② QSS 注释里顺手写了 `#8888a0`，
      `test_qss_template_has_no_color_literals_at_all` / `test_qss_template_has_no_hex_colors_either` 当场抓住——
      这两条守卫是「一个十六进制色值都不允许」，注释也不算例外，写说明时别带色值。
+16. **清掉 Web 端三个游离 BOM，救回一条死掉的 CSS 规则**（`eb6a2d3`）：
+    `templates/index.html` 文件中间掉进三个 UTF-8 BOM（不是文件开头那三个字节，是正文里）。
+    第一个把 `.toast.info { ... }` 变成 `<U+FEFF>.toast.info { ... }`，CSS 选择器匹配不上，
+    整条规则静默失效——`showToast(msg, "info")` 渲染出来毫无视觉变化；
+    另两个落在 HTML 注释和 `<script>` 注释前面，无害但是垃圾。
+    U+FEFF 在编辑器里是零宽字符，肉眼看、`git diff` 看都发现不了，只有逐字节扫才看得见。
+   - 修复：只清正文里的 `\xef\xbb\xbf`，文件开头保持原样（仓库里多个文件本来就要带头 BOM）；
+   - 守卫一：`tests/test_dispatch.py` 新增 `test_no_stray_bom_lands_inside_a_source_file`，
+     复用 `test_no_entry_point_hard_codes_the_thread_count` 那套 `git ls-files` 源码清单，
+     扫 `.py/.js/.html/.css/.md/.txt`，任何「开头三字节以外」的 BOM 直接失败并报行号；
+   - 守卫二：`tests/test_web_ui.py` 新增 `test_toast_css_rules_survive_inline_bom_damage`，
+     三种 toast 皮肤都必须是独立成行的真规则、选择器前不能有 U+FEFF，且 `showToast` 真的会拼上 type；
+   - 变异测试 7/7 全红（三个位置各插一个 BOM + 删规则 + 删 type 拼接）。
+     注意「文件开头加 BOM」这个变异是绿的——那是合法状态，守卫故意放行。
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
 - 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
 - 桌面端“剪贴板监听”在 Web 无对应物，属合理不迁移（浏览器无法后台监听系统剪贴板）。
-- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏也补上了与 Web 端同文案的键盘导航提示；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
+- （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 也已清掉；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
 ---
