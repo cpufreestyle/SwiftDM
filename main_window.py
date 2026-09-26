@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QButtonGroup,
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit,
-    QCheckBox, QDateTimeEdit
+    QCheckBox, QDateTimeEdit, QLayout
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QDateTime
 from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
@@ -224,6 +224,22 @@ def _card_status_text(status, scheduled_at=None, auto_retry_at=None):
         if hint:
             text += f"  ·  {hint}"
     return text
+
+
+def _overflow_plan(widths, avail, spacing):
+    """窄宽度收纳方案：从尾部开始隐藏按钮，直到剩余按钮能并排放下。
+
+    widths: 各按钮宽度（显示顺序）；avail: 可用像素；spacing: 按钮间距。
+    返回 (可见按钮个数, 溢出按钮下标列表)，溢出项保持原顺序。
+    """
+    n = len(widths)
+    visible = n
+    while visible > 0:
+        need = sum(widths[:visible]) + spacing * (visible - 1)
+        if need <= avail:
+            break
+        visible -= 1
+    return visible, list(range(visible, n))
 
 
 def _scheduled_suffix(scheduled_at):
@@ -627,6 +643,8 @@ class TaskCard(QFrame):
         self._theme = theme if theme in THEMES else "dark"
         self._tokens = THEMES[self._theme]
         self._semantic_btns = []  # [(按钮, 语义色键)]：切换主题时按键重刷
+        self._overflow_btns = []  # [(按钮, action)]：底部操作按钮，窄窗口时收进“···”菜单
+        self._hidden_actions = []
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.filepath = task_data.get("filepath", "")
         self._drag_start_pos = None
@@ -697,8 +715,12 @@ class TaskCard(QFrame):
         for btn, key in self._semantic_btns:
             btn.setStyleSheet(self._btn_style(t[key]))
 
-    def _add_action_btn(self, layout, text, color_key, action, tooltip=None):
-        """新增卡片操作按钮；color_key 指向主题 token，切主题时按键重刷。"""
+    def _add_action_btn(self, layout, text, color_key, action, tooltip=None,
+                        overflow=True):
+        """新增卡片操作按钮；color_key 指向主题 token，切主题时按键重刷。
+
+        overflow=False 表示该按钮不参与窄窗口收纽（如顶栏图标）。
+        """
         btn = QPushButton(text)
         if tooltip:
             btn.setToolTip(tooltip)
@@ -706,6 +728,8 @@ class TaskCard(QFrame):
         btn.clicked.connect(lambda: self.action_triggered.emit(action, self.task_id))
         layout.addWidget(btn)
         self._semantic_btns.append((btn, color_key))
+        if overflow:
+            self._overflow_btns.append((btn, action))
 
     def apply_theme(self, theme):
         """切换主题：外壳 + 内部标签/按钮一起刷新，状态语义色不变。"""
@@ -749,7 +773,7 @@ class TaskCard(QFrame):
         if self.url:
             # 复制链接从右键菜单提升到卡片顶栏：单任务复制不该藏两级菜单
             self._add_action_btn(top, "📋", "textMuted", "copy_link",
-                                 "复制下载链接")
+                                 "复制下载链接", overflow=False)
         layout.addLayout(top)
 
         # 进度条
@@ -818,6 +842,21 @@ class TaskCard(QFrame):
 
         layout.addLayout(bottom)
 
+        # “···”溢出按钮：窄窗口时承载放不下的操作（默认隐藢）
+        self._more_btn = QPushButton("···")
+        self._more_btn.setToolTip("更多操作")
+        self._more_btn.setStyleSheet(self._btn_style(self._tokens["textMuted"]))
+        self._more_btn.clicked.connect(self._show_overflow_menu)
+        self._more_btn.hide()
+        bottom.addWidget(self._more_btn)
+        self._semantic_btns.append((self._more_btn, "textMuted"))
+
+        # 允许卡片比内容窄：否则布局最小宽度会把父容器拉出水平滚动条，
+        # 按钮放不下时收进“···”菜单才能生效
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self.setMinimumWidth(200)
+        self._apply_overflow()
+
         # 失败原因（默认隐藏，失败且有错误信息时显示）
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
@@ -826,6 +865,41 @@ class TaskCard(QFrame):
         self._restyle_labels()
         self._apply_error_visibility(status, task_data.get("error", ""),
                                      task_data.get("error_reason", ""))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_overflow()
+
+    def _buttons_avail_width(self):
+        """底部按钮区可用宽度：卡片宽度减去边距和左侧信息标签。"""
+        avail = self.width() - 28
+        for lbl in (self.size_label, self.speed_label, self.eta_label):
+            if not lbl.isHidden():
+                avail -= lbl.sizeHint().width() + 14
+        return max(avail, 0)
+
+    def _apply_overflow(self):
+        """窗口宽度变化时重算：放不下的操作按钮进“···”菜单。"""
+        if not self._overflow_btns:
+            return
+        widths = [btn.sizeHint().width() for btn, _ in self._overflow_btns]
+        visible_n, hidden_idx = _overflow_plan(widths, self._buttons_avail_width(), 14)
+        for i, (btn, _action) in enumerate(self._overflow_btns):
+            btn.setVisible(i < visible_n)
+        self._hidden_actions = [self._overflow_btns[i] for i in hidden_idx]
+        self._more_btn.setVisible(bool(hidden_idx))
+
+    def _show_overflow_menu(self):
+        """“···”菜单：执行被收起来的操作（与点按钮等效）。"""
+        if not self._hidden_actions:
+            return
+        menu = QMenu(self)
+        for btn, action in self._hidden_actions:
+            menu.addAction(btn.text(),
+                           lambda a=action: self.action_triggered.emit(a, self.task_id))
+        menu.exec(self._more_btn.mapToGlobal(
+            self._more_btn.rect().bottomLeft()))
+        return menu   # 返回菜单便于测试断言；产线上点击处理器忽略返回值
 
     # 允许从已完成卡片的文件区域拖出文件（如拖到资源管理器、聊天窗口等）
     def mousePressEvent(self, event):

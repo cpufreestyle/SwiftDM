@@ -972,3 +972,54 @@ def test_handle_action_open_folder_reports_missing_dir(qt_app, tmp_path, monkeyp
     mw.MainWindow._handle_action(host3, "open_folder", "t1")
     assert any("\u672a\u77e5\u6587\u4ef6\u8def\u5f84" in m for m in host3.status_bar.messages)
     assert host3._mgr.saved == 1
+
+
+def test_overflow_plan_hides_from_tail_until_fits():
+    import main_window as mw
+
+    assert mw._overflow_plan([60, 60, 60], 300, 14) == (3, [])
+    assert mw._overflow_plan([60, 60, 60], 200, 14) == (2, [2])     # 收最后一个就够
+    assert mw._overflow_plan([60, 60, 60], 100, 14) == (1, [1, 2])
+    assert mw._overflow_plan([60, 60, 60], 10, 14) == (0, [0, 1, 2])  # 极窄：全部溢出
+    assert mw._overflow_plan([], 100, 14) == (0, [])
+    # 零宽度不能循环或报错
+    assert mw._overflow_plan([60, 60], 0, 14) == (0, [0, 1])
+
+
+def test_action_buttons_overflow_into_more_menu(qt_app, monkeypatch):
+    """容器变窄时，放不下的操作按钮进“···”菜单，功能不丢。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QMenu
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "url": "https://a/x.bin",
+                        "status": "downloading", "total_size": 100, "downloaded": 0})
+    n_btns = len(card._overflow_btns)
+    assert n_btns == 3  # 暂停 / 取消 / 打开文件夹
+    card.show()   # 隐藢窗口不会收到 resizeEvent，测试要 show
+
+    # 足够宽：全部展示，无“···”
+    card.resize(900, 140)
+    assert card._hidden_actions == []
+    assert not card._more_btn.isVisible()
+
+    # 容器变窄：resizeEvent 自动重算，尾部按钮被收起
+    card.resize(230, 140)
+    hidden = card._hidden_actions
+    assert hidden, "窄卡片上应该有按钮被收起"
+    assert card._more_btn.isVisible()
+    for i, (btn, _) in enumerate(card._overflow_btns):
+        assert btn.isVisible() == (i < n_btns - len(hidden))
+
+    # 溢出菜单项与按钮一一对应，触发后照常发 action
+    monkeypatch.setattr(QMenu, "exec", lambda self, *a, **k: None)
+    got = []
+    card.action_triggered.connect(lambda a, t: got.append((a, t)))
+    menu = card._show_overflow_menu()
+    assert [a.text() for a in menu.actions()] == [btn.text() for btn, _ in hidden]
+    menu.actions()[0].trigger()
+    assert got == [(hidden[0][1], "t1")]
+
+    # 重新变宽一切重整
+    card.resize(900, 140)
+    assert card._hidden_actions == []
+    assert not card._more_btn.isVisible()
