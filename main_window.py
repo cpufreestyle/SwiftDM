@@ -199,15 +199,31 @@ def _fail_summary_text(items):
     return f"✗ {len(items)} 个任务下载失败（{shown}）"
 
 
-def _card_status_text(status, scheduled_at=None):
-    """任务卡片状态文案；定时等待中的 pending 显示「⏰ 定时等待」而非「等待中」。"""
+def _auto_retry_hint(auto_retry_at):
+    """失败任务的自动重试倒计时文案（无计划返回 None）。"""
+    if not auto_retry_at:
+        return None
+    remain = int(auto_retry_at - time.time())
+    if remain <= 0:
+        return "↻ 即将自动重试"
+    return f"↻ {remain}s 后自动重试"
+
+
+def _card_status_text(status, scheduled_at=None, auto_retry_at=None):
+    """任务卡片状态文案；定时等待中的 pending 显示「⏰ 定时等待」而非「等待中」；
+    失败且排了自动重试时附带倒计时，避免用户误以为任务已终止。"""
     if status == "pending" and scheduled_at:
         return "⏰ 定时等待"
-    return {
+    text = {
         "downloading": "● 下载中", "paused": "⏸ 已暂停",
         "completed": "✓ 完成", "failed": "✗ 失败",
         "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
     }.get(status, status)
+    if status == "failed":
+        hint = _auto_retry_hint(auto_retry_at)
+        if hint:
+            text += f"  ·  {hint}"
+    return text
 
 
 def _scheduled_suffix(scheduled_at):
@@ -725,7 +741,8 @@ class TaskCard(QFrame):
             "completed": "✓ 完成", "failed": "✗ 失败",
             "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
         }
-        self.status_label = QLabel(_card_status_text(status, task_data.get("scheduled_at")))
+        self.status_label = QLabel(_card_status_text(
+            status, task_data.get("scheduled_at"), task_data.get("auto_retry_at", 0)))
         top.addWidget(self.status_label)
         layout.addLayout(top)
 
@@ -917,7 +934,8 @@ class TaskCard(QFrame):
             "completed": "✓ 完成", "failed": "✗ 失败",
             "pending": "⏳ 等待中", "cancelled": "✗ 已取消"
         }
-        self.status_label.setText(_card_status_text(status, task_data.get("scheduled_at")))
+        self.status_label.setText(_card_status_text(
+            status, task_data.get("scheduled_at"), task_data.get("auto_retry_at", 0)))
         self.status_label.setStyleSheet(self._status_qss(status))
 
         self.progress_bar.setValue(int(prog))

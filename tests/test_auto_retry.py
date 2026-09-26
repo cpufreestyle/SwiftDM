@@ -5,6 +5,7 @@
 避免动到真实的 ~/.swiftdm/history.json 与常驻保存线程。
 """
 import threading
+import time
 
 import pytest
 
@@ -50,6 +51,11 @@ class FakeTask:
         self.filename = filename
         self.status = status
         self.retry_calls = 0
+        self.auto_retry_at = 0.0
+        self.invalidations = 0
+
+    def _invalidate_cache(self):
+        self.invalidations += 1
 
     def retry(self):
         self.retry_calls += 1
@@ -256,3 +262,57 @@ def test_create_task_wires_on_failed_callback(fake_timer, monkeypatch, tmp_path)
     fake_timer.created[0].fire()
     assert calls == [task.task_id]
     assert mgr._auto_retry_state[task.task_id]["attempts"] == 1
+def test_schedule_sets_countdown_and_invalidates_cache(fake_timer, monkeypatch):
+    mgr = _make_manager(monkeypatch, limit=3)
+    task = FakeTask("t1")
+    mgr._tasks["t1"] = task
+    before = time.time()
+    mgr._schedule_auto_retry(task)
+    assert before + 29 <= task.auto_retry_at <= time.time() + 31
+    assert task.invalidations >= 1          # to_dict 缓存必须失效，否则 UI 看不到倒计时
+
+
+def test_fire_clears_countdown_before_retry(fake_timer, monkeypatch):
+    mgr = _make_manager(monkeypatch, limit=3)
+    task = FakeTask("t1")
+    mgr._tasks["t1"] = task
+    mgr._schedule_auto_retry(task)
+    seen = []
+
+    def recording_retry():
+        seen.append(task.auto_retry_at)
+        task.status = "downloading"
+        return True
+
+    task.retry = recording_retry
+    fake_timer.created[0].fire()
+    assert seen == [0.0]                    # 重试开始时倒计时应已清除
+    assert task.auto_retry_at == 0.0
+
+
+def test_cancel_auto_retry_clears_countdown(fake_timer, monkeypatch):
+    mgr = _make_manager(monkeypatch, limit=3)
+    task = FakeTask("t1")
+    mgr._tasks["t1"] = task
+    mgr._schedule_auto_retry(task)
+    assert task.auto_retry_at > 0
+    mgr._cancel_auto_retry("t1")
+    assert task.auto_retry_at == 0.0
+
+
+def test_fire_after_user_took_over_clears_countdown(fake_timer, monkeypatch):
+    mgr = _make_manager(monkeypatch, limit=3)
+    task = FakeTask("t1")
+    mgr._tasks["t1"] = task
+    mgr._schedule_auto_retry(task)
+    task.status = "downloading"             # 用户手动重试
+    fake_timer.created[0].fire()
+    assert task.auto_retry_at == 0.0
+
+
+def test_to_dict_exposes_auto_retry_at():
+    import downloader
+    t = downloader.DownloadTask("t1", "https://x/y.bin", "C:/tmp", "y.bin", 1)
+    assert t.to_dict()["auto_retry_at"] == 0.0
+    t.auto_retry_at = 123.5
+    assert t.to_dict()["auto_retry_at"] == 123.5

@@ -236,6 +236,7 @@ body {
 .select-count { font-size: 13px; color: var(--text2); white-space: nowrap; }
 .task-pick { display: flex; align-items: center; flex-shrink: 0; padding-top: 2px; }
 .task-pick-box { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+.retry-badge { color: var(--orange); font-weight: 600; }
 
 /* ===== 下载列表 ===== */
 .task-list {
@@ -1305,6 +1306,10 @@ function createTaskCard(task) {
   }
   if (task.eta) {
     metaHtml += `<span>&#9200; ${task.eta}</span>`;
+  }
+  if (task.status === "failed" && task.auto_retry_at) {
+    const _remain = Math.max(0, Math.ceil(task.auto_retry_at - Date.now() / 1000));
+    metaHtml += `<span class="retry-badge">&#8635; ${_remain > 0 ? _remain + "s 后" : "即将"}自动重试</span>`;
   }
 
   let actionsHtml = "";

@@ -208,6 +208,14 @@ def test_web_has_multi_select_batch(page):
     assert "pruneSelection();" in rt and "updateSelectBar();" in rt
 
 
+def test_web_card_shows_auto_retry_countdown(page):
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert "task.auto_retry_at" in card
+    assert "retry-badge" in card
+    assert "\u81ea\u52a8\u91cd\u8bd5" in card
+
+
 def test_web_has_task_sorting(page):
     assert 'onchange="setSort(this.value)"' in page
     assert "function sortTasks" in page

@@ -141,6 +141,7 @@ class TorrentTask:
         self.speed = 0.0
         self.eta = ""
         self.error = ""
+        self.auto_retry_at = 0.0   # 下次自动重试的 epoch 时刻（UI 倒计时用）
         # filename 未显式指定时算「自动命名」：元数据就绪后要换成 torrent 里的真实名称
         self._filename_auto = not filename
         if filename:
@@ -355,6 +356,7 @@ class TorrentTask:
             "speed": self.speed,
             "eta": self.eta,
             "error": self.error,
+            "auto_retry_at": self.auto_retry_at,
             "segments": self.segments,
             "protocol": self.protocol,
             "seeds": self.seeds,

@@ -152,6 +152,7 @@ class MediaTask:
         self.eta = ""
         self.error = ""
         self.error_reason = ""
+        self.auto_retry_at = 0.0   # 下次自动重试的 epoch 时刻（UI 倒计时用）
         self.added_at = time.time()
         self.filepath = os.path.join(save_dir, self.filename)
         self._lock = threading.Lock()
@@ -471,6 +472,7 @@ class MediaTask:
             "eta": self.eta,
             "error": self.error,
             "error_reason": self.error_reason,
+            "auto_retry_at": self.auto_retry_at,
             "segments": self.segments,
             "kind": self.kind,
             "resolution": self.resolution or 0,

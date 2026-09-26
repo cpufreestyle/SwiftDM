@@ -30,6 +30,14 @@ def auto_retry_delay(attempt):
     return AUTO_RETRY_BACKOFF[min(attempt, len(AUTO_RETRY_BACKOFF) - 1)]
 
 
+def _clear_auto_retry_at(task):
+    """清除任务的自动重试倒计时（否则 UI 会显示陈旧倒计时）。"""
+    task.auto_retry_at = 0.0
+    invalidate = getattr(task, "_invalidate_cache", None)
+    if invalidate:
+        invalidate()
+
+
 def fire_on_failed(task):
     """任务转入 failed 时通知管理器调度自动重试。
 
@@ -278,6 +286,7 @@ class DownloadTask:
         self._gen = 0                 # 代数计数器：暂停/取消时 +1，旧线程据此退出，避免新旧线程同时写同一文件
         self._range_supported = False  # 服务器是否支持 Range 分段/续传
         self._completion_handled = False  # 防止监控线程重复合并文件
+        self.auto_retry_at = 0.0   # 下次自动重试的 epoch 时刻（UI 倒计时用，0 = 无计划）
         self._start_time = 0
         self._last_check_bytes = 0
         self._last_check_time = 0
@@ -839,6 +848,9 @@ class DownloadTask:
         """序列化任务状态。结果缓存到下次字段变化时失效，
         避免每 500ms 的 UI 刷新和 SSE 推送重复构造 dict。"""
         if self._dict_cache is not None:
+            # auto_retry_at 由管理器直接改字段（不一定走缓存失效），
+            # 这里每次现取，保证桌面端和 Web 端的倒计时不会因缓存卡死。
+            self._dict_cache["auto_retry_at"] = self.auto_retry_at
             return self._dict_cache
         self._dict_cache = {
             "task_id": self.task_id,
@@ -854,6 +866,7 @@ class DownloadTask:
             "error": self.error,
             "save_dir": self.save_dir,
             "error_reason": getattr(self, "error_reason", ""),
+            "auto_retry_at": self.auto_retry_at,
             "kind": "http",
             "segments": self.segments,
         }
@@ -981,6 +994,10 @@ class DownloadManager:
                             entry["attempts"], limit, task.filename)
                 return
             delay = auto_retry_delay(entry["attempts"])
+            task.auto_retry_at = time.time() + delay
+            invalidate = getattr(task, "_invalidate_cache", None)
+            if invalidate:
+                invalidate()
             entry["timer"] = threading.Timer(delay, self._fire_auto_retry,
                                              args=(task.task_id,))
             entry["timer"].daemon = True
@@ -1006,6 +1023,7 @@ class DownloadManager:
             # 用户已手动重试/取消/删除：清零计数，下次失败重新计
             self._cancel_auto_retry(task_id)
             return
+        _clear_auto_retry_at(task)             # 即将重试，倒计时归零
         logger.info("自动重试任务: %s（第 %d/%d 次）", task.filename, attempt, limit)
         try:
             task.retry()
@@ -1018,6 +1036,9 @@ class DownloadManager:
             entry = self._auto_retry_state.pop(task_id, None)
         if entry is not None and entry["timer"] is not None:
             entry["timer"].cancel()
+        task = self.get_task(task_id)
+        if task is not None:
+            _clear_auto_retry_at(task)
 
     # ---------------- 历史记录持久化 ----------------
     def _reconstruct_task(self, d):

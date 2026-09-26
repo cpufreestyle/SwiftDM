@@ -111,6 +111,27 @@ def test_clear_confirm_text_mentions_count_and_consequence():
     assert "不可恢复" in text
 
 
+def test_auto_retry_hint_and_status_text(qt_app):
+    import time
+
+    import main_window as mw
+    import re as _re
+
+    assert mw._auto_retry_hint(0) is None
+    assert mw._auto_retry_hint(None) is None
+    assert mw._auto_retry_hint(time.time() - 5) == "↻ 即将自动重试"
+    hint = mw._auto_retry_hint(time.time() + 12)
+    assert _re.fullmatch(r"↻ \d+s 后自动重试", hint), hint
+    # 失败卡片状态行带倒计时；无计划或其他状态不受影响
+    soon = time.time() + 30
+    text = mw._card_status_text("failed", None, soon)
+    assert text.startswith("✗ 失败  ·  ↻ ")
+    assert mw._card_status_text("failed") == "✗ 失败"
+    assert mw._card_status_text("failed", None, 0) == "✗ 失败"
+    assert mw._card_status_text("downloading", None, soon) == "● 下载中"
+    assert mw._card_status_text("pending", 1770000000) == "⏰ 定时等待"
+
+
 def test_window_geometry_saved_and_restored(qt_app, tmp_path):
     import main_window as mw
     from PyQt6.QtCore import QSettings
