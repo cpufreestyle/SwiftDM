@@ -697,9 +697,11 @@ class TaskCard(QFrame):
         for btn, key in self._semantic_btns:
             btn.setStyleSheet(self._btn_style(t[key]))
 
-    def _add_action_btn(self, layout, text, color_key, action):
+    def _add_action_btn(self, layout, text, color_key, action, tooltip=None):
         """新增卡片操作按钮；color_key 指向主题 token，切主题时按键重刷。"""
         btn = QPushButton(text)
+        if tooltip:
+            btn.setToolTip(tooltip)
         btn.setStyleSheet(self._btn_style(self._tokens[color_key]))
         btn.clicked.connect(lambda: self.action_triggered.emit(action, self.task_id))
         layout.addWidget(btn)
@@ -744,6 +746,10 @@ class TaskCard(QFrame):
         self.status_label = QLabel(_card_status_text(
             status, task_data.get("scheduled_at"), task_data.get("auto_retry_at", 0)))
         top.addWidget(self.status_label)
+        if self.url:
+            # 复制链接从右键菜单提升到卡片顶栏：单任务复制不该藏两级菜单
+            self._add_action_btn(top, "📋", "textMuted", "copy_link",
+                                 "复制下载链接")
         layout.addLayout(top)
 
         # 进度条

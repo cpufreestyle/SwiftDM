@@ -111,6 +111,34 @@ def test_clear_confirm_text_mentions_count_and_consequence():
     assert "不可恢复" in text
 
 
+def test_task_card_top_row_has_copy_link_button(qt_app):
+    """复制链接从右键菜单提升到卡片顶栏（只对有 URL 的任务显示）。"""
+    import main_window as mw
+    from PyQt6.QtWidgets import QPushButton
+
+    def link_btns(card):
+        return [b for b in card.findChildren(QPushButton)
+                if b.toolTip() == "复制下载链接"]
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin", "url": "https://a/x.bin",
+                        "status": "downloading", "total_size": 0, "downloaded": 0})
+    btns = link_btns(card)
+    assert len(btns) == 1
+    got = []
+    card.action_triggered.connect(lambda a, t: got.append((a, t)))
+    btns[0].click()
+    assert got == [("copy_link", "t1")]
+    # 注册进语义色通道；切主题时回和其他按钮一起重刷
+    assert any(key == "textMuted" and btn.toolTip() == "复制下载链接"
+               for btn, key in card._semantic_btns)
+    card.apply_theme("light")
+    assert mw.THEMES["light"]["textMuted"] in btns[0].styleSheet()
+
+    # 没有链接的任务不显示（历史脏数据也不会弹出空按钮）
+    assert link_btns(mw.TaskCard({"task_id": "t2", "filename": "y.bin",
+                                  "status": "pending"})) == []
+
+
 def test_auto_retry_hint_and_status_text(qt_app):
     import time
 
