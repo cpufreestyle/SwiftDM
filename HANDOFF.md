@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `cc0d208`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `2b23aa6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 23 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -382,7 +382,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 - （已关账）Web、桌面端、扩展 popup 三端均已补上焦点环与 aria-属性，popup 动态列表按钮带上了对象名、长文件名也收进了 260px 弹窗，桌面端筛选栏补上了与 Web 端同文案的键盘导航提示，Web 端三个把 CSS 规则打死的游离 BOM 已清掉，任务详情面板现在自己就能暂停/继续/重试；筛选芯片也已全部 Tab 得到（`setTabOrder` 经实测是多余的，默认顺序已经对的）。
 - （已关账）扩展 popup 的 CSS 已全部纳入令牌守卫（POPUP_TOKENS），旧 POPUP_MAP 只覆盖 10 条选择器，已取代。
 
-20. **`.modal` 遗留卡片规则糊在全屏遮罩上，暗色遮罩只盖住屏幕左侧 440px**（`cc0d208`）：
+23. **`.modal` 遗留卡片规则糊在全屏遮罩上，暗色遮罩只盖住屏幕左侧 440px**（`cc0d208`）：
     静态 CSS 审计（提取 `<style>` 全部规则 → 与全文 id/class 交叉比对 →
     找死规则与重复声明）发现 `.modal` 有两条 depth=0 规则：旧卡片样式
     （`background/border/border-radius/padding/width:90%/max-width:440px/box-shadow`）与后来的全屏遮罩规则。
@@ -398,6 +398,17 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 教训：自写 CSS 审计解析器在 `}` 分支必须重置选择器缓冲，否则上一段规则体会污染下一个选择器
      （第一版就因此假阴性报出「0 冲突」）。
 
+24. **移动端任务卡把整个页面撑出横向滚动条**（`2b23aa6`）：Playwright 实拍 390px 视口发现，
+    `@media (max-width: 600px)` 里 `.task-top { flex-direction: column }` 只改了主轴方向，而基础规则的
+    `align-items: flex-start` 在列容器里让子元素收缩到 max-content；`.task-filename`/`.task-url` 都是
+    nowrap + ellipsis，结果 `.task-info` 量到 560px（视口只有 390px），documentElement.scrollWidth 变 627px。
+    修复：媒体块里补 `align-items: stretch`，子元素回到卡片内宽 332px，截断还原给 ellipsis。
+   - 守卫：`tests/test_web_ui.py::test_mobile_task_top_stretches_its_children`（按花括号深度整块提取媒体块，
+     别用 `page.index("}", start)` 拼行内右花括号）；变异测试去掉 stretch → 红。
+   - 顽带清理：`extension/popup.html` 的 CSS 也过了同一届静态审计（要把 `popup.js` 也算进去，
+     否则运行时类名如 `media-kind video/dash` 会被误报成死规则）；两个文件现在均无死规则。
+   - 新守卫：`test_css_selectors_do_not_reference_classes_that_never_exist`，另外我们在美化样式表时，一定要先把
+     样式表从页面里面剔掉再搜索 class/id，否则选择器自己就会匹配到自己。
 ---
 
 ## 6. 关键文件速查
