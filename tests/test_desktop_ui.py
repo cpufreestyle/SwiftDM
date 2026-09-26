@@ -3,6 +3,7 @@
 仅覆盖纯逻辑，不依赖显示设备：通过 QT_QPA_PLATFORM=offscreen + QMimeData 完成；
 若运行环境缺少 PyQt6 或离屏平台不可用则自动跳过，避免影响无界面 CI。
 """
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -11,6 +12,7 @@ import pytest
 
 pytest.importorskip("PyQt6.QtWidgets")
 from PyQt6.QtCore import QMimeData, QUrl
+from PyQt6.QtWidgets import QLabel
 
 
 @pytest.fixture(scope="module")
@@ -543,7 +545,8 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
 
     dlg = mw.SettingsDialog()
     groups = dlg.findChildren(QGroupBox)
-    assert [g.title() for g in groups] == ["下载", "网络", "完成后", "外观"]
+    assert [g.title() for g in groups] == ["下载", "网络", "完成后", "外观",
+                                         "诊断"]
 
     def row_labels(group):
         return {lbl.text() for lbl in group.findChildren(QLabel)
@@ -554,6 +557,7 @@ def test_settings_dialog_groups_cover_every_row(qt_app):
     assert by_title["网络"] == {"浏览器监控:", "下载代理:", "自定义代理:", "剪贴板监听:"}
     assert by_title["完成后"] == {"全部下载完成后:", "完成提示音:"}
     assert by_title["外观"] == {"界面主题:"}
+    assert by_title["诊断"] == {"ffmpeg:", "yt-dlp:", "链路自检:"}
 
 
 def test_settings_dialog_get_settings_still_complete(qt_app):
@@ -1659,3 +1663,56 @@ def test_reason_hint_covers_download_failed():
     assert "ffmpeg" in mw._reason_hint("needs_ffmpeg")
     assert mw._reason_hint("") == ""
     assert mw._reason_hint("unknown_reason") == ""
+
+
+def test_settings_dialog_has_a_diagnostics_group(qt_app):
+    """桌面端之前没有任何诊断信息；缺 ffmpeg/yt-dlp 时用户完全没感知。"""
+    import main_window as mw
+    dlg = mw.SettingsDialog(http_port=5000)
+    try:
+        assert dlg.selftest_btn is not None
+        assert dlg.selftest_btn.isEnabled() is True
+        assert dlg.selftest_label.text() != ""
+        # ffmpeg / yt-dlp 两行都要有内容，不能空着
+        labels = [lbl.text() for lbl in dlg.findChildren(QLabel)
+                  if "已就绪" in lbl.text() or "未检测到" in lbl.text()
+                  or "检测失败" in lbl.text()]
+        assert len(labels) >= 2, labels
+    finally:
+        dlg.deleteLater()
+
+
+def test_self_test_worker_reports_backend_result(monkeypatch, qt_app):
+    import main_window as mw
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    seen = []
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda url, timeout=None: (seen.append(url), _Resp(
+                            {"success": True}))[1])
+    worker = mw.SelfTestWorker(5123)
+    got = []
+    worker.finished.connect(lambda ok, detail: got.append((ok, detail)))
+    worker.run()
+    assert seen == ["http://127.0.0.1:5123/api/self-test"], seen
+    assert got == [(True, "")], got
+
+    # 连不上服务器时也得给出失败原因，不能安静失败
+    def _boom(url, timeout=None):
+        raise OSError("connection refused")
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    got.clear()
+    worker.run()
+    assert len(got) == 1 and got[0][0] is False and "connection refused" in got[0][1], got

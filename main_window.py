@@ -1171,11 +1171,41 @@ class TaskCard(QFrame):
                                      task_data.get("error_reason", ""))
 
 
+class SelfTestWorker(QThread):
+    """链路自检：请求本机 /api/self-test，让下载引擎真跑一遍。
+
+    放在后台线程里；最长要等 30 秒，不能卡住设置对话框。
+    """
+    finished = pyqtSignal(bool, str)      # ok, detail
+
+    def __init__(self, http_port, parent=None):
+        super().__init__(parent)
+        self._port = int(http_port)
+
+    def run(self):
+        import json
+        import urllib.error
+        import urllib.request
+        url = f"http://127.0.0.1:{self._port}/api/self-test"
+        try:
+            with urllib.request.urlopen(url, timeout=45) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception as exc:              # 连不上本机服务本身就是一个结果
+            self.finished.emit(False, str(exc))
+            return
+        ok = bool(body.get("success"))
+        detail = "" if ok else str(body.get("error") or body.get("status")
+                                   or "未知原因")
+        self.finished.emit(ok, detail)
+
+
 class SettingsDialog(QDialog):
     """设置对话框"""
-    def __init__(self, parent=None, theme=None):
+    def __init__(self, parent=None, theme=None, http_port=5000):
         super().__init__(parent)
         self._theme = theme if theme in THEMES else "dark"
+        self._http_port = int(http_port)
+        self._selftest_worker = None
         self.setWindowTitle("⚙ 设置")
         self.setMinimumWidth(460)
         self.setStyleSheet(self._qss())
@@ -1335,6 +1365,39 @@ class SettingsDialog(QDialog):
         form.addRow("界面主题:", self.theme_combo)
         layout.addWidget(look_box)
 
+        # —— 诊断 ——
+        diag_box = QGroupBox("诊断")
+        form = QFormLayout(diag_box)
+        form.setSpacing(12)
+        form.setContentsMargins(10, 6, 10, 6)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        try:
+            from media import (ffmpeg_status as _ff_status,
+                               ytdlp_available as _yt_ok)
+            _ff = _ff_status()
+            _ff_text = ("已就绪: " + (_ff.get("path") or "ffmpeg")
+                        if _ff.get("available")
+                        else "未检测到（混流/转封装不可用）")
+            _yt_text = ("已就绪" if _yt_ok()
+                        else "未检测到（网页视频解析不可用）")
+        except Exception:
+            _ff_text = _yt_text = "检测失败"
+        form.addRow("ffmpeg:", QLabel(_ff_text))
+        form.addRow("yt-dlp:", QLabel(_yt_text))
+
+        st_row = QHBoxLayout()
+        self.selftest_btn = QPushButton("开始自检")
+        self.selftest_btn.clicked.connect(self._run_self_test)
+        self.selftest_label = QLabel("未运行")
+        self.selftest_label.setObjectName("selfTestLabel")
+        st_row.addWidget(self.selftest_btn)
+        st_row.addWidget(self.selftest_label)
+        st_row.addStretch(1)
+        form.addRow("链路自检:", st_row)
+        layout.addWidget(diag_box)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -1367,6 +1430,31 @@ class SettingsDialog(QDialog):
 
     def _preview_theme(self):
         self.apply_theme(self.theme_combo.currentData() or "dark")
+
+    def _set_selftest(self, text, token):
+        """自检结果着色；状态色走主题 token，与其他提示一致。"""
+        _t = THEMES.get(getattr(self, "_theme", "dark"), THEMES["dark"])
+        color = {"ok": _t["green"], "bad": _t["red"]}.get(token, _t.get("textMuted", ""))
+        self.selftest_label.setText(text)
+        self.selftest_label.setStyleSheet(f"color: {color};")
+
+    def _run_self_test(self):
+        """启动自检；运行中禁用按钮，避免多次跟开。"""
+        if getattr(self, "_selftest_worker", None) is not None:
+            return
+        self.selftest_btn.setEnabled(False)
+        self._set_selftest("检测中...", "muted")
+        self._selftest_worker = SelfTestWorker(self._http_port, self)
+        self._selftest_worker.finished.connect(self._on_self_test_done)
+        self._selftest_worker.start()
+
+    def _on_self_test_done(self, ok, detail):
+        self.selftest_btn.setEnabled(True)
+        if ok:
+            self._set_selftest("通过", "ok")
+        else:
+            self._set_selftest("失败: " + (detail or "未知原因"), "bad")
+        self._selftest_worker = None
 
     def _browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择下载目录")
@@ -2743,7 +2831,7 @@ class MainWindow(QMainWindow):
         self._update_finish_countdown()
 
     def _show_settings(self):
-        dlg = SettingsDialog(self)
+        dlg = SettingsDialog(self, http_port=self.http_port)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             settings = dlg.get_settings()
             if settings.get("rate_limit") is None:
