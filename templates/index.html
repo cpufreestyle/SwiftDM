@@ -363,6 +363,48 @@ body {
   text-align: right;
 }
 
+/* ===== 分段进度 ===== */
+/* 多线程任务的每段进度：一格一段，段满变绿；hover 显示该段实际字节 */
+.seg-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.seg-count {
+  font-size: 10px;
+  color: var(--text2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.seg-track {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  height: 5px;
+}
+
+.seg-cell {
+  flex: 1;
+  min-width: 3px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.seg-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  transition: width 0.3s;
+}
+
+.seg-fill.done { background: var(--green); }
+
+.task-list.compact .seg-strip { display: none; }
+
 /* ===== 按钮组 ===== */
 .task-actions {
   display: flex;
@@ -1268,6 +1310,39 @@ function createEmptyState() {
   return div;
 }
 
+// ===== 分段进度 =====
+// 与桌面端详情面板同源：to_dict 的 segments_progress / segments_offsets 还原
+// 每段实际字节区间（最后一段吃掉余数）。单段任务不显示——整体进度条已等价；
+// 只在下载中/暂停时展示，完成或失败后整条隐藏，避免噪音。
+function segmentProgress(task) {
+  const offsets = task && task.segments_offsets;
+  if (!Array.isArray(offsets) || offsets.length < 2) return [];
+  const progress = Array.isArray(task.segments_progress) ? task.segments_progress : [];
+  return offsets.map((span, i) => {
+    const start = Number(span && span[0]) || 0;
+    const end = Number(span && span[1]);
+    const total = Number.isFinite(end) ? Math.max(0, end - start + 1) : 0;
+    const done = Math.max(0, Math.min(Number(progress[i]) || 0, total || Infinity));
+    return { index: i, done, total, pct: total > 0 ? Math.floor(done * 100 / total) : 0 };
+  });
+}
+
+function segmentStripHtml(task) {
+  if (!task || (task.status !== "downloading" && task.status !== "paused")) return "";
+  const segs = segmentProgress(task);
+  if (segs.length < 2) return "";
+  const doneCount = segs.filter(s => s.pct >= 100).length;
+  const cells = segs.map(s => `
+        <div class="seg-cell" title="段 ${s.index + 1}: ${formatSize(s.done)} / ${formatSize(s.total)} (${s.pct}%)">
+          <div class="seg-fill${s.pct >= 100 ? " done" : ""}" style="width:${s.pct}%"></div>
+        </div>`).join("");
+  return `
+      <div class="seg-strip">
+        <span class="seg-count">${doneCount}/${segs.length} 段</span>
+        <div class="seg-track">${cells}</div>
+      </div>`;
+}
+
 function createTaskCard(task) {
   const card = document.createElement("div");
   card.className = `task-card ${task.status}`;
@@ -1359,7 +1434,7 @@ function createTaskCard(task) {
         </div>
         <span class="progress-text">${progressPercent.toFixed(1)}%</span>
       </div>
-    </div>
+    </div>${segmentStripHtml(task)}
     <div class="task-actions"><button class="btn btn-secondary btn-sm" onclick="copyLink('${task.task_id}')" title="复制下载链接">复制链接</button>${actionsHtml}</div>
   `;
 

@@ -1,4 +1,5 @@
-﻿import re
+﻿import json
+import re
 
 import pytest
 
@@ -300,3 +301,49 @@ def test_web_notifies_new_completions_via_toast(page):
     # 完成文案与桌面端 _notify_complete 对齐
     assert "下载完成: $" in page
     assert "个任务下载完成" in page
+
+
+def test_task_card_renders_segment_strip(page):
+    seg_src = page[page.index("function segmentProgress"):
+                   page.index("function createTaskCard")]
+    assert "segments_offsets" in seg_src and "segments_progress" in seg_src
+    # 只在下载中/暂停展示：完成、失败、单段都不该出现进度条噪音
+    assert 'task.status !== "downloading"' in seg_src and "paused" in seg_src
+    card = page[page.index("function createTaskCard"):]
+    card = card[:card.index("function renderStats")]
+    assert "${segmentStripHtml(task)}" in card
+    for needle in ("seg-strip", "seg-cell", "seg-fill", "seg-count"):
+        assert needle in page, needle
+
+
+def test_stream_payload_includes_segment_fields(monkeypatch):
+    class _Task:
+        task_id = "t_seg"
+
+        def to_dict(self):
+            return {
+                "task_id": self.task_id, "filename": "multi.bin",
+                "status": "downloading", "progress": 10.0,
+                "total_size": 20, "downloaded": 2, "speed": 5, "eta": "4s",
+                "segments": 2,
+                "segments_progress": [1, 1],
+                "segments_offsets": [[0, 9], [10, 19]],
+                "segments_total": 2,
+            }
+
+    class _Mgr:
+        def get_all_tasks(self):
+            return [_Task()]
+
+        def get_stats(self):
+            return {"total": 1, "active": 1, "completed": 0, "failed": 0,
+                    "paused": 0, "total_speed": 5}
+
+    monkeypatch.setattr(appmod, "manager", _Mgr())
+    payload = appmod._stream_payload()
+    task = payload["tasks"][0]
+    assert task["segments_progress"] == [1, 1]
+    assert task["segments_offsets"] == [[0, 9], [10, 19]]
+    assert task["segments_total"] == 2
+    # 字段必须可 JSON 序列化，否则 SSE 推送会整帧失败
+    json.loads(json.dumps(payload))
