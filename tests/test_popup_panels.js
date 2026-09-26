@@ -10,9 +10,11 @@ const POPUP = fs.readFileSync(path.join(__dirname, "..", "extension", "popup.js"
 function makeEl(tag) {
   return {
     tagName: tag, children: [], listeners: {}, className: "", title: "",
-    disabled: false, style: {}, _text: "", _html: "",
+    disabled: false, style: {}, _text: "", _html: "", _attrs: {},
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     appendChild(child) { this.children.push(child); return child; },
+    setAttribute(name, value) { this._attrs[name] = String(value); },
+    getAttribute(name) { return name in this._attrs ? this._attrs[name] : null; },
     set textContent(v) { this._text = String(v); },
     get textContent() { return this._text; },
     set innerHTML(v) { this._html = String(v); this.children.length = 0; },
@@ -79,6 +81,68 @@ const BODIES = PANELS.map((p) => "panel" + p[0].toUpperCase() + p.slice(1));
     assert.ok(html.indexOf(`id="${id}"`) >= 0, `${id} 必须存在于 popup.html`);
   }
   assert.ok(html.indexOf('id="tabTasks"') > 0 && html.indexOf('id="panelTasks"') > 0);
+}
+
+
+// ④ 页签要能 Tab 到、focus-visible 要有可见焦点环，切页同步 aria-selected
+{
+  const html = fs.readFileSync(path.join(__dirname, "..", "extension", "popup.html"), "utf8");
+  assert.ok(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/.test(html),
+            "焦点环要落在 :focus-visible 上且用强调色令牌");
+  assert.ok(html.indexOf("outline-offset: 2px") >= 0, "焦点环要偏移，别贴边");
+  // 选中页签底色就是强调色，同色描边会糊在一起，得换亮一号的令牌
+  assert.ok(/\.tab\.active:focus-visible\s*\{[^}]*var\(--accent2\)/.test(html));
+
+  assert.ok(html.indexOf('role="tablist"') >= 0 && html.indexOf('aria-label="面板切换"') >= 0,
+            "页签容器要有 tablist 语义");
+  for (const id of TABS) {
+    let seg = html.slice(html.indexOf('id="' + id + '"'));
+    seg = seg.slice(0, seg.indexOf(">"));
+    assert.ok(seg.indexOf('role="tab"') >= 0, id + " 要声明 role=tab");
+    assert.ok(seg.indexOf("aria-controls=") >= 0, id + " 要指向对应面板");
+  }
+  for (const id of BODIES) {
+    let seg = html.slice(html.indexOf('id="' + id + '"'));
+    seg = seg.slice(0, seg.indexOf(">"));
+    assert.ok(seg.indexOf('role="tabpanel"') >= 0, id + " 要声明 role=tabpanel");
+    assert.ok(seg.indexOf("aria-labelledby=") >= 0, id + " 要指回页签");
+  }
+}
+
+// ⑤ showPanel 要同步 aria-selected，否则读屏用户听到的还是上一个面板
+{
+  const { sandbox, elements } = makeSandbox((msg) =>
+    msg.action === "getTasks" ? { tasks: [], stats: {} } : undefined);
+  sandbox.showPanel("tasks");
+  assert.strictEqual(elements.tabTasks.getAttribute("aria-selected"), "true",
+                    "切到任务页后 aria-selected 要是 true");
+  for (const id of ["tabCapture", "tabMedia"]) {
+    assert.strictEqual(elements[id].getAttribute("aria-selected"), "false",
+                      id + " 应该被取消选中");
+  }
+  sandbox.showPanel("capture");
+  assert.strictEqual(elements.tabCapture.getAttribute("aria-selected"), "true");
+  assert.strictEqual(elements.tabTasks.getAttribute("aria-selected"), "false");
+}
+
+// ⑥ 暂停/启用是同一个按钮的两种状态，aria-pressed 要跟着 updateUI 走
+{
+  const { sandbox, elements } = makeSandbox((msg) =>
+    msg.action === "getStatus" ? { enabled: false, sentCount: 0 } : undefined);
+  // loadStatus 才会把 enabled 置成后端返回值，桩里的 DOMContentLoaded 不会自动触发
+  sandbox.loadStatus();
+  sandbox.updateUI();
+  assert.strictEqual(elements.toggleBtn.getAttribute("aria-pressed"), "false",
+                    "监控被暂停时 aria-pressed 要是 false");
+  assert.strictEqual(elements.toggleBtn.textContent, "启用");
+
+  const on = makeSandbox((msg) =>
+    msg.action === "getStatus" ? { enabled: true, sentCount: 3 } : undefined);
+  on.sandbox.loadStatus();
+  on.sandbox.updateUI();
+  assert.strictEqual(on.elements.toggleBtn.getAttribute("aria-pressed"), "true",
+                    "监控启用时 aria-pressed 要是 true");
+  assert.strictEqual(on.elements.toggleBtn.textContent, "暂停");
 }
 
 console.log("popup.js showPanel OK");

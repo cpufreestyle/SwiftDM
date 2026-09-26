@@ -63,6 +63,9 @@ function showPanel(which) {
     const cap = name.charAt(0).toUpperCase() + name.slice(1);
     const on = name === which;
     document.getElementById('tab' + cap).className = 'tab' + (on ? ' active' : '');
+    // role=tab 的选中态要同时落到 aria-selected，否则读屏用户听到的还是上一个面板
+    const tab = document.getElementById('tab' + cap);
+    if (tab.setAttribute) tab.setAttribute('aria-selected', on ? 'true' : 'false');
     document.getElementById('panel' + cap).className = on ? '' : 'hidden';
   });
   if (which === 'media') loadMedia();
@@ -92,6 +95,8 @@ function updateUI() {
     text.textContent = '已暂停';
     btn.textContent = '启用';
   }
+  // 暂停/启用是同一个按钮的两种状态，读屏用户靠 aria-pressed 判断当前是开是关
+  if (btn.setAttribute) btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
 }
 
 function formatSize(bytes) {
