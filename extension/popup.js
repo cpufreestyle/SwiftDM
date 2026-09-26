@@ -51,6 +51,7 @@ function loadStatus() {
     if (!response) return;
     enabled = response.enabled;
     document.getElementById('sentCount').textContent = response.sentCount || 0;
+    renderServerBase(response);
     updateUI();
   });
 }
@@ -125,6 +126,21 @@ function formatSpeed(bps) {
   return formatSize(bps) + '/s';
 }
 
+// 服务器地址：显示真正连通过的 base。
+// 之前这里写死 127.0.0.1:5001，那是浏览器监控端口而不是 Web 端口，
+// 而且主程序端口被占时会顺延，写死的值从来就是错的。
+function serverBaseOf(res) {
+  const base = res && (res.__base || res.base);
+  if (!base) return '';
+  return String(base).replace(/^https?:\/\//, '');
+}
+
+function renderServerBase(res) {
+  const el = document.getElementById('serverAddr');
+  if (!el) return;
+  el.textContent = serverBaseOf(res) || '未连接';
+}
+
 function loadLive() {
   chrome.runtime.sendMessage({ action: 'getTasks' }, (res) => {
     if (!res) return;  // 掉线时保留上一次的数字，不清空
@@ -132,6 +148,7 @@ function loadLive() {
     document.getElementById('liveActive').textContent = String(s.active);
     document.getElementById('liveSpeed').textContent = formatSpeed(s.speed);
     document.getElementById('liveFailed').textContent = String(s.failed);
+    renderServerBase(res);
     renderTasks(res);  // 同一份响应顺手刷新失败角标/列表，省一次请求
   });
 }

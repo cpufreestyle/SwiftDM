@@ -229,3 +229,44 @@ function makeSandbox(handler) {
 }
 
 console.log("popup.js tasks panel OK");
+
+// ⑤ 服务器地址显示真正连通过的 base；
+// 之前 popup 写死 127.0.0.1:5001（那是监控端口），主程序端口顺延时就是错的。
+{
+  const { sandbox } = makeSandbox();
+  const strip = (b) => sandbox.serverBaseOf({ __base: b });
+  assert.strictEqual(strip('http://127.0.0.1:5003'), '127.0.0.1:5003');
+  assert.strictEqual(strip('http://127.0.0.1:5003/'), '127.0.0.1:5003/');
+  // getStatus 路径给的字段名叫 base
+  assert.strictEqual(sandbox.serverBaseOf({ base: 'http://127.0.0.1:5002' }), '127.0.0.1:5002');
+  // 未知/无效时不能拼出来一个地址
+  assert.strictEqual(sandbox.serverBaseOf(null), '');
+  assert.strictEqual(sandbox.serverBaseOf({}), '');
+  assert.strictEqual(sandbox.serverBaseOf({ __base: '' }), '');
+}
+
+{
+  const { sandbox, elements } = makeSandbox();
+  sandbox.renderServerBase({ __base: 'http://127.0.0.1:5004' });
+  assert.strictEqual(elements.serverAddr.textContent, '127.0.0.1:5004');
+  sandbox.renderServerBase({ __base: '' });
+  assert.strictEqual(elements.serverAddr.textContent, '未连接');
+}
+
+// 打开弹窗时两个轮询都要回写地址（否则首屏会卡在“检测中”）
+{
+  const { openPopup, elements, messages } = makeSandbox((msg) => {
+    if (msg.action === 'getStatus') return { enabled: true, sentCount: 1, base: 'http://127.0.0.1:5000' };
+    if (msg.action === 'getTasks') return { tasks: [], stats: {}, __base: 'http://127.0.0.1:5000' };
+    return undefined;
+  });
+  openPopup();
+  assert.deepStrictEqual(messages.map((m) => m.action).slice(0, 2), ['getStatus', 'getTasks']);
+  assert.strictEqual(elements.serverAddr.textContent, '127.0.0.1:5000');
+}
+
+// 本次请求失败不能再报 lastGoodBase，否则会显示“连着”却没数据
+{
+  const { sandbox } = makeSandbox();
+  assert.strictEqual(sandbox.serverBaseOf({ tasks: [], ok: false, error: 'SwiftDM 未运行' }), '');
+}

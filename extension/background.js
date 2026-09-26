@@ -336,10 +336,12 @@ setInterval(() => {
 // 监听来自 popup 的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'getStatus') {
-    chrome.storage.local.get(['sentCount'], (result) => {
+    // 把真正连通过的 base 一起给弹窗；主程序端口会从 5000 顺延到 5002-5005
+    chrome.storage.local.get(['sentCount', 'swiftBase'], (result) => {
       sendResponse({
         enabled: enabled,
-        sentCount: result.sentCount || 0
+        sentCount: result.sentCount || 0,
+        base: result.swiftBase || ''
       });
     });
     return true; // 异步响应
@@ -364,7 +366,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'getTasks') {
     getJson('/api/tasks').then((res) => {
-      sendResponse(res || { tasks: [], stats: {}, ok: false, error: 'SwiftDM 未运行' });
+      const payload = res || { tasks: [], stats: {}, ok: false, error: 'SwiftDM 未运行' };
+      // 本次真连上才报 base，否则弹窗会显示上一次的地址，说“连着”却无数据
+      sendResponse(Object.assign({}, payload, { __base: res ? (lastGoodBase || '') : '' }));
     });
     return true;
   }
