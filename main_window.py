@@ -106,11 +106,29 @@ def _card_height_bounds(compact):
 
 
 TRAY_ICON_STATES = ("idle", "downloading", "attention")
-TRAY_ICON_STYLE = {
-    "idle": {"bg": "#6c5ce7", "fg": "#ffffff"},
-    "downloading": {"bg": "#00d2a0", "fg": "#06281f"},
-    "attention": {"bg": "#ff5e7a", "fg": "#2a0a12"},
-}
+# 托盘底色取主题令牌：托盘常驻系统托盘，切浅色主题时不能还留一套深色配色
+TRAY_ICON_BG_KEY = {"idle": "accent", "downloading": "green", "attention": "red"}
+# 箭头的两种前景候选：一深一浅，按对比度选择，就不用每个主题手动配一套
+TRAY_ICON_INK = {"light": "#ffffff", "dark": "#0d1117"}
+
+
+def _relative_luminance(hexcolor):
+    """WCAG 相对亮度（0~1），用来判断某个底色上配深色还是白色更清楚。"""
+
+    def _lin(channel):
+        channel /= 255.0
+        return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(hexcolor[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def _pick_readable_fg(bg):
+    """在两种前景色里挑对比度更高的那个，因此不必每个主题单独配色。"""
+    lum = _relative_luminance(bg)
+    dark = (lum + 0.05) / (_relative_luminance(TRAY_ICON_INK["dark"]) + 0.05)
+    light = (1.0 + 0.05) / (lum + 0.05)
+    return TRAY_ICON_INK["dark"] if dark >= light else TRAY_ICON_INK["light"]
 
 
 def _tray_icon_state(active, failed):
@@ -122,22 +140,27 @@ def _tray_icon_state(active, failed):
     return "idle"
 
 
-def _tray_icon(icon_state):
-    """按状态绘制托盘图标（圆角方块 + 向下箭头；attention 加白色角标）。"""
-    style = TRAY_ICON_STYLE.get(icon_state, TRAY_ICON_STYLE["idle"])
+def _tray_icon(icon_state, tokens=None):
+    """按状态绘制托盘图标（圆角方块 + 向下箭头；attention 加白色角标）。
+
+    tokens 传当前主题色板，缺省退回 dark。
+    """
+    tokens = tokens or THEMES["dark"]
+    bg = tokens[TRAY_ICON_BG_KEY.get(icon_state, "accent")]
+    fg = _pick_readable_fg(bg)
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QBrush(QColor(style["bg"])))
+    painter.setBrush(QBrush(QColor(bg)))
     painter.drawRoundedRect(2, 4, 28, 24, 6, 6)
-    painter.setBrush(QBrush(QColor(style["fg"])))
+    painter.setBrush(QBrush(QColor(fg)))
     painter.drawRoundedRect(14, 8, 4, 12, 2, 2)          # 箭头杆
     painter.drawPolygon(QPolygon([QPoint(11, 17), QPoint(21, 17), QPoint(16, 25)]))
     if icon_state == "attention":
-        painter.setBrush(QBrush(QColor("#ffffff")))
-        painter.drawEllipse(20, 20, 9, 9)               # 右下角提示点
+        painter.setBrush(QBrush(QColor(TRAY_ICON_INK["light"])))
+        painter.drawEllipse(20, 18, 8, 8)               # 右下角提示点
     painter.end()
     return QIcon(pixmap)
 
@@ -1931,6 +1954,9 @@ class MainWindow(QMainWindow):
                 f"font-family:'Consolas','Menlo','Courier New',monospace;"
                 f"font-size:12px;border:none;}}")
 
+        if getattr(self, "tray", None) is not None:
+            self._refresh_tray_icon()
+
     def _set_monitor_state(self, on):
         """监控启停：颜色由主题样式表按动态属性 on 决定，切主题自动跟随。"""
         self.monitor_label.setProperty("on", bool(on))
@@ -1967,7 +1993,7 @@ class MainWindow(QMainWindow):
     def _setup_tray(self):
         self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
         self.tray = QSystemTrayIcon(self)
-        self.tray.setIcon(_tray_icon("idle"))
+        self.tray.setIcon(_tray_icon("idle", THEMES[getattr(self, "_theme", "dark")]))
         self._tray_icon_state = "idle"
         self.tray.setToolTip("SwiftDM - 下载管理器")
 
@@ -1997,7 +2023,12 @@ class MainWindow(QMainWindow):
         if state == self._tray_icon_state:
             return
         self._tray_icon_state = state
-        self.tray.setIcon(_tray_icon(state))
+        self.tray.setIcon(_tray_icon(state, THEMES[getattr(self, "_theme", "dark")]))
+
+    def _refresh_tray_icon(self):
+        """主题切换后重画托盘图标：状态不变也要重绘，否则颜色不跟着变。"""
+        self.tray.setIcon(_tray_icon(getattr(self, "_tray_icon_state", None) or "idle",
+                                     THEMES[getattr(self, "_theme", "dark")]))
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:

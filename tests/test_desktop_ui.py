@@ -311,6 +311,114 @@ def test_tray_icon_renders_every_state(qt_app):
         assert not icon.isNull()
 
 
+def test_tray_icon_follows_theme_palette(qt_app):
+    """托盘底色必须取自主题令牌，不能再写死一套深色。"""
+    import main_window as mw
+
+    for theme in ("dark", "light"):
+        tokens = mw.THEMES[theme]
+        for state, key in mw.TRAY_ICON_BG_KEY.items():
+            assert key in tokens, (theme, state, key)
+            # 各主题下能正常绘制，且不同主题肯定不并逐底色相同
+            assert (
+                tokens[mw.TRAY_ICON_BG_KEY["idle"]]
+                != tokens[mw.TRAY_ICON_BG_KEY["downloading"]]
+            ) or theme == "light"
+
+
+def test_pick_readable_fg_beats_fixed_ink_on_every_state(qt_app):
+    """前景色按对比度挑选：任意主题、任意状态都要趾过图标可读阈值。"""
+    import main_window as mw
+
+    def contrast(a, b):
+        la, lb = mw._relative_luminance(a), mw._relative_luminance(b)
+        hi, lo = max(la, lb), min(la, lb)
+        return (hi + 0.05) / (lo + 0.05)
+
+    for theme in ("dark", "light"):
+        tokens = mw.THEMES[theme]
+        for state in mw.TRAY_ICON_STATES:
+            bg = tokens[mw.TRAY_ICON_BG_KEY[state]]
+            fg = mw._pick_readable_fg(bg)
+            assert fg in mw.TRAY_ICON_INK.values(), (theme, state, fg)
+            assert contrast(bg, fg) >= 3.0, (
+                theme, state, bg, fg, round(contrast(bg, fg), 2))
+
+
+def test_pick_readable_fg_flips_with_background():
+    import main_window as mw
+
+    assert mw._pick_readable_fg("#ffffff") == mw.TRAY_ICON_INK["dark"]
+    assert mw._pick_readable_fg("#000000") == mw.TRAY_ICON_INK["light"]
+
+
+def test_apply_theme_repaints_tray_icon(qt_app):
+    """切主题时托盘图标要重画，否则状态缓存会把颜色卡在旧主题上。"""
+    import main_window as mw
+
+    class _Tray:
+        def __init__(self):
+            self.icons = []
+
+        def setIcon(self, icon):
+            self.icons.append(icon)
+
+    class _Host:
+        _refresh_tray_icon = mw.MainWindow._refresh_tray_icon
+
+        def __init__(self):
+            self._cards = {}
+            self.sheet = None
+            self._tray_icon_state = "downloading"   # 状态不变，即使重绘也不该跳过
+
+        def setStyleSheet(self, sheet):
+            self.sheet = sheet
+
+    host = _Host()
+    host.tray = _Tray()
+    mw.MainWindow._apply_theme(host, "light")
+    assert len(host.tray.icons) == 1
+    mw.MainWindow._apply_theme(host, "dark")
+    assert len(host.tray.icons) == 2
+    # 没有托盘的容器（正在搭建窗体）不能因此报错
+    host2 = _Host()
+    mw.MainWindow._apply_theme(host2, "light")
+
+
+def _opaque_extent(img, threshold=128):
+    """返回几乎完整覆盖的像素范围：抗锯齿边缘只会产生低覆盖度，不让它们干扰判断。"""
+    xs, ys = [], []
+    for y in range(img.height()):
+        for x in range(img.width()):
+            if img.pixelColor(x, y).alpha() >= threshold:
+                xs.append(x)
+                ys.append(y)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+# 和 _tray_icon 里的 drawRoundedRect(2, 4, 28, 24, 6, 6) 对应：色块占满 x 2~29、y 4~27
+BADGE_BOUNDS = (2, 4, 29, 27)
+
+
+def test_tray_icon_stays_inside_the_badge(qt_app):
+    """箭头和角标必须完整落在四弯方块里。
+
+    角标更容易失质：画块底边在 y=27，而圆点一旦画到 y>=28 就会被裁掉一块。
+    """
+    import main_window as mw
+
+    for theme in ("dark", "light"):
+        for state in mw.TRAY_ICON_STATES:
+            img = mw._tray_icon(state, mw.THEMES[theme]).pixmap(32, 32).toImage()
+            extent = _opaque_extent(img)
+            assert extent[0] >= BADGE_BOUNDS[0], (theme, state, "left", extent)
+            assert extent[1] >= BADGE_BOUNDS[1], (theme, state, "top", extent)
+            assert extent[2] <= BADGE_BOUNDS[2], (theme, state, "right", extent)
+            assert extent[3] <= BADGE_BOUNDS[3], (theme, state, "bottom", extent)
+            # 色块本身要填满，不能因为参数改动缓成一个小点
+            assert extent == BADGE_BOUNDS, (theme, state, extent)
+
+
 def test_card_height_bounds_for_compact_and_default():
     import main_window as mw
 
