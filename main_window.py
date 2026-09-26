@@ -59,6 +59,27 @@ FINISH_ACTION_LABELS = {"none": "无动作", "shutdown": "关机",
                         "suspend": "睡眠", "beep": "提示音"}
 
 
+NAV_INPUT_TYPES = (QLineEdit, QSpinBox, QComboBox, QPlainTextEdit)
+
+
+def _step_selection(ordered_ids, current_id, delta):
+    """在可见任务序列里移动选中项；到头钳制（不循环），空序列返回 None。"""
+    if not ordered_ids:
+        return None
+    if current_id not in ordered_ids:
+        return ordered_ids[0] if delta > 0 else ordered_ids[-1]
+    idx = ordered_ids.index(current_id)
+    nxt = idx + (1 if delta > 0 else -1)
+    return ordered_ids[max(0, min(len(ordered_ids) - 1, nxt))]
+
+
+def _keyboard_nav_allowed(focus_widget):
+    """焦点在输入类控件（输入框/下拉/数字框）上时，让位给控件自身的按键处理。"""
+    if focus_widget is None:
+        return True
+    return not isinstance(focus_widget, NAV_INPUT_TYPES)
+
+
 def _finish_countdown_text(action, remaining):
     """「全部下载完成后动作」工具栏文案；无动作/已到点/非法值返回 None 表示隐藏按钮。"""
     if not action or action == "none":
@@ -318,10 +339,12 @@ QMenu::separator { height:1px; background:#2a2a3a; margin:4px 10px; }
 class TaskCard(QFrame):
     """单个下载任务卡片"""
     action_triggered = pyqtSignal(str, str)  # action, task_id
+    selected = pyqtSignal(str)              # task_id：点击卡片即选中（键盘导航配合）
 
     def __init__(self, task_data, parent=None):
         super().__init__(parent)
         self.task_id = task_data["task_id"]
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.filepath = task_data.get("filepath", "")
         self._drag_start_pos = None
         self._built_status = task_data.get("status", "pending")  # 卡片按钮按此状态生成
@@ -337,11 +360,21 @@ class TaskCard(QFrame):
             TaskCard:hover {
                 border-color: #3a3a52;
             }
+            TaskCard[selected="true"] {
+                border: 1px solid #6c5ce7;
+                background-color: #20202e;
+            }
         """)
         self.setMinimumHeight(120)
         self._base_max_height = 140
         self.setMaximumHeight(self._base_max_height)
         self._build_ui(task_data)
+
+    def set_selected(self, on):
+        """选中态：高亮边框；配合 dynamic property 重算样式。"""
+        self.setProperty("selected", bool(on))
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _build_ui(self, task_data):
         layout = QVBoxLayout(self)
@@ -502,6 +535,7 @@ class TaskCard(QFrame):
 
     # 允许从已完成卡片的文件区域拖出文件（如拖到资源管理器、聊天窗口等）
     def mousePressEvent(self, event):
+        self.selected.emit(self.task_id)
         if (event.button() == Qt.MouseButton.LeftButton
                 and self.filepath and os.path.exists(self.filepath)):
             self._drag_start_pos = event.pos()
@@ -820,6 +854,7 @@ class MainWindow(QMainWindow):
         self.logger.addHandler(self._log_handler)
         self.log_signal.connect(self._append_log)
         self._cards = {}  # task_id -> TaskCard
+        self._selected_task_id = None  # 键盘/鼠标选中的任务（↑/↓ 导航）
         self._search = ""  # 任务搜索关键字（文件名/链接，大小写不敏感）
         self._shortcuts = []  # [(seq, QShortcut)] for tests/extensibility
         self._completed_tasks = set()  # 追踪新完成的任务用于通知
@@ -855,6 +890,9 @@ class MainWindow(QMainWindow):
         for _seq, _slot in (
             ("Ctrl+N", self._add_download),
             ("Ctrl+F", self.url_input.setFocus),
+            ("Up", lambda: self._move_selection(-1)),
+            ("Down", lambda: self._move_selection(1)),
+            ("Return", lambda: self._open_selected_task()),
         ):
             _sc = QShortcut(QKeySequence(_seq), self)
             _sc.activated.connect(_slot)
@@ -1171,6 +1209,8 @@ class MainWindow(QMainWindow):
 
             # 移除不存在的任务卡片
             removed = set(self._cards.keys()) - set(task_dict.keys())
+            if self._selected_task_id in removed:
+                self._selected_task_id = None
             for tid in removed:
                 card = self._cards.pop(tid)
                 self.task_layout.removeWidget(card)
@@ -1190,6 +1230,7 @@ class MainWindow(QMainWindow):
                 else:
                     card = TaskCard(data)
                     card.action_triggered.connect(self._handle_action)
+                    card.selected.connect(lambda tid: self._select_task(tid))
                     self._cards[task_id] = card
                     # 插入到布局中（在 stretch 之前）
                     self.task_layout.insertWidget(self.task_layout.count() - 1, card)
@@ -1226,6 +1267,8 @@ class MainWindow(QMainWindow):
                 self.empty_label.show()
             else:
                 self.empty_label.hide()
+
+            self._sync_selection_visual()
 
         except Exception as e:
             self.logger.exception("刷新任务列表失败")
@@ -1340,6 +1383,56 @@ class MainWindow(QMainWindow):
             return
         self._search = q
         self._refresh()
+
+    def _ordered_visible_ids(self):
+        """当前过滤 + 排序下可见的任务 id 序列（键盘导航的移动域）。"""
+        mgr = self._get_manager()
+        task_dict = {d["task_id"]: d
+                     for d in (t.to_dict() for t in mgr.get_all_tasks())}
+        ordered = _sorted_task_ids(task_dict, self._sort)
+        return [tid for tid in ordered
+                if self._match_filter(task_dict[tid])
+                and self._match_search(task_dict[tid], self._search)]
+
+    def _move_selection(self, delta):
+        """↑/↓ 在可见任务间移动选中项；焦点在输入控件上时让位。"""
+        if not _keyboard_nav_allowed(QApplication.focusObject()):
+            return
+        target = _step_selection(self._ordered_visible_ids(),
+                                 self._selected_task_id, delta)
+        if target is not None:
+            self._select_task(target)
+
+    def _open_selected_task(self):
+        """回车打开选中任务的文件（与卡片「打开文件」按钮同一路径）。"""
+        if not _keyboard_nav_allowed(QApplication.focusObject()):
+            return
+        if not self._selected_task_id:
+            return
+        self._handle_action("open", self._selected_task_id)
+
+    def _select_task(self, task_id):
+        """选中任务卡片（键盘导航与点击共用）并滚动到可见区域。"""
+        previous = self._selected_task_id
+        self._selected_task_id = task_id
+        if previous and previous != task_id:
+            prev_card = self._cards.get(previous)
+            if prev_card is not None:
+                prev_card.set_selected(False)
+        card = self._cards.get(task_id)
+        if card is None:
+            return
+        card.set_selected(True)
+        card.setFocus()
+        try:
+            self.scroll.ensureWidgetVisible(card)
+        except Exception:
+            pass
+
+    def _sync_selection_visual(self):
+        """卡片可能因状态变化被重建，按 _selected_task_id 重放选中态。"""
+        for tid, card in self._cards.items():
+            card.set_selected(tid == self._selected_task_id)
 
     @staticmethod
     def _match_search(data, query):

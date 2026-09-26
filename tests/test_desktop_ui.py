@@ -195,6 +195,54 @@ def test_finish_countdown_text_tolerates_junk_remaining():
     assert mw._finish_countdown_text("shutdown", "abc") is None
 
 
+def test_step_selection_moves_clamps_and_handles_unknown():
+    import main_window as mw
+
+    ids = ["a", "b", "c"]
+    assert mw._step_selection(ids, None, 1) == "a"
+    assert mw._step_selection(ids, None, -1) == "c"
+    assert mw._step_selection(ids, "a", 1) == "b"
+    assert mw._step_selection(ids, "b", -1) == "a"
+    assert mw._step_selection(ids, "a", -1) == "a"      # 到头钳制，不循环
+    assert mw._step_selection(ids, "c", 1) == "c"
+    assert mw._step_selection(ids, "gone", 1) == "a"    # 当前项不在列表
+    assert mw._step_selection([], None, 1) is None
+
+
+def test_keyboard_nav_defers_to_input_widgets(qt_app):
+    import main_window as mw
+    from PyQt6.QtWidgets import QLineEdit, QComboBox, QSpinBox, QLabel
+
+    assert mw._keyboard_nav_allowed(None) is True
+    assert mw._keyboard_nav_allowed(QLabel()) is True
+    assert mw._keyboard_nav_allowed(QLineEdit()) is False
+    assert mw._keyboard_nav_allowed(QComboBox()) is False
+    assert mw._keyboard_nav_allowed(QSpinBox()) is False
+
+
+def test_task_card_selection_property_and_click_signal(qt_app):
+    import main_window as mw
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QPointF, Qt
+
+    card = mw.TaskCard({"task_id": "t1", "filename": "x.bin",
+                        "status": "completed", "total_size": 1,
+                        "downloaded": 1})
+    assert card.property("selected") in (None, False)
+    card.set_selected(True)
+    assert card.property("selected") is True
+    card.set_selected(False)
+    assert card.property("selected") is False
+
+    got = []
+    card.selected.connect(lambda tid: got.append(tid))
+    ev = QMouseEvent(QMouseEvent.Type.MouseButtonPress, QPointF(2, 2),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    card.mousePressEvent(ev)
+    assert got == ["t1"]
+
+
 def test_settings_dialog_exposes_finish_action(qt_app):
     import main_window as mw
 
