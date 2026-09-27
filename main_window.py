@@ -674,6 +674,16 @@ QProgressBar::chunk {
     background-color: $accent;
     border-radius: 3px;
 }
+QProgressBar#overallBar {
+    background-color: $surface2;
+    border: 1px solid $border;
+    border-radius: 3px;
+    height: 6px;
+}
+QProgressBar#overallBar::chunk {
+    background-color: $accent2;
+    border-radius: 3px;
+}
 QMenu {
     background-color: $surface;
     border: 1px solid $border;
@@ -2254,6 +2264,17 @@ class MainWindow(QMainWindow):
         self.overall_label.setObjectName("overallLabel")
         header_layout.addWidget(self.overall_label)
 
+        # 总进度条：与 Web 端 .overall-progress 同一套取舍（组件级、细条、读令牌）
+        self.overall_bar = QProgressBar()
+        self.overall_bar.setObjectName("overallBar")
+        self.overall_bar.setRange(0, 100)
+        self.overall_bar.setValue(0)
+        self.overall_bar.setTextVisible(False)
+        self.overall_bar.setFixedHeight(6)
+        self.overall_bar.setFixedWidth(120)
+        self.overall_bar.setAccessibleName("总下载进度")
+        header_layout.addWidget(self.overall_bar)
+
         header_layout.addStretch()
 
         self.stats_label = QLabel("下载中: 0  |  已完成: 0  |  失败: 0  |  总计: 0")
@@ -3100,7 +3121,12 @@ class MainWindow(QMainWindow):
             _pct = int(_dl * 100 / _tt)
             self.overall_label.setText(f"总下载 {format_size(_dl)} / {format_size(_tt)} ({_pct}%)")
         else:
+            _pct = 0
             self.overall_label.setText("")
+        _bar = getattr(self, "overall_bar", None)
+        if _bar is not None:
+            _bar.setValue(_pct)
+            _bar.setVisible(_tt > 0)
 
     def _threads_default(self):
         """读取设置面板的默认线程数；配置是唯一事实来源，

@@ -159,6 +159,24 @@ body {
   border-radius: 6px;
   flex: none;
 }
+/* ===== 总下载进度（与卡片进度条同一套取舍）===== */
+.overall-progress {
+  width: 96px;
+  height: 6px;
+  margin-left: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  flex: none;
+}
+.overall-fill {
+  height: 100%;
+  width: 0;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width .3s ease;
+}
 
 /* ===== 添加区域 ===== */
 .add-bar {
@@ -661,7 +679,7 @@ textarea:focus-visible,
   <!-- 状态栏 -->
   <div class="stats-bar" id="statsBar">
     <div class="stat-item speed"><span class="icon">&#9889;</span><span class="value" id="totalSpeed">0 B/s</span><canvas id="speedGraph" class="speed-graph" role="img" aria-label="最近总下载速度曲线"></canvas></div>
-    <div class="stat-item overall"><span class="icon">&#128200;</span><span class="value" id="overallProgress">--</span></div>
+    <div class="stat-item overall"><span class="icon">&#128200;</span><span class="value" id="overallProgress">--</span><div class="overall-progress" id="overallProgressBar" role="progressbar" aria-label="总下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="overall-fill" id="overallFill"></div></div></div>
     <div class="stat-item active"><span class="icon">&#9654;</span><span class="label">下载中</span><span class="value" id="activeCount">0</span></div>
     <div class="stat-item"><span class="icon">&#10004;</span><span class="label">已完成</span><span class="value" id="doneCount">0</span></div>
     <div class="stat-item" title="下载失败的任务数；已取消的任务不计入这里"><span class="icon">&#10006;</span><span class="label">失败</span><span class="value" id="failedCount" style="color:var(--red)">0</span></div>
@@ -1545,6 +1563,11 @@ function renderTasks(tasks) {
   tasks.forEach(t => { if (t.total_size > 0) { _dl += t.downloaded || 0; _tt += t.total_size; } });
   const op = document.getElementById("overallProgress");
   if (op) op.textContent = _tt > 0 ? `${formatSize(_dl)} / ${formatSize(_tt)} (${Math.floor(_dl * 100 / _tt)}%)` : "--";
+  const opBar = document.getElementById("overallProgressBar");
+  const opFill = document.getElementById("overallFill");
+  const opPct = _tt > 0 ? Math.min(100, Math.max(0, _dl * 100 / _tt)) : 0;
+  if (opFill) opFill.style.width = opPct + "%";
+  if (opBar) opBar.setAttribute("aria-valuenow", opPct.toFixed(1));
 
   const container = document.getElementById("taskList");
   pruneSelection();

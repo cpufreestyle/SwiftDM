@@ -909,3 +909,32 @@ def test_speed_graph_css_stays_on_tokens(page):
                  "background: var(--surface2)", "border: 1px solid var(--border)"):
         assert decl in rule, rule
     assert "#" not in rule, rule
+def test_overall_progress_bar_is_wired(page):
+    """统计栏总进度：数字之外的细进度条，与桌面端 #overallBar 同一取舍。"""
+    bar = ('<div class="overall-progress" id="overallProgressBar" role="progressbar" '
+           'aria-label="总下载进度" aria-valuemin="0" aria-valuemax="100" '
+           'aria-valuenow="0">')
+    assert bar in page
+    assert 'id="overallFill"' in page
+    # 驱动：renderTasks 里已算好的 _dl/_tt 要同步给条与 aria
+    fn = page[page.index("function renderTasks"):]
+    fn = fn[:fn.index('const container = document.getElementById("taskList")')]
+    assert "overallFill" in fn and "overallProgressBar" in fn
+    assert 'opBar.setAttribute("aria-valuenow"' in fn
+    assert 'opFill.style.width = opPct + "%"' in fn
+    # 空任务时要回落到 0，不能留着上一轮的宽度
+    assert "const opPct = _tt > 0 ? Math.min(100, Math.max(0, _dl * 100 / _tt)) : 0;" in fn
+
+
+def test_overall_progress_css_stays_on_tokens(page):
+    css = page[page.index("<style>"):page.index("</style>")]
+    rule = css[css.index(".overall-progress"):]
+    rule = rule[:rule.index("}")]
+    fill = css[css.index(".overall-fill"):]
+    fill = fill[:fill.index("}")]
+    for decl in ("background: var(--surface2)", "border: 1px solid var(--border)",
+                 "height: 6px", "overflow: hidden"):
+        assert decl in rule, rule
+    assert "background: var(--green)" in fill, fill
+    for literal in ("#", "rgb(", "hsl("):
+        assert literal not in rule and literal not in fill, (rule, fill)

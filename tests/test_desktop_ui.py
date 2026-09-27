@@ -2599,3 +2599,81 @@ def test_main_window_feeds_the_speed_graph():
     assert "self.speed_graph = SpeedGraph()" in src
     assert "self.speed_graph.push(stats.get('total_speed', 0))" in src
     assert "graph.apply_theme(theme)" in src
+def test_overall_progress_bar_renders_the_share(qt_app):
+    """总进度条：填满时组件区基本被 accent2 覆盖，0 时只剩渠道背景。"""
+    import main_window as mw
+    from PyQt6.QtGui import QColor
+
+    def render(value):
+        bar = mw.QProgressBar()
+        bar.setObjectName("overallBar")
+        bar.setRange(0, 100)
+        bar.setTextVisible(False)
+        bar.setFixedHeight(6)
+        bar.setFixedWidth(120)
+        bar.setStyleSheet(mw._qss_for("dark"))
+        bar.setValue(value)
+        bar.resize(120, 6)
+        bar.show()
+        qt_app.processEvents()
+        img = bar.grab().toImage()
+        bar.hide()
+        return img
+
+    zero, full = render(0), render(100)
+    chunk = QColor(mw.THEMES["dark"]["accent2"]).name()
+    total = zero.width() * zero.height()
+    painted_full = sum(1 for y in range(full.height()) for x in range(full.width())
+                       if QColor(full.pixel(x, y)).name() == chunk)
+    painted_zero = sum(1 for y in range(zero.height()) for x in range(zero.width())
+                       if QColor(zero.pixel(x, y)).name() == chunk)
+    assert painted_full > total * 0.5, (painted_full, total)
+    assert painted_zero < painted_full * 0.2, (painted_zero, painted_full)
+
+
+
+def test_update_overall_drives_the_bar(qt_app, monkeypatch):
+    """真实主窗口下：总进度文字与进度条同源，否则两者会吹各的。"""
+    from contextlib import contextmanager
+    import downloader
+    import main_window as mw
+
+    class _Manager:
+        def get_all_tasks(self):
+            return []
+
+        def get_stats(self):
+            return {"total_speed": 0.0, "active": 1, "completed": 0,
+                    "failed": 0, "paused": 0, "total": 1}
+
+    monkeypatch.setattr(downloader, "manager", _Manager())
+    was_quit = qt_app.quitOnLastWindowClosed()
+    qt_app.setQuitOnLastWindowClosed(False)
+    win = mw.MainWindow()
+    try:
+        from types import SimpleNamespace
+        # _update_overall 读的是任务对象属性，不是字典
+        tasks = [SimpleNamespace(total_size=1000, downloaded=250),
+                 SimpleNamespace(total_size=1000, downloaded=500)]
+        win._update_overall(tasks)
+        assert win.overall_bar.value() == 37, win.overall_bar.value()
+        assert win.overall_bar.isVisibleTo(win)
+        assert "750 B / 2.0 KB (37%)" in win.overall_label.text(), win.overall_label.text()
+
+        win._update_overall([SimpleNamespace(total_size=0, downloaded=0)])
+        assert win.overall_bar.value() == 0
+        assert not win.overall_bar.isVisibleTo(win)
+        assert win.overall_label.text() == ""
+    finally:
+        win.close()
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+        qt_app.setQuitOnLastWindowClosed(was_quit)
+def test_main_window_overall_bar_follows_the_label(qt_app, monkeypatch):
+    import main_window as mw
+    src = io.open("main_window.py", encoding="utf-8").read()
+    assert 'self.overall_bar.setObjectName("overallBar")' in src
+    assert 'self.overall_bar.setAccessibleName("总下载进度")' in src
+    assert "QProgressBar#overallBar {" in src
+    assert "QProgressBar#overallBar::chunk {" in src
