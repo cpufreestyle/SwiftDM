@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `57da5a6`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 25 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `f841a38`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 27 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -445,6 +445,24 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      Playwright 实开 Flask 页面量过 canvas：空闲 140 个着色像素（仅底线），推入 40 个采样后 1846 个（折线+填充真的画出来了），
      切主题后重绘正常、着色像素不丢；暗/浅两主题截图见 `_speedgraph_*.png`。
      复现脚本留在 `_browsercheck/speed_graph_render.py`（gitignore），两个变异脚本同目录。
+27. **总下载进度条（两端，把“整体下到哪儿了”从数字变成一条小条）**（`f841a38`）：上一轮加了速度曲线，
+    本轮把同一套设计语言带给总进度——两端早就有“总下载 x/y (z%)”的文字（桌面 `_update_overall`、Web `renderTasks`），
+    但都只能读数字。开源同类（IDM/Motrix）在顶部都是「数字 + 细进度条」并排：
+   - Web：统计栏 `.stat-item.overall` 内新增 `<div class="overall-progress" role="progressbar" aria-label="总下载进度">`，
+     内部 `#overallFill` 按百分比赋宽；驱动复用 `renderTasks` 里已算好的 `_dl/_tt`（不重复遍历），
+     同步 `aria-valuenow`；填充色走 `--green`令牌（完成向语义，与卡片完成状态同色）。
+   - 桌面：`QProgressBar#overallBar`（组件级，不影响卡片进度条的全局 `QProgressBar` 规则），
+     `_update_overall` 同源驱动文字与条；无任务/体积全未知时隐藏。
+   - 守卫：百分比需要 `Math.min(100, Math.max(0, ...))` 锁死（HTTP 断点续传后 downloaded 可能略超 total_size，
+     不锁就会溢出容器）；CSS 不容定色值；硬盘上还要求 `role="progressbar"` + aria-label。
+   - 测试：Web 2 组源码守卫；桌面 3 组（离屏渲染验证填满/空轨、真实主窗口驱动 `_update_overall` 时条值与文字同源、源码挂点）。
+     变异测试 7/7 全红（不更新填充、不同步 aria、不锁百分比、写死色值、不设值、删 QSS 规则、删可访问名）。
+   - 验证：`pytest` 402 passed / 1 skipped；node 套件 15 个全绿（`test_dom_ids.js` 自动接纳新 id）；
+     Playwright 实浏览器：填充宽度与 aria 百分比对得上（2px 左右容差），新增下载任务后 92.9% → 93.8% 确实在走，
+     填充色量到 `rgb(0, 210, 160)`。
+   - 清理：浏览器验证会往本机真实 `~/.swiftdm/history.json` 写入测试任务，本轮结束时已清理
+     （10 条 local-test-file 测试任务，备份 `history.json.cleanup-bak`）。
+   - 复现脚本：`_browsercheck/overall_bar_render.py`（gitignore），变异脚本 `_mut_op.py`。
 ---
 
 ## 6. 关键文件速查
