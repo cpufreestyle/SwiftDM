@@ -53,21 +53,84 @@ def _status_title(active, total_speed, total):
     return "SwiftDM - 高速下载管理器"
 
 
-def _tray_tip(active, total_speed, total, failed=0, countdown=None):
+def _tray_tip(active, total_speed, total, failed=0, countdown=None,
+              spark="", overall_pct=None):
     """Tray tooltip: live speed and running count.
 
-    空闲/最小化时用户只能看到 tooltip，因此附带失败数
-    与「全部完成后动作」倒计时（关机/休眠即将触发时必须可见）。
+    空闲/最小化时用户只能看到 tooltip，因此除了失败数
+    与「全部完成后动作」倒计时（关机/休眠即将触发时必须可见），
+    还带最近速度的迷你速率条与总下载进度。
+    总长度要压在 Windows 托盘气泡的 127 字符以内（NOTIFYICONDATA），
+    因此迷你条只在下载中且确实采到过速度时才出现；
+    超出上限时先吃掉的也是它（倒计时不能丢）。
     """
     if active > 0:
-        text = f"SwiftDM · ↓{format_speed(total_speed)} · 下载中 {active}/{total}"
+        parts = [f"SwiftDM · ↓{format_speed(total_speed)}"]
+        if spark:
+            parts.append(spark)
+        parts.append(f"下载中 {active}/{total}")
     else:
-        text = "SwiftDM - 下载管理器"
+        parts = ["SwiftDM - 下载管理器"]
+    if overall_pct is not None:
+        parts.append(f"总进度 {overall_pct}%")
     if failed > 0:
-        text += f" · ✗ {failed} 个失败"
+        parts.append(f"✗ {failed} 个失败")
     if countdown:
-        text += f" · {countdown}"
+        parts.append(countdown)
+    text = " · ".join(parts)
+    if len(text) > TRAY_TIP_MAX and spark:
+        # 超长会被从尾部弹抑制，而最后一段正是关机/休眠倒计时；
+        # 先牺牲装饰性的迷你条，保住安全信息
+        parts.remove(spark)
+        text = " · ".join(parts)
     return text
+
+
+# 托盘 tooltip 的迷你速率条：8 级方块字符，取最近 12 个采样点
+# Windows 托盘气泡（NOTIFYICONDATA.szInfo）只给 127 字符（还要给 \0 留位），超长就会被静默截尾
+SPARK_LEVELS = "▁▂▃▄▅▆▇█"
+SPARK_WIDTH = 12
+TRAY_TIP_MAX = 127  # 托盘气泡容纳的字符数上限
+
+
+def _sparkline(samples, width=SPARK_WIDTH):
+    """把最近的速度采样压成一排方块字符，给托盘 tooltip 当迷你速率条用。
+
+    桌面窗口里有 SpeedGraph 画布，但最小化/空闲时用户能看到的只有 tooltip；
+    这里给同一份采样一个纯文本视图：速度是在爬坡、掉下去还是已经停了，
+    不开窗口也看得出来。按窗口内最高值归一化，因此它只说“形状”：
+    一条平顶代表整段时间都稳在窗口峰值附近（可能是真跑满，也可能是被限速卡住），
+    绝对速率看它前面那个数字。
+    全 0 / 没有采样时返回空串，空闲时不占 tooltip 宽度。
+    """
+    points = []
+    for v in list(samples or ())[-width:]:
+        try:
+            points.append(max(0.0, float(v or 0)))
+        except (TypeError, ValueError):
+            points.append(0.0)   # 坏采样当 0，不能因为一个脏数据炸掉整个刷新
+    ceiling = max(points) if points else 0.0
+    if ceiling <= 0:
+        return ""
+    top = len(SPARK_LEVELS) - 1
+    return "".join(
+        SPARK_LEVELS[max(0, min(top, round(v / ceiling * top)))] for v in points)
+
+
+def _overall_ratio(tasks):
+    """所有任务的总下载 / 总体积 / 百分比（只统计已知 total_size 的）。
+
+    桌面头部、Web 端统计栏与托盘 tooltip 共用同一个口径，
+    避免三处各写一遍遍历、各算出不一样的百分比。
+    """
+    dl = tt = 0
+    for t in tasks or ():
+        total = getattr(t, "total_size", 0) or 0
+        if total > 0:
+            tt += total
+            dl += getattr(t, "downloaded", 0) or 0
+    pct = int(dl * 100 / tt) if tt > 0 else 0
+    return dl, tt, pct
 
 
 def _clear_confirm_text(n):
@@ -884,6 +947,10 @@ class SpeedGraph(QWidget):
             v = 0.0
         self._samples.append(max(0.0, v))
         self.update()
+
+    def samples(self):
+        """最近的采样快照（只读）；托盘 tooltip 的迷你条复用同一份数据，不再拿一份历史。"""
+        return tuple(self._samples)
 
     def clear(self):
         self._samples.clear()
@@ -2487,6 +2554,7 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self):
         self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
+        self._overall_pct = None      # 总下载进度（无已知体积时为 None，tooltip 不显示这一段）
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(_tray_icon("idle", THEMES[getattr(self, "_theme", "dark")]))
         self._tray_icon_state = "idle"
@@ -2606,11 +2674,13 @@ class MainWindow(QMainWindow):
                 f"失败: {stats['failed']}  |  暂停: {stats['paused']}  |  总计: {stats['total']}"
             )
             self.setWindowTitle(_status_title(stats["active"], stats["total_speed"], stats["total"]))
-            self.tray.setToolTip(_tray_tip(stats["active"], stats["total_speed"],
-                                           stats["total"], stats.get("failed", 0),
-                                           self._finish_countdown_text_now()))
-            self._update_tray_icon(stats["active"], stats["failed"])
             self._update_overall(tasks)
+            self.tray.setToolTip(_tray_tip(
+                stats["active"], stats["total_speed"], stats["total"],
+                stats.get("failed", 0), self._finish_countdown_text_now(),
+                _sparkline(self.speed_graph.samples()),
+                getattr(self, "_overall_pct", None)))
+            self._update_tray_icon(stats["active"], stats["failed"])
             self._update_finish_countdown()
 
             if not tasks:
@@ -3110,23 +3180,16 @@ class MainWindow(QMainWindow):
             _btn.setText(f"{labels[_key]} {counts[_key]}")
 
     def _update_overall(self, tasks):
-        _dl = _tt = 0
-        for _t in tasks:
-            _total = getattr(_t, "total_size", 0) or 0
-            _done = getattr(_t, "downloaded", 0) or 0
-            if _total > 0:
-                _dl += _done
-                _tt += _total
-        if _tt > 0:
-            _pct = int(_dl * 100 / _tt)
-            self.overall_label.setText(f"总下载 {format_size(_dl)} / {format_size(_tt)} ({_pct}%)")
-        else:
-            _pct = 0
-            self.overall_label.setText("")
+        _dl, _tt, _pct = _overall_ratio(tasks)
+        self.overall_label.setText(
+            f"总下载 {format_size(_dl)} / {format_size(_tt)} ({_pct}%)"
+            if _tt > 0 else "")
         _bar = getattr(self, "overall_bar", None)
         if _bar is not None:
             _bar.setValue(_pct)
             _bar.setVisible(_tt > 0)
+        # 托盘 tooltip 的“总进度”读这里：和头部文字、进度条同一个数
+        self._overall_pct = _pct if _tt > 0 else None
 
     def _threads_default(self):
         """读取设置面板的默认线程数；配置是唯一事实来源，

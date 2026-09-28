@@ -777,6 +777,156 @@ def test_tray_tip_surfaces_failures_and_countdown():
     assert mw._tray_tip(0, 0, 5, countdown=None) == "SwiftDM - 下载管理器"
 
 
+def test_sparkline_is_empty_without_traffic():
+    """空闲时不带迷你条：空采样、全 0、负值、非数字都得到空串。"""
+    import main_window as mw
+
+    assert mw._sparkline([]) == ""
+    assert mw._sparkline(None) == ""
+    assert mw._sparkline([0, 0, 0]) == ""
+    assert mw._sparkline([0.0]) == ""
+    assert mw._sparkline([-5, 0, 0]) == ""
+    assert mw._sparkline(["x", 0, 0]) == ""
+
+
+def test_sparkline_keeps_only_the_recent_window():
+    """迷你条只反映最近 SPARK_WIDTH 个采样，不是整段历史。"""
+    import main_window as mw
+
+    assert mw._sparkline(list(range(1, 30))) == mw._sparkline(list(range(18, 30)))
+    assert len(mw._sparkline(range(40))) == mw.SPARK_WIDTH
+    assert len(mw._sparkline([1, 2, 3])) == 3
+
+
+def test_sparkline_scales_to_the_window_peak():
+    """归一化到窗口内最高采样：最小值见底、峰值封顶、取值不越界。"""
+    import main_window as mw
+
+    bottom, top = mw.SPARK_LEVELS[0], mw.SPARK_LEVELS[-1]
+    assert mw._sparkline([0, 100]) == bottom + top
+    assert mw._sparkline([7, 7, 7, 7]) == top * 4
+    assert mw._sparkline([0, 1, 2, 3, 4, 5, 6, 7]) == mw.SPARK_LEVELS
+    mid = mw._sparkline([50, 50, 100])
+    assert mid[0] == mid[1] and mid[2] == top and mid[0] not in (bottom, top), mid
+    for value in (0, 50, 99, 100):
+        assert mw._sparkline([value, 100])[0] in mw.SPARK_LEVELS
+
+
+def test_tray_tip_carries_the_sparkline_and_overall_pct():
+    """下载中时 tooltip 同时给出速度、迷你条、计数与总进度。"""
+    import main_window as mw
+
+    spark = mw._sparkline([0, 1024, 4096])
+    tip = mw._tray_tip(2, 1536, 8, spark=spark, overall_pct=63)
+    assert spark in tip
+    assert "↓1.5 KB/s" in tip
+    assert "下载中 2/8" in tip
+    assert "总进度 63%" in tip
+
+
+def test_tray_tip_stays_quiet_when_there_is_nothing_to_say():
+    """旧行为不能被改变：空闲、无迷你条、无进度时还是那一句话。"""
+    import main_window as mw
+
+    assert mw._tray_tip(0, 0, 5) == "SwiftDM - 下载管理器"
+    assert mw._tray_tip(0, 0, 5, countdown=None) == "SwiftDM - 下载管理器"
+    assert mw._tray_tip(3, 0, 8) == "SwiftDM · ↓0 B/s · 下载中 3/8"
+    assert "总进度" not in mw._tray_tip(0, 0, 3)
+
+
+def test_tray_tip_keeps_failure_and_countdown_visible_alongside():
+    """失败数与关机倒计时仍在，且依然排在最后。"""
+    import main_window as mw
+
+    tip = mw._tray_tip(2, 1536, 8, failed=1, countdown="12s 后关机",
+                       spark=mw._sparkline([1, 2, 3]), overall_pct=99)
+    assert "✗ 1 个失败" in tip
+    assert "总进度 99%" in tip
+    assert tip.endswith("· 12s 后关机")
+
+
+def test_tray_tip_stays_inside_the_windows_bubble_budget():
+    """Windows 托盘气泡只给 127 字符；超长时先吃掉迷你条。"""
+    import main_window as mw
+
+    long_spark = mw.SPARK_LEVELS * mw.SPARK_WIDTH
+    tip = mw._tray_tip(999, 999 * 1024 ** 3, 9999, failed=999,
+                         countdown="999s 后关机", spark=long_spark,
+                         overall_pct=100)
+    assert len(long_spark) > mw.SPARK_WIDTH, long_spark
+    assert long_spark not in tip, tip          # 超长时迷你条被舍弃
+    assert "999s 后关机" in tip          # 倒计时一定得留下
+    assert len(tip) <= mw.TRAY_TIP_MAX, (len(tip), tip)
+    # 正常长度时不会被吃掉
+    normal = mw._tray_tip(3, 4096, 8, spark=mw._sparkline([1, 2, 4]))
+    assert mw._sparkline([1, 2, 4]) in normal, normal
+
+
+def test_speed_graph_samples_expose_the_recent_window():
+    """曲线采样窗口对外开放，迷你条不再维护第二份历史。"""
+    import main_window as mw
+
+    graph = mw.SpeedGraph()
+    assert graph.samples() == ()
+    graph.push(100)
+    graph.push(200)
+    assert graph.samples() == (100.0, 200.0)
+    graph.clear()
+    assert graph.samples() == ()
+    for i in range(mw.SpeedGraph.SAMPLES_MAX + 5):
+        graph.push(i)
+    assert len(graph.samples()) == mw.SpeedGraph.SAMPLES_MAX
+
+
+def test_overall_ratio_matches_the_header_math():
+    """总下载/总体积/百分比只算一次，头部、进度条、托盘共用。"""
+    import main_window as mw
+    from types import SimpleNamespace
+
+    tasks = [SimpleNamespace(total_size=1000, downloaded=250),
+             SimpleNamespace(total_size=1000, downloaded=500),
+             SimpleNamespace(total_size=0, downloaded=999)]
+    assert mw._overall_ratio(tasks) == (750, 2000, 37)
+    assert mw._overall_ratio([]) == (0, 0, 0)
+    assert mw._overall_ratio([SimpleNamespace(total_size=0, downloaded=0)]) == (0, 0, 0)
+
+
+def test_main_window_feeds_the_tray_a_sparkline(qt_app, monkeypatch):
+    """真实主窗口跑一节拍：迷你条与总进度都来自同一轮刷新。"""
+    from types import SimpleNamespace
+    import downloader
+    import main_window as mw
+
+    class _Manager:
+        def get_all_tasks(self):
+            return [SimpleNamespace(total_size=1000, downloaded=250)]
+
+        def get_stats(self):
+            return {"total_speed": 4096.0, "active": 1, "completed": 0,
+                    "failed": 0, "paused": 0, "total": 1}
+
+    monkeypatch.setattr(downloader, "manager", _Manager())
+    was_quit = qt_app.quitOnLastWindowClosed()
+    qt_app.setQuitOnLastWindowClosed(False)
+    win = mw.MainWindow()
+    try:
+        win.speed_graph.push(0)
+        win.speed_graph.push(2048)
+        win.speed_graph.push(4096)
+        win._refresh()
+        tip = win.tray.toolTip()
+        assert mw.SPARK_LEVELS[-1] in tip, tip
+        assert "下载中 1/1" in tip, tip
+        assert "总进度 25%" in tip, tip
+        assert len(tip) <= mw.TRAY_TIP_MAX, tip
+    finally:
+        win.close()
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+        qt_app.setQuitOnLastWindowClosed(was_quit)
+
+
 def test_failed_card_shows_actionable_reason_hint(qt_app):
     import main_window as mw
     card = mw.TaskCard({"task_id": "t1", "filename": "x.mp4",
@@ -2599,6 +2749,8 @@ def test_main_window_feeds_the_speed_graph():
     assert "self.speed_graph = SpeedGraph()" in src
     assert "self.speed_graph.push(stats.get('total_speed', 0))" in src
     assert "graph.apply_theme(theme)" in src
+
+
 def test_overall_progress_bar_renders_the_share(qt_app):
     """总进度条：填满时组件区基本被 accent2 覆盖，0 时只剩渠道背景。"""
     import main_window as mw
