@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `f841a38`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 27 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `c0ee6b4`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 28 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -463,6 +463,24 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 清理：浏览器验证会往本机真实 `~/.swiftdm/history.json` 写入测试任务，本轮结束时已清理
      （10 条 local-test-file 测试任务，备份 `history.json.cleanup-bak`）。
    - 复现脚本：`_browsercheck/overall_bar_render.py`（gitignore），变异脚本 `_mut_op.py`。
+28. **托盘 tooltip 迷你速率条 + 总下载进度**（`c0ee6b4`）：上一轮把“整体下到哪儿了”变成了进度条，
+    但那是“窗口里看得到”的信息；窗口最小化后用户唯一能看的就是托盘 tooltip，
+    而它之前只报一个总速度数字。开源同类（IDM/Motrix/FDM）在系统托盘都给“形状”而不是单个数字：
+   - `_sparkline(samples, width=12)`：把最近采样压成一排 `▁▂▃▄▅▆▇█`，
+     复用 `SpeedGraph` 新露出的 `samples()`——就是画布那来的同一份数据，不再维护第二份历史。
+   - `_overall_ratio(tasks)`：把 `_update_overall` 里的遍历抽成纯函数并把百分比发布到 `self._overall_pct`，
+     头部文字、进度条与 tooltip 三处同源（改前 `_refresh` 里四个数都是各算各的）。
+   - 硬限制守卫：Windows 托盘气泡（`NOTIFYICONDATA.szInfo`）只给 **127 字符**，超长会从尾部静默截断——
+     而最后一段正是「关机/休眠倒计时」。`TRAY_TIP_MAX` 确保超长时先舍弃迷你条（装饰）、保住倒计时（安全）。
+   - 实测文案（`_tray_demo.py`，gitignore）：
+     `SwiftDM · ↓11.7 KB/s · ▁▁▁▂▃▅██▃▂▁▁ · 下载中 3/8 · 总进度 61% · ✗ 1 个失败`
+   - 注意：归一化到窗口峰值，因此它只说“形状”——一条平顶可能是跑满也可能是被限速卡住，
+     绝对速率看前面那个数字；空闲时迷你条为空串，不占宽度。
+   - 测试：新增 10 条（空采样/全 0/负值/非数字负值、窗口截取、归一化与越界保护、
+     新旧参数兼容、失败数与倒计时仍在并排尾、127 字符预算守卫、`samples()` 窗口、
+     `_overall_ratio` 口径、真实主窗口驱动 `_refresh` 时 tooltip 里出现迷你条和总进度）；变异测试 **9/9 全红**。
+   - 验证：`pytest` 412 passed / 1 skipped（上一轮 402）；15 个 node 套件全绿。
+   - 顺手修了上轮遗留的两处缺双空行（`tests/test_desktop_ui.py` 里新测试之间）。复现脚本：`_tray_demo.py`、`_browsercheck/mut_tray_spark.py`。
 ---
 
 ## 6. 关键文件速查
