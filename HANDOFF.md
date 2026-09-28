@@ -443,7 +443,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      变异测试：Web 7/7、桌面 5/5 全红，TDZ 复现变异同样被冒烟测试抓住。
    - 验证：`python -m pytest tests -q` 397 passed / 1 skipped；14 个 node 套件全绿；
      Playwright 实开 Flask 页面量过 canvas：空闲 140 个着色像素（仅底线），推入 40 个采样后 1846 个（折线+填充真的画出来了），
-     切主题后重绘正常、着色像素不丢；暗/浅两主题截图见 `_speedgraph_*.png`。
+     切主题后重绘正常、着色像素不丢；暗/浅两主题截图见 `_browsercheck/shots/_speedgraph_*.png`。
      复现脚本留在 `_browsercheck/speed_graph_render.py`（gitignore），两个变异脚本同目录。
 27. **总下载进度条（两端，把“整体下到哪儿了”从数字变成一条小条）**（`f841a38`）：上一轮加了速度曲线，
     本轮把同一套设计语言带给总进度——两端早就有“总下载 x/y (z%)”的文字（桌面 `_update_overall`、Web `renderTasks`），
@@ -462,7 +462,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      填充色量到 `rgb(0, 210, 160)`。
    - 清理：浏览器验证会往本机真实 `~/.swiftdm/history.json` 写入测试任务，本轮结束时已清理
      （10 条 local-test-file 测试任务，备份 `history.json.cleanup-bak`）。
-   - 复现脚本：`_browsercheck/overall_bar_render.py`（gitignore），变异脚本 `_mut_op.py`。
+   - 复现脚本：`_browsercheck/overall_bar_render.py`（gitignore），变异脚本 `_browsercheck/mut_op_overall_bar.py`。
 28. **托盘 tooltip 迷你速率条 + 总下载进度**（`c0ee6b4`）：上一轮把“整体下到哪儿了”变成了进度条，
     但那是“窗口里看得到”的信息；窗口最小化后用户唯一能看的就是托盘 tooltip，
     而它之前只报一个总速度数字。开源同类（IDM/Motrix/FDM）在系统托盘都给“形状”而不是单个数字：
@@ -472,7 +472,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      头部文字、进度条与 tooltip 三处同源（改前 `_refresh` 里四个数都是各算各的）。
    - 硬限制守卫：Windows 托盘气泡（`NOTIFYICONDATA.szInfo`）只给 **127 字符**，超长会从尾部静默截断——
      而最后一段正是「关机/休眠倒计时」。`TRAY_TIP_MAX` 确保超长时先舍弃迷你条（装饰）、保住倒计时（安全）。
-   - 实测文案（`_tray_demo.py`，gitignore）：
+   - 实测文案（`_browsercheck/tray_tip_demo.py`，gitignore）：
      `SwiftDM · ↓11.7 KB/s · ▁▁▁▂▃▅██▃▂▁▁ · 下载中 3/8 · 总进度 61% · ✗ 1 个失败`
    - 注意：归一化到窗口峰值，因此它只说“形状”——一条平顶可能是跑满也可能是被限速卡住，
      绝对速率看前面那个数字；空闲时迷你条为空串，不占宽度。
@@ -480,7 +480,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      新旧参数兼容、失败数与倒计时仍在并排尾、127 字符预算守卫、`samples()` 窗口、
      `_overall_ratio` 口径、真实主窗口驱动 `_refresh` 时 tooltip 里出现迷你条和总进度）；变异测试 **9/9 全红**。
    - 验证：`pytest` 412 passed / 1 skipped（上一轮 402）；15 个 node 套件全绿。
-   - 顺手修了上轮遗留的两处缺双空行（`tests/test_desktop_ui.py` 里新测试之间）。复现脚本：`_tray_demo.py`、`_browsercheck/mut_tray_spark.py`。
+   - 顺手修了上轮遗留的两处缺双空行（`tests/test_desktop_ui.py` 里新测试之间）。复现脚本：`_browsercheck/tray_tip_demo.py`、`_browsercheck/mut_tray_spark.py`。
 ---
 
 ## 6. 关键文件速查
@@ -558,4 +558,6 @@ python test_norange.py             # 服务器不支持 Range 时，暂停/续�
 
 ## 9. 临时文件清理提示
 
-根目录下的 `_build.err` / `_run.err` / `_run.out` / `_src.err` / `_src.out` 是调试日志（以 `_` 开头，多数已被 `.gitignore` 忽略）。交接后可手动删除，不影响构建。
+复现脚本和截图统一放在 `_browsercheck/`（整个目录已被 `.gitignore` 忽略），
+根目录下的 `_*.py` / `_*.txt` / `_*.bin` / `_*.out` / `_*.err` / `_*.png` / `_*.jpg` 是调试脚本与日志，同样忽略；
+交接后可随手删除，不影响构建。从 `_browsercheck/` 里跑脚本时脚本自带把仓库根目录插进 `sys.path` 的引导。

@@ -10,6 +10,10 @@ venv/
 _*.py
 _*.txt
 _*.bin
+_*.out
+_*.err
+_*.png
+_*.jpg
 _*/
 web.err
 web.log
