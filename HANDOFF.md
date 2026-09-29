@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `c0ee6b4`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 28 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `<HASH>`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 28 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -481,6 +481,20 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      `_overall_ratio` 口径、真实主窗口驱动 `_refresh` 时 tooltip 里出现迷你条和总进度）；变异测试 **9/9 全红**。
    - 验证：`pytest` 412 passed / 1 skipped（上一轮 402）；15 个 node 套件全绿。
    - 顺手修了上轮遗留的两处缺双空行（`tests/test_desktop_ui.py` 里新测试之间）。复现脚本：`_browsercheck/tray_tip_demo.py`、`_browsercheck/mut_tray_spark.py`。
+29. **托盘图标转进度环（图标自己就能看出下到哪儿了）**（`424d608`）：上一轮把速度和总进度放进了 tooltip，但那要悬停才看得见；
+    图标本身仍然只是一个颜色变化的方块。开源同类（IDM/Motrix/FDM）的托盘都能不用悬停就知道下到哪儿了：
+   - `_tray_icon(icon_state, tokens, progress=None)`：已知总体积时方块变进度环——`textMuted` 令牌做轨道，
+     状态色弧形从 12 点开始顺时针扫，弧长就是百分比，圆心还是那个向下箭头。
+   - 轨道色一定不能用半透明的前景色：暗色主题的 fg 本来就是深色，半透明后在深色任务栏上直接消失。
+     中间调的 `textMuted` 在深、浅两种任务栏都能看见（已对比过 4 种候选，截图在 `_browsercheck/shots/_track*.png`）。
+   - `progress=None`（任务还没有可盘体积）时照旧画方块，不会空画一个空环；
+     `_update_tray_icon` 的缓存键加上进度（否则下载时几百毫斯重绘一次对性能来说是浪费，不重绘则固死在空轨道上）。
+   - 测试：新增 6 组（离屏像素扫描验证 0/50/100 弧长单调与超界锁定、环不超出 32px 画布、
+     无进度时仍是方块、缓存键行为、切主题重绘携带进度、`_refresh` 挂点）；变异测试 **13/13 全红**。
+   - 验证：`pytest` 419 passed / 1 skipped；真实渲染对比后才定下轨道色（16px 与 128px、深/浅任务栏）。
+   - 踼较：扫描只看“状态色像素数”，故必须先确认原屏隙里它完整。
+   - 复现脚本：`_browsercheck/tray_ring_shot.py`、`_browsercheck/mut_tray_spark.py`；变异测试要能被**中断后再恢复**——
+     本轮第一次跑被机器负载拖死，导致 `main_window.py` 留在变异状态，必须按 `git diff` 逐行识别并补回。
 ---
 
 ## 6. 关键文件速查
