@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `7cd18d7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 29 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `e0dc20a`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 30 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -495,6 +495,16 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 注意：像素扫描只统计“状态色像素数”，所以必须先在渲染截图里确认那段状态色弧是完整画出来的。
    - 复现脚本：`_browsercheck/tray_ring_shot.py`、`_browsercheck/mut_tray_spark.py`；变异测试要能被**中断后再恢复**——
      本轮第一次跑被机器负载拖死，导致 `main_window.py` 留在变异状态，必须按 `git diff` 逐行识别并补回。
+30. **托盘 tooltip 的长度闸门前移到 setter（`e0dc20a`）**：第 28 轮把 `TRAY_TIP_MAX` 的守卫写在 `_tray_tip` 里，
+    那是「调用方自觉」——以后谁再往托盘写一次 tooltip，超出 127 字符就会被 Windows 静默截尾，
+    而被吃掉的往往正是末尾最该看见的关机倒计时与失败数：
+    - 新增 `_TrayIcon(QSystemTrayIcon)`，只覆写 `setToolTip`：`(text or "")[:TRAY_TIP_MAX]`；
+      `_setup_tray` 改用它，以后所有写入点（气泡、状态同步、新面板）自动落在闸门内。
+    - `_tray_tip` 里「先牺牲迷你条」的软裁剪保留——它比硬截尾聪明（倒计时不能丢），闸门只做最后兜底。
+    - 测试：新增 2 组（setter 夹取 / `None` 当空串 / 正常长度原样返回；`_setup_tray` 确实构造带闸门的类）；
+      变异测试 **2/2 全红**（去掉 clamp、换回裸 `QSystemTrayIcon` 各红一组）。
+    - 验证：`pytest` 421 passed / 1 skipped（本轮之前是 419）。
+
 ---
 
 ## 6. 关键文件速查
