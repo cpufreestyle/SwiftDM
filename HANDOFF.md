@@ -1,6 +1,6 @@
 # SwiftDM 交接文档（Handoff）
 
-> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-27。
+> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-29。
 > 项目根目录：`D:\ai share\repo\SwiftDM\`（唯一主副本）
 > （git 仓库，远程 `cpufreestyle/SwiftDM`，GitHub）
 > 交付物/构建产物位于 `dist/SwiftDM.exe`。
@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `<HASH>`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 28 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `7cd18d7`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 29 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -492,7 +492,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 测试：新增 6 组（离屏像素扫描验证 0/50/100 弧长单调与超界锁定、环不超出 32px 画布、
      无进度时仍是方块、缓存键行为、切主题重绘携带进度、`_refresh` 挂点）；变异测试 **13/13 全红**。
    - 验证：`pytest` 419 passed / 1 skipped；真实渲染对比后才定下轨道色（16px 与 128px、深/浅任务栏）。
-   - 踼较：扫描只看“状态色像素数”，故必须先确认原屏隙里它完整。
+   - 注意：像素扫描只统计“状态色像素数”，所以必须先在渲染截图里确认那段状态色弧是完整画出来的。
    - 复现脚本：`_browsercheck/tray_ring_shot.py`、`_browsercheck/mut_tray_spark.py`；变异测试要能被**中断后再恢复**——
      本轮第一次跑被机器负载拖死，导致 `main_window.py` 留在变异状态，必须按 `git diff` 逐行识别并补回。
 ---

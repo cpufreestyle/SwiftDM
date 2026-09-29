@@ -928,7 +928,7 @@ def test_main_window_feeds_the_tray_a_sparkline(qt_app, monkeypatch):
 
 
 def _tray_ring_ink(icon_state, theme, progress):
-    """回待图标里“状态色”的像素数少；进度环时它覆盖圆心色块 + 扫过的弧。"""
+    """统计图标里“状态色”的像素数；进度环时它覆盖圆心色块 + 扫过的弧。"""
     import main_window as mw
     from PyQt6.QtGui import QColor
 
