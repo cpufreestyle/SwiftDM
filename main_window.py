@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit,
     QCheckBox, QDateTimeEdit, QLayout
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QDateTime
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QRectF, QDateTime
 from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
                      QPainter, QBrush, QDrag, QShortcut, QKeySequence,
                      QPolygon, QPen)
@@ -230,10 +230,13 @@ def _tray_icon_state(active, failed):
     return "idle"
 
 
-def _tray_icon(icon_state, tokens=None):
+def _tray_icon(icon_state, tokens=None, progress=None):
     """按状态绘制托盘图标（圆角方块 + 向下箭头；attention 加白色角标）。
 
     tokens 传当前主题色板，缺省退回 dark。
+    progress 传 0~100 的总下载进度：已知总体积时改用「进度环」画法，
+    环上扫过的弧长就是进度——窗口最小化时不用 hover 也知道下到哪儿了。
+    传 None（任务还没有可统计的总体积）时退回方块画法，不会只画一个空环。
     """
     tokens = tokens or THEMES["dark"]
     bg = tokens[TRAY_ICON_BG_KEY.get(icon_state, "accent")]
@@ -242,15 +245,41 @@ def _tray_icon(icon_state, tokens=None):
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if progress is None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(bg)))
+        painter.drawRoundedRect(2, 4, 28, 24, 6, 6)
+        painter.setBrush(QBrush(QColor(fg)))
+        painter.drawRoundedRect(14, 8, 4, 12, 2, 2)      # 箭头杆
+        painter.drawPolygon(QPolygon([QPoint(11, 17), QPoint(21, 17), QPoint(16, 25)]))
+        if icon_state == "attention":
+            painter.setBrush(QBrush(QColor(TRAY_ICON_INK["light"])))
+            painter.drawEllipse(20, 18, 8, 8)           # 右下角提示点
+        painter.end()
+        return QIcon(pixmap)
+
+    # 进度环：轨道用未着色的文字逗号色令牌（中间调，深浅任务栏都能看见），
+    # 弧用状态色，从 12 点开始顺时针扫——和方块画法共用同一份色板
+    ring = QRectF(2.0, 2.0, 28.0, 28.0)
+    track_pen = QPen(QColor(tokens["textMuted"]))
+    track_pen.setWidth(3)
+    painter.setPen(track_pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(ring)
+    arc_pen = QPen(QColor(bg))
+    arc_pen.setWidth(3)
+    painter.setPen(arc_pen)
+    span = int(round(min(100.0, max(0.0, float(progress))) * 3.6)) * 16
+    painter.drawArc(ring, 90 * 16, -span)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QBrush(QColor(bg)))
-    painter.drawRoundedRect(2, 4, 28, 24, 6, 6)
+    painter.drawEllipse(QRectF(6.5, 6.5, 19.0, 19.0))    # 圆心色块
     painter.setBrush(QBrush(QColor(fg)))
-    painter.drawRoundedRect(14, 8, 4, 12, 2, 2)          # 箭头杆
-    painter.drawPolygon(QPolygon([QPoint(11, 17), QPoint(21, 17), QPoint(16, 25)]))
+    painter.drawRoundedRect(15, 10, 2, 8, 1, 1)          # 箭头杆
+    painter.drawPolygon(QPolygon([QPoint(12, 15), QPoint(20, 15), QPoint(16, 21)]))
     if icon_state == "attention":
         painter.setBrush(QBrush(QColor(TRAY_ICON_INK["light"])))
-        painter.drawEllipse(20, 18, 8, 8)               # 右下角提示点
+        painter.drawEllipse(QRectF(22.0, 2.0, 8.0, 8.0))  # 右上角提示点
     painter.end()
     return QIcon(pixmap)
 
@@ -2554,6 +2583,7 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self):
         self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
+        self._tray_icon_progress = None  # 缓存的当前进度（图标画法也取决于它）
         self._overall_pct = None      # 总下载进度（无已知体积时为 None，tooltip 不显示这一段）
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(_tray_icon("idle", THEMES[getattr(self, "_theme", "dark")]))
@@ -2580,18 +2610,24 @@ class MainWindow(QMainWindow):
         self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
 
-    def _update_tray_icon(self, active, failed):
-        """托盘图标随任务状态切换（下载中/空闲/有失败）；状态未变则跳过。"""
+    def _update_tray_icon(self, active, failed, progress=None):
+        """托盘图标随任务状态切换（下载中/空闲/有失败）；状态未变则跳过。
+
+        progress 给出时图标转成进度环，因此缓存键要把进度一并算进去；
+        否则一直停在空环上（下载中却看不出进度在走）。
+        """
         state = _tray_icon_state(active, failed)
-        if state == self._tray_icon_state:
+        if state == self._tray_icon_state and progress == self._tray_icon_progress:
             return
         self._tray_icon_state = state
-        self.tray.setIcon(_tray_icon(state, THEMES[getattr(self, "_theme", "dark")]))
+        self._tray_icon_progress = progress
+        self.tray.setIcon(_tray_icon(state, THEMES[getattr(self, "_theme", "dark")], progress))
 
     def _refresh_tray_icon(self):
         """主题切换后重画托盘图标：状态不变也要重绘，否则颜色不跟着变。"""
         self.tray.setIcon(_tray_icon(getattr(self, "_tray_icon_state", None) or "idle",
-                                     THEMES[getattr(self, "_theme", "dark")]))
+                                     THEMES[getattr(self, "_theme", "dark")],
+                                     getattr(self, "_tray_icon_progress", None)))
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -2680,7 +2716,8 @@ class MainWindow(QMainWindow):
                 stats.get("failed", 0), self._finish_countdown_text_now(),
                 _sparkline(self.speed_graph.samples()),
                 getattr(self, "_overall_pct", None)))
-            self._update_tray_icon(stats["active"], stats["failed"])
+            self._update_tray_icon(stats["active"], stats["failed"],
+                                   getattr(self, "_overall_pct", None))
             self._update_finish_countdown()
 
             if not tasks:

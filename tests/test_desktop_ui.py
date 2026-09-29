@@ -927,6 +927,123 @@ def test_main_window_feeds_the_tray_a_sparkline(qt_app, monkeypatch):
         qt_app.setQuitOnLastWindowClosed(was_quit)
 
 
+def _tray_ring_ink(icon_state, theme, progress):
+    """回待图标里“状态色”的像素数少；进度环时它覆盖圆心色块 + 扫过的弧。"""
+    import main_window as mw
+    from PyQt6.QtGui import QColor
+
+    img = mw._tray_icon(icon_state, mw.THEMES[theme], progress).pixmap(32, 32).toImage()
+    want = QColor(mw.THEMES[theme][mw.TRAY_ICON_BG_KEY[icon_state]]).name()
+    return sum(1 for y in range(img.height()) for x in range(img.width())
+               if QColor(img.pixel(x, y)).name() == want)
+
+
+def test_tray_icon_ring_sweeps_with_progress():
+    """进度环的弧长随进度单调增长，且 0 与 100 能分开」。"""
+    zero, half, full = (_tray_ring_ink('downloading', 'dark', p)
+                        for p in (0, 50, 100))
+    assert zero < half < full, (zero, half, full)
+    assert full > zero * 1.5, (zero, half, full)
+
+
+def test_tray_icon_ring_clamps_out_of_range_progress():
+    """进度超出 0~100 时锁到端点，不能因为脏值画出一个错环。"""
+    import main_window as mw
+
+    assert _tray_ring_ink('downloading', 'dark', -50) == _tray_ring_ink('downloading', 'dark', 0)
+    assert _tray_ring_ink('downloading', 'dark', 150) == _tray_ring_ink('downloading', 'dark', 100)
+    for bad in (-1, 0, 50, 100, 1000):
+        assert not mw._tray_icon('downloading', mw.THEMES['dark'], bad).isNull()
+
+
+def test_tray_icon_ring_stays_inside_the_canvas():
+    """进度环不能画出 32px 画布，否则 Windows 会扺去一圈（看起来就像没画完）。"""
+    import main_window as mw
+
+    for theme in ('dark', 'light'):
+        for state in mw.TRAY_ICON_STATES:
+            for pct in (0, 50, 100):
+                img = mw._tray_icon(state, mw.THEMES[theme], pct).pixmap(32, 32).toImage()
+                extent = _opaque_extent(img)
+                assert extent[0] >= 0 and extent[1] >= 0, (theme, state, pct, extent)
+                assert extent[2] <= 31 and extent[3] <= 31, (theme, state, pct, extent)
+                assert extent[2] - extent[0] >= 24, (theme, state, pct, extent)
+
+
+def test_tray_icon_without_progress_keeps_the_badge():
+    """体积未知（progress=None）时仍然画方块，不空画一个空环。"""
+    import main_window as mw
+
+    img = mw._tray_icon('idle', mw.THEMES['dark']).pixmap(32, 32).toImage()
+    assert _opaque_extent(img) == BADGE_BOUNDS
+    assert _tray_ring_ink('idle', 'dark', None) > _tray_ring_ink('idle', 'dark', 0)
+
+
+def test_update_tray_icon_repaints_when_only_progress_changes():
+    """状态没变但进度在走时必须重绘，否则环一直停在空轨道上。"""
+    import main_window as mw
+
+    class _Tray:
+        def __init__(self):
+            self.icons = []
+
+        def setIcon(self, icon):
+            self.icons.append(icon)
+
+    class _Host:
+        _update_tray_icon = mw.MainWindow._update_tray_icon
+
+        def __init__(self):
+            self._tray_icon_state = "downloading"
+            self._tray_icon_progress = None
+            self._theme = "dark"
+            self.tray = _Tray()
+
+    host = _Host()
+    host._update_tray_icon(1, 0, None)      # 状态与进度都没动，跳过
+    assert len(host.tray.icons) == 0
+    host._update_tray_icon(1, 0, 10)       # 同一状态，进度动了
+    assert len(host.tray.icons) == 1
+    host._update_tray_icon(1, 0, 20)
+    assert len(host.tray.icons) == 2
+    host._update_tray_icon(1, 0, 20)       # 进度也没动，还是跳过
+    assert len(host.tray.icons) == 2
+    assert host._tray_icon_progress == 20
+
+
+def test_refresh_tray_icon_repaints_with_the_current_progress():
+    """切主题重画时进度不能丢（否则切为浅色主题后环就空了）。"""
+    import main_window as mw
+
+    class _Tray:
+        def __init__(self):
+            self.icons = []
+
+        def setIcon(self, icon):
+            self.icons.append(icon)
+
+    class _Host:
+        _refresh_tray_icon = mw.MainWindow._refresh_tray_icon
+
+        def __init__(self):
+            self._tray_icon_state = "downloading"
+            self._tray_icon_progress = 40
+            self._theme = "dark"
+            self.tray = _Tray()
+
+    host = _Host()
+    host._refresh_tray_icon()
+    assert len(host.tray.icons) == 1
+    assert not host.tray.icons[0].isNull()
+
+
+def test_refresh_feeds_the_tray_icon_the_overall_pct():
+    """_刷新节拍要把已算好的总进度交给图标，不能让两者各算各的。"""
+    src = io.open('main_window.py', encoding='utf-8').read()
+    assert '_update_tray_icon(stats["active"], stats["failed"],' in src
+    assert 'getattr(self, "_overall_pct", None)))' in src
+
+
 def test_failed_card_shows_actionable_reason_hint(qt_app):
     import main_window as mw
     card = mw.TaskCard({"task_id": "t1", "filename": "x.mp4",
