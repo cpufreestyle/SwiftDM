@@ -862,6 +862,26 @@ def test_tray_tip_stays_inside_the_windows_bubble_budget():
     assert mw._sparkline([1, 2, 4]) in normal, normal
 
 
+def test_tray_icon_clamps_the_tooltip_at_the_setter(qt_app):
+    """长度闸门留在 setter 上：不管谁往里写 tooltip，都不会超出气泡预算。"""
+    import main_window as mw
+
+    tray = mw._TrayIcon()
+    tray.setToolTip("x" * (mw.TRAY_TIP_MAX * 3))
+    assert len(tray.toolTip()) == mw.TRAY_TIP_MAX
+    tray.setToolTip(None)
+    assert tray.toolTip() == ""
+    tip = mw._tray_tip(3, 4096, 8, spark=mw._sparkline([1, 2, 4]))
+    tray.setToolTip(tip)
+    assert tray.toolTip() == tip
+
+
+def test_setup_tray_builds_the_clamped_icon():
+    """托盘本体得用带闸门的那个类，否则上限只靠调用方自觉。"""
+    src = io.open("main_window.py", encoding="utf-8").read()
+    assert "self.tray = _TrayIcon(self)" in src
+
+
 def test_speed_graph_samples_expose_the_recent_window():
     """曲线采样窗口对外开放，迷你条不再维护第二份历史。"""
     import main_window as mw

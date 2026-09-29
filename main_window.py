@@ -284,6 +284,20 @@ def _tray_icon(icon_state, tokens=None, progress=None):
     return QIcon(pixmap)
 
 
+class _TrayIcon(QSystemTrayIcon):
+    """托盘图标：tooltip 的统一长度闸门。
+
+    Windows 托盘气泡（NOTIFYICONDATA.szInfo）只容纳 127 字符，超长会被静默截尾，
+    而被吃掉的往往正是末尾最该看见的信息（关机倒计时、失败数）。`_tray_tip` 已经
+    会主动牺牲迷你条来腾长度，但那是「调用方自觉」；只要以后有人再往托盘写一次
+    tooltip，这个口子就重新开了。闸门放在 setter 这一层，新写入点便无需各自惦记。
+    """
+
+    def setToolTip(self, text):
+        # 超长直接截尾，保住 NOTIFYICONDATA 的字符上限
+        super().setToolTip((text or "")[:TRAY_TIP_MAX])
+
+
 def _tray_bubble(owner, title, text, icon, msecs, kind="info"):
     """弹托盘气泡并记录类型。完成/失败/捕获等提示点了不该有副作用，
     只有「剪贴板链接待确认」气泡被点击后才添加下载。
@@ -2585,7 +2599,7 @@ class MainWindow(QMainWindow):
         self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
         self._tray_icon_progress = None  # 缓存的当前进度（图标画法也取决于它）
         self._overall_pct = None      # 总下载进度（无已知体积时为 None，tooltip 不显示这一段）
-        self.tray = QSystemTrayIcon(self)
+        self.tray = _TrayIcon(self)
         self.tray.setIcon(_tray_icon("idle", THEMES[getattr(self, "_theme", "dark")]))
         self._tray_icon_state = "idle"
         self.tray.setToolTip("SwiftDM - 下载管理器")
