@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `c040493`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 34 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `695d0c4`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 35 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -566,6 +566,20 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 顺带核对（**上一轮交接里的说法已过期**）：`finish_action` / `rate_limit` 其实早已落盘，
      分别在 `6a0fef4`（限速持久化）/ `c3dae07`（定时），`main.py` 启动时恢复；第 7 节旧描述作废。
 
+35. **BT 任务接上全局限速（`695d0c4`）**：设置里的「限速」此前对 BT 完全无效——`torrent.py::_apply_session_settings`
+    没有 `download_rate_limit`，HTTP / 流媒体都走 `throttle` 令牌桶，只有 BT 在裸奔。
+   - `throttle.py` 加观察者（单一收口）：`add_rate_listener(fn)` 注册即回放当前值——libtorrent 的 session 是懒
+     创建的，「先改限速、后建 session」的顺序也不能漏；`set_rate` 在锁外逐个通知，单个下游失败只记日志，
+     限速本身不因此失效。
+   - `torrent.py`：`_session_rate_limit()` 归一化（0 / 负数 / 非数字 → 0 = 不限速）；建 session 时把
+     `throttle.get_rate()` 写进 settings，之后每次 `set_rate` 都对共享 session `apply_settings` 下发。
+   - **只限下载、不动上传**：上传做种是 PT 合规的一部分，不能被限速设置打乱。
+   - 已知取舍：BT 用 libtorrent 自己的限速，与 HTTP 的令牌桶不共额度——两者同时跑时总速率最高 2×设定值；
+     真正的跨引擎总预算要按实时占用动态折算，代价是 BT 限速抖动，暂不做。
+   - 测试：`tests/test_throttle.py` 2 个（注册即回放 + 变更通知、下游同步失败不影响 `set_rate`）；
+     `tests/test_torrent_rate_limit.py` 4 个（建 session 读当前值、脏值归一化、热改下发、真 session 端到端）。
+     实机验证 1MB → 512KB → 不限速 三态都落到 session 上；全套 `pytest` 458 passed / 1 skipped（本轮之前 452）。
+
 ---
 
 ## 6. 关键文件速查
@@ -580,7 +594,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 | `torrent.py` | libtorrent 封装（BT/PT）；`retry()` 锁内完成「重置 + 启动」，`start()` guard 收回锁内，`_tick()` 整段持 `_lock` 刷新 |
 | `media_service.py` | 嗅探缓存 `MediaRegistry`（60s TTL，按 tab 聚合媒体项） |
 | `media.py` | `MediaTask`：HLS/DASH/站点解析下载编排 + yt-dlp/ffmpeg 依赖探测；与 `DownloadTask` 同构的 `_xlock` 转换锁 + `_drain_worker`（worker 先 start 再发布） |
-| `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高）；`MediaTask` 进度钩子按累计增量 `consume` |
+| `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高）；`MediaTask` 进度钩子按累计增量 `consume`；`add_rate_listener` 把限速变化同步给 BT |
 | `scheduler.py` | 定时到点自启 + 完成动作（none/shutdown/suspend/beep）+ 可撤销倒计时 |
 | `extension/content.js` | DOM 侧嗅探（MSE/blob、video 元素），`runtime.sendMessage` 上报 |
 | `extension/sniff.js` | content/background 共用的嗅探规则 + Cookie→Netscape |
@@ -635,7 +649,7 @@ python test_norange.py             # 服务器不支持 Range 时，暂停/续�
 ## 8. 给下一个 agent 的建议 / 待办
 
 - **流媒体方向已闭环**（见第 7 节）：嗅探 + HLS/DASH/网页视频下载 + 限速/定时/完成动作均已实现并验收；spec 与实施计划在 `docs/superpowers/`。
-- **BT 任务仍未接全局限速**（待确认，本轮只记录未动手）：`torrent.py::_apply_session_settings` 没有 `download_rate_limit`，设置里的限速对 BT 完全无效。接法是在 `throttle.set_rate()` 变化时对共享 session `apply_settings({"download_rate_limit": rate})`，保留「0 = 不限速」的语义。
+- **BT 与 HTTP 同时跑时限速不共额度**（`695d0c4` 之后的已知取舍）：BT 用 libtorrent 自己的 `download_rate_limit`，HTTP / 流媒体走 `throttle` 令牌桶，两者相加最高到 2×设定值。要做真正的总预算，得按 HTTP 侧实时占用动态折算 BT 的限速（会引入抖动，且 BT 限速不宜频繁改）。
 - 浏览器接管功能需要**真实 Chrome + 手动加载扩展**才能端到端验证（自动化测试覆盖不到扩展侧）。
 - 若用户要继续迭代：常见方向——扩展打包成 CRX 免手动加载、GUI 增加「浏览器捕获」实时面板、接管时支持更多浏览器（目前仅 Chrome MV3）。
 - 保持 `test_norange.py` 绿（暂停/继续完整性），改 `downloader.py` 后务必 `build_exe.py` 再测。
