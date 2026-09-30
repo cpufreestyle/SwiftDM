@@ -21,10 +21,11 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QSplitter, QHeaderView, QDockWidget, QPlainTextEdit,
     QCheckBox, QDateTimeEdit, QLayout
 )
-from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QRectF, QDateTime
+from PyQt6.QtCore import Qt, QTimer, QSize, QSettings, pyqtSignal, QThread, QMimeData, QUrl, QPoint, QRect, QRectF, QDateTime
 from PyQt6.QtGui import (QAction, QIcon, QFont, QColor, QPalette, QPixmap,
                      QPainter, QBrush, QDrag, QShortcut, QKeySequence,
-                     QPolygon, QPen)
+                     QPolygon, QPen, QPainterPath,
+                     QLinearGradient, QRadialGradient)
 from log_helper import setup_logging, QtLogHandler
 
 
@@ -693,6 +694,18 @@ THEMES = {
         "redSoft": "#3a1720",
         "redText": "#ffb3c0",
         "blue": "#4da6ff",
+        # ---- Liquid Glass 材质（macOS 27 风格）：半透明填充 + 受光顶边 + 发丝描边 ----
+        "bgTop": "#191922",
+        "bgBottom": "#0a0a0f",
+        "glow": "rgba(108, 92, 231, 0.16)",
+        "glass": "rgba(255, 255, 255, 0.055)",
+        "glassHover": "rgba(255, 255, 255, 0.09)",
+        "glassStrong": "rgba(21, 21, 31, 0.86)",
+        "field": "rgba(255, 255, 255, 0.05)",
+        "rim": "rgba(255, 255, 255, 0.13)",
+        "rimStrong": "rgba(255, 255, 255, 0.30)",
+        "shade": "rgba(0, 0, 0, 0.28)",
+        "vibrancy": "rgba(108, 92, 231, 0.20)",
     },
     "light": {
         "bg": "#f4f5fa",
@@ -726,6 +739,18 @@ THEMES = {
         "redSoft": "#fbe4e8",
         "redText": "#c22947",
         "blue": "#2b7fd4",
+        # ---- Liquid Glass 材质（macOS 27 风格）：半透明填充 + 受光顶边 + 发丝描边 ----
+        "bgTop": "#ffffff",
+        "bgBottom": "#e8ebf3",
+        "glow": "rgba(108, 92, 231, 0.10)",
+        "glass": "rgba(255, 255, 255, 0.66)",
+        "glassHover": "rgba(255, 255, 255, 0.86)",
+        "glassStrong": "rgba(255, 255, 255, 0.80)",
+        "field": "rgba(255, 255, 255, 0.90)",
+        "rim": "rgba(22, 24, 44, 0.12)",
+        "rimStrong": "rgba(255, 255, 255, 0.95)",
+        "shade": "rgba(22, 24, 44, 0.08)",
+        "vibrancy": "rgba(108, 92, 231, 0.14)",
     },
 }
 
@@ -738,45 +763,64 @@ QWidget {
     font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 13px;
 }
+
+/* ===== Liquid Glass：悬浮横带 =====
+   工具栏 / 头部 / 多选条 / 状态栏是同一种材质：半透明填充（glassStrong）
+   透出背板渐变，上下各留一根发丝描边（rim）分界，不再用整块实色带子。
+   背板渐变本身由 MainWindow.paintEvent 与 _GlassBackdrop 画 —— QSS 的
+   background-image 渐变在 Qt 里不生效，只能交给 QPainter。 */
 QToolBar {
-    background-color: $toolbar;
-    border-bottom: 1px solid $border;
-    padding: 6px 10px;
+    background-color: $glassStrong;
+    border: none;
+    border-bottom: 1px solid $rim;
+    padding: 8px 12px;
     spacing: 8px;
 }
+QToolBar::separator {
+    width: 1px;
+    background: $rim;
+    margin: 5px 8px;
+}
 QToolBar QPushButton {
-    background-color: $surface2;
-    border: 1px solid $border;
-    border-radius: 6px;
+    background-color: $glass;
+    border: 1px solid $rim;
+    border-radius: 10px;
     padding: 7px 16px;
     color: $text;
     font-weight: 600;
     font-size: 12px;
 }
 QToolBar QPushButton:hover {
-    background-color: $hover;
-    border-color: $accent;
+    background-color: $glassHover;
+    border-color: $rimStrong;
+}
+QToolBar QPushButton:pressed {
+    background-color: $surface3;
 }
 QToolBar QPushButton#btnAdd {
     background-color: $accent;
     color: $onAccent;
     border: none;
+    border-radius: 10px;
 }
 QToolBar QPushButton#btnAdd:hover {
     background-color: $accentHover;
 }
 QToolBar QPushButton#btnFinishCountdown {
-    background-color: $orangeSoft;
+    background-color: $glass;
     color: $orange;
     border: 1px solid $orange;
+    border-radius: 10px;
 }
 QToolBar QPushButton#btnFinishCountdown:hover {
-    background-color: $orangeHover;
+    background-color: $orangeSoft;
 }
+
+/* 输入框是玻璃凹槽（field）：同色系但比玻璃条更低一档，圆角与按钮同规格 */
 QLineEdit {
-    background-color: $input;
-    border: 1px solid $border;
-    border-radius: 6px;
+    background-color: $field;
+    border: 1px solid $rim;
+    border-radius: 10px;
     padding: 8px 14px;
     color: $text;
     font-size: 13px;
@@ -785,18 +829,20 @@ QLineEdit {
 QLineEdit:focus {
     border-color: $accent;
 }
+
+/* 滚动条走浮层式：轨道透明只留一枚胶囊滑块，不把背板切断 */
 QScrollArea {
     border: none;
     background-color: transparent;
 }
 QScrollBar:vertical {
-    background: $scroll;
-    width: 8px;
-    border-radius: 4px;
+    background: transparent;
+    width: 10px;
+    border-radius: 5px;
 }
 QScrollBar::handle:vertical {
     background: $scrollHandle;
-    border-radius: 4px;
+    border-radius: 5px;
     min-height: 40px;
 }
 QScrollBar::handle:vertical:hover {
@@ -805,49 +851,57 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
 }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
 QStatusBar {
-    background-color: $toolbar;
-    border-top: 1px solid $border;
+    background-color: $glassStrong;
+    border: none;
+    border-top: 1px solid $rim;
     color: $textMuted;
     font-size: 12px;
 }
+
+/* 进度条：细条 + 全圆角，跟胶囊语言一致 */
 QProgressBar {
-    background-color: $input;
+    background-color: $field;
     border: none;
-    border-radius: 3px;
-    height: 6px;
+    border-radius: 4px;
+    height: 7px;
     text-align: center;
     font-size: 0px;
 }
 QProgressBar::chunk {
     background-color: $accent;
-    border-radius: 3px;
+    border-radius: 4px;
 }
 QProgressBar#overallBar {
-    background-color: $surface2;
-    border: 1px solid $border;
-    border-radius: 3px;
-    height: 6px;
+    background-color: $field;
+    border: 1px solid $rim;
+    border-radius: 4px;
+    height: 7px;
 }
 QProgressBar#overallBar::chunk {
     background-color: $accent2;
-    border-radius: 3px;
+    border-radius: 4px;
 }
+
+/* 菜单与提示是原生顶层窗口，必须不透明：半透明会把桌面壁纸透进来 */
 QMenu {
     background-color: $surface;
-    border: 1px solid $border;
-    border-radius: 6px;
-    padding: 4px;
+    border: 1px solid $rim;
+    border-radius: 12px;
+    padding: 5px;
 }
 QMenu::item {
-    padding: 8px 30px;
-    border-radius: 4px;
+    padding: 8px 26px;
+    border-radius: 8px;
     color: $text;
 }
 QMenu::item:selected {
     background-color: $hover;
 }
-QMenu::separator { height:1px; background:$border; margin:4px 10px; }
+QMenu::separator { height:1px; background:$border; margin:5px 10px; }
 QLabel#titleLabel {
     font-size: 16px;
     font-weight: 700;
@@ -879,20 +933,23 @@ QLabel#monitorLabel {
 QLabel#monitorLabel[on="true"] { color: $green; }
 QLabel#monitorLabel[on="false"] { color: $red; }
 QWidget#appHeader {
-    background-color: $toolbar;
-    border-bottom: 1px solid $border;
+    background-color: $glassStrong;
+    border: none;
+    border-bottom: 1px solid $rim;
 }
 QWidget#appCentral {
-    background-color: $bg;
+    background-color: transparent;
 }
 QDialog {
     background-color: $surface;
+    border: 1px solid $rim;
+    border-radius: 12px;
 }
 QSpinBox, QComboBox, QDateTimeEdit {
-    background-color: $surface2;
-    border: 1px solid $border;
-    border-radius: 4px;
-    padding: 5px 8px;
+    background-color: $field;
+    border: 1px solid $rim;
+    border-radius: 8px;
+    padding: 5px 10px;
     color: $text;
 }
 QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
@@ -900,24 +957,33 @@ QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
 }
 QComboBox QAbstractItemView {
     background-color: $surface;
-    border: 1px solid $border;
+    border: 1px solid $rim;
+    border-radius: 10px;
+    padding: 4px;
     selection-background-color: $hover;
     color: $text;
 }
 QHeaderView::section {
-    background-color: $toolbar;
+    background-color: $glassStrong;
     border: none;
-    border-bottom: 1px solid $border;
+    border-bottom: 1px solid $rim;
     padding: 6px;
     color: $textMuted;
     font-weight: 600;
 }
+
+/* 筛选芯片： pill 造型，选中时整颗填强调色 */
 QPushButton#filterBtn {
-    background:$input; border:1px solid $border; border-radius:13px;
-    padding:4px 14px; color:$textMuted; font-size:12px; font-weight:600;
+    background: $glass;
+    border: 1px solid $rim;
+    border-radius: 14px;
+    padding: 4px 14px;
+    color: $textMuted;
+    font-size: 12px;
+    font-weight: 600;
 }
-QPushButton#filterBtn:hover { color:$text; border-color:$borderHover; }
-QPushButton#filterBtn:checked { background:$accent; border-color:$accent; color:$onAccent; }
+QPushButton#filterBtn:hover { color: $text; border-color: $rimStrong; background: $glassHover; }
+QPushButton#filterBtn:checked { background: $accent; border-color: $accent; color: $onAccent; }
 
 /* 键盘导航提示：与 Web 端 .kbd-hint 同文案、同色阶（textMuted 与 Web 端 --text2 同值）。
    ↑↓/Enter 的快捷键早就接好了（见 _setup_shortcuts），但桌面端此前没有任何地方提到它，
@@ -926,27 +992,28 @@ QLabel#kbdHint { font-size: 11px; color: $textMuted; }
 
 /* ===== 多选批量操作（与 Web 端 .select-bar 对齐） ===== */
 QWidget#selectBar {
-    background-color: $surface;
-    border-top: 1px solid $border;
+    background-color: $glassStrong;
+    border: none;
+    border-top: 1px solid $rim;
 }
 QLabel#selectCount { font-size: 12px; color: $textMuted; }
 QPushButton#selBtn {
-    background-color: $surface2;
-    border: 1px solid $border;
-    border-radius: 6px;
-    padding: 4px 12px;
+    background-color: $glass;
+    border: 1px solid $rim;
+    border-radius: 10px;
+    padding: 4px 14px;
     color: $text;
     font-size: 12px;
     font-weight: 600;
 }
-QPushButton#selBtn:hover { background-color: $hover; border-color: $borderHover; }
+QPushButton#selBtn:hover { background-color: $glassHover; border-color: $rimStrong; }
 QPushButton#selBtn:disabled { color: $faint; border-color: $border; }
-QPushButton#selBtn:focus { border: 1px solid $accent; background-color: $hover; }
+QPushButton#selBtn:focus { border: 1px solid $accent; background-color: $glassHover; }
 QPushButton#selBtnDanger {
-    background-color: $surface2;
+    background-color: $glass;
     border: 1px solid $red;
-    border-radius: 6px;
-    padding: 4px 12px;
+    border-radius: 10px;
+    padding: 4px 14px;
     color: $red;
     font-size: 12px;
     font-weight: 600;
@@ -960,7 +1027,7 @@ QPushButton#selBtnDanger:focus { border: 1px solid $red; background-color: $redS
    这里补一条与 Web 端 :focus-visible 同语义的强调色描边；仅键盘聚焦时显形，鼠标点击不出现。 */
 QToolBar QPushButton:focus {
     border: 1px solid $accent;
-    background-color: $hover;
+    background-color: $glassHover;
 }
 QToolBar QPushButton#btnAdd:focus {
     border: 1px solid $onAccent;
@@ -972,7 +1039,7 @@ QToolBar QPushButton#btnFinishCountdown:focus {
 }
 QPushButton#filterBtn:focus {
     border: 1px solid $accent;
-    background-color: $hover;
+    background-color: $glassHover;
 }
 /* 已选中的芯片底色就是强调色，描边改用正文色才看得见 */
 QPushButton#filterBtn:checked:focus {
@@ -982,8 +1049,9 @@ QPushButton#filterBtn:checked:focus {
 QToolTip {
     background-color: $surface2;
     color: $text;
-    border: 1px solid $border;
-    padding: 4px;
+    border: 1px solid $rim;
+    border-radius: 8px;
+    padding: 5px 8px;
 }
 """)
 
@@ -991,6 +1059,62 @@ QToolTip {
 def _qss_for(theme):
     """按主题渲染全局样式表；未知主题名回退暗色。"""
     return QSS_TEMPLATE.substitute(THEMES.get(theme, THEMES["dark"]))
+
+
+_RGBA_RE = re.compile(
+    r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+)\s*)?\)")
+
+
+def _qcolor(value, alpha=None):
+    """把令牌色（#rrggbb 或 rgba(r,g,b,a)）解析成 QColor；alpha 给出时覆盖透明度。"""
+    if isinstance(value, QColor):
+        color = QColor(value)
+    else:
+        text = str(value).strip()
+        m = _RGBA_RE.match(text)
+        if m:
+            r, g, b = (int(m.group(i)) for i in (1, 2, 3))
+            a = float(m.group(4)) if m.group(4) is not None else 1.0
+            color = QColor(r, g, b, int(round(a * 255)))
+        else:
+            color = QColor(text)
+    if alpha is not None:
+        color.setAlphaF(max(0.0, min(1.0, float(alpha))))
+    return color
+
+
+def _rgba(value, alpha):
+    """把令牌色改写成 rgba(r, g, b, a) 字符串，alpha 覆盖原透明度（0~1）。
+
+    本 Qt 把 8 位十六进制按 #AARRGGBB 解释（与 CSS 的 #RRGGBBAA 相反），
+    "{color}22" 这类拼接会渲成完全不同的颜色，所以半透明一律走函数式 rgba()。
+    """
+    c = _qcolor(value, alpha)
+    a = ("%.2f" % c.alphaF()).rstrip("0").rstrip(".")
+    return "rgba(%d, %d, %d, %s)" % (c.red(), c.green(), c.blue(), a)
+
+
+def _paint_glass_backdrop(p, rect, theme):
+    """Liquid Glass 背板：纵向渐变 + 一团主题色辉光。
+
+    QSS 的 background-image 渐变在 Qt 上不可靠，背板只能用 QPainter 画。
+    rect 统一取顶层窗口坐标：中央区与主窗口底画的是同一条渐变，
+    半透明的工具栏/状态栏透出来才不会出现接缝。
+    """
+    t = THEMES.get(theme, THEMES["dark"])
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+    grad.setColorAt(0.0, _qcolor(t["bgTop"]))
+    grad.setColorAt(0.55, _qcolor(t["bg"]))
+    grad.setColorAt(1.0, _qcolor(t["bgBottom"]))
+    p.fillRect(rect, grad)
+    radius = max(rect.width(), rect.height()) * 0.62
+    glow = QRadialGradient(rect.center().x(), rect.top() + radius * 0.5, radius)
+    glow.setColorAt(0.0, _qcolor(t["glow"]))
+    glow.setColorAt(1.0, _qcolor(t["glow"], 0.0))
+    p.fillRect(rect, glow)
 
 
 def _status_colors(tokens):
@@ -1003,6 +1127,33 @@ def _status_colors(tokens):
         "pending": tokens["textMuted"],
         "cancelled": tokens["textMuted"],
     }
+
+
+class _GlassBackdrop(QWidget):
+    """中央区背板：Liquid Glass 的底板（渐变 + 辉光都在这里画）。
+
+    工具栏/头部/筛选栏/状态栏都是半透明玻璃，透出的就是这一层；
+    任务卡片不透明，直接坐在背板上。渐变按顶层窗口坐标绘制，
+    与 MainWindow.paintEvent 画的是同一条，玻璃条边缘不会露接缝。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 页面底色只铺中央区，标签/按钮盒保持透明（QSS 里也是 transparent）
+        self.setObjectName("appCentral")
+        self._theme = "dark"
+
+    def apply_theme(self, theme):
+        if theme in THEMES:
+            self._theme = theme
+            self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        win = self.window()
+        origin = self.mapTo(win, QPoint(0, 0))
+        p.translate(-origin)
+        _paint_glass_backdrop(p, QRect(0, 0, win.width(), win.height()), self._theme)
 
 
 class SpeedGraph(QWidget):
@@ -1074,8 +1225,10 @@ class SpeedGraph(QWidget):
         pts = self._points()
         if not pts:
             return
-        fill = QColor(t["accent2"])
-        fill.setAlpha(56)  # ≈ 0.22 透明度，与 Web 端填充同一感觉
+        # 面积填充改为纵向渐变：顶部浓、底缘透明，透出底下的背板
+        fill = QLinearGradient(0, 0, 0, h)
+        fill.setColorAt(0.0, _qcolor(t["accent2"], 0.42))
+        fill.setColorAt(1.0, _qcolor(t["accent2"], 0.0))
         poly = QPolygon([QPoint(0, h)] +
                         [QPoint(int(round(x)), int(round(y))) for x, y in pts] +
                         [QPoint(w, h)])
@@ -1129,7 +1282,8 @@ class TaskCard(QFrame):
             TaskCard {{
                 background-color: {t['surface']};
                 border: 1px solid {t['border']};
-                border-radius: 8px;
+                border-top: 1px solid {t['rim']};
+                border-radius: 14px;
                 padding: 2px;
             }}
             TaskCard:hover {{
@@ -1137,33 +1291,35 @@ class TaskCard(QFrame):
             }}
             TaskCard[selected="true"] {{
                 border: 1px solid {t['accent']};
+                border-top: 1px solid {t['accent']};
                 background-color: {t['selected']};
             }}
             TaskCard[checked="true"] {{
                 border: 1px solid {t['accent2']};
+                border-top: 1px solid {t['accent2']};
                 background-color: {t['selected']};
             }}
         """
 
     def _status_qss(self, status):
-        """状态徽标样式：文字 + 22 alpha 同色底，保证亮/暗都协调。"""
+        """状态徽标样式：文字 + 同色半透明底，保证亮/暗都协调。"""
         color = _status_colors(self._tokens).get(status, self._tokens["textMuted"])
         return (f"font-size: 11px; font-weight: 600; color: {color}; "
-                f"background-color: {color}22; border-radius: 10px; padding: 2px 10px;")
+                f"background-color: {_rgba(color, 0.13)}; border-radius: 10px; padding: 2px 10px;")
 
     def _progress_qss(self, status):
         """进度条样式：完成=绿、暂停=橙、其余=主题强调色。"""
         chunk = {"completed": self._tokens["green"],
                  "paused": self._tokens["orange"]}.get(status, self._tokens["accent"])
-        return (f"QProgressBar{{background:{self._tokens['input']};border:none;border-radius:3px;height:6px;}}"
-                f"QProgressBar::chunk{{background:{chunk};border-radius:3px;}}")
+        return (f"QProgressBar{{background:{self._tokens['input']};border:none;border-radius:4px;height:7px;}}"
+                f"QProgressBar::chunk{{background:{chunk};border-radius:4px;}}")
 
     def _pick_box_qss(self, tokens):
         """多选勾选框：小方块描边，选中填强调色；焦点环与其它卡片按钮同规格。"""
         t = tokens
         return (
             f"QPushButton{{background:transparent;border:1px solid {t['border']};"
-            f"border-radius:4px;color:{t['textMuted']};font-size:13px;padding:0px;"
+            f"border-radius:6px;color:{t['textMuted']};font-size:13px;padding:0px;"
             f"min-width:18px;max-width:18px;min-height:18px;max-height:18px;}}"
             f"QPushButton:hover{{border-color:{t['borderHover']};color:{t['text']};}}"
             f"QPushButton:checked{{color:{t['accent']};border-color:{t['accent']};}}"
@@ -1174,7 +1330,7 @@ class TaskCard(QFrame):
         """失败原因条样式（浅色主题用深红字 + 浅红底，保持可读）。"""
         t = self._tokens
         return (f"font-size: 11px; color: {t['redText']}; background-color: {t['redSoft']}; "
-                f"border: 1px solid {t['red']}55; border-radius: 6px; padding: 6px 8px; margin-top: 2px;")
+                f"border: 1px solid {_rgba(t['red'], 0.35)}; border-radius: 8px; padding: 6px 8px; margin-top: 2px;")
 
     def _restyle_labels(self):
         """按当前主题重刷卡片内所有内联样式（建卡与切换主题共用）。"""
@@ -1220,6 +1376,37 @@ class TaskCard(QFrame):
         self._tokens = THEMES[theme]
         self.setStyleSheet(self._card_qss())
         self._restyle_labels()
+
+    def paintEvent(self, event):
+        """卡片材质：顶部受光 + 底部压暗，选中/勾选再叠一层 vibrancy。
+
+        底色仍是不透明 surface（走 QSS），玻璃感全由这一层半透明渐变出；
+        圆角裁剪与 QSS 的 border-radius:14 对齐（内缩 1px 避开描边）。
+        """
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        t = self._tokens
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, 13, 13)
+        p.setClipPath(clip)
+        # 顶部受光：macOS 的材质总有一道从上方打下来的高光
+        top = QLinearGradient(0, rect.top(), 0, rect.bottom())
+        top.setColorAt(0.0, _qcolor(t["rimStrong"], 0.55))
+        top.setColorAt(0.4, _qcolor(t["rimStrong"], 0.06))
+        top.setColorAt(1.0, _qcolor(t["shade"], 0.0))
+        p.fillRect(rect, top)
+        # 底部压暗：让卡片有厚度，不是一张平贴的纸
+        shade = QLinearGradient(0, rect.top() + rect.height() * 0.6, 0, rect.bottom())
+        shade.setColorAt(0.0, _qcolor(t["shade"], 0.0))
+        shade.setColorAt(1.0, _qcolor(t["shade"], 0.55))
+        p.fillRect(rect, shade)
+        # 选中/勾选：叠一层主题色 vibrancy，像 macOS 的高亮选取
+        if self.property("selected") or self.property("checked"):
+            p.fillRect(rect, _qcolor(t["vibrancy"]))
 
     def set_selected(self, on):
         """选中态：高亮边框；配合 dynamic property 重算样式。"""
@@ -1480,10 +1667,10 @@ class TaskCard(QFrame):
     def _btn_style(self, color):
         return (
             f"QPushButton{{background:transparent;border:1px solid {color};"
-            f"border-radius:4px;padding:3px 10px;color:{color};font-size:11px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{color}22;}}"
+            f"border-radius:8px;padding:3px 10px;color:{color};font-size:11px;font-weight:600;}}"
+            f"QPushButton:hover{{background:{_rgba(color, 0.13)};}}"
             # 卡片按钮自带彩色描边，焦点环改用淡填充，否则描边变色也看不出来
-            f"QPushButton:focus{{border:1px solid {color};background:{color}33;}}"
+            f"QPushButton:focus{{border:1px solid {color};background:{_rgba(color, 0.2)};}}"
         )
 
     def _apply_error_visibility(self, status, err, reason=""):
@@ -1819,17 +2006,18 @@ class SettingsDialog(QDialog):
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        btns.setStyleSheet("QPushButton{padding:6px 18px;border-radius:4px;}")
+        btns.setStyleSheet("QPushButton{padding:6px 18px;border-radius:8px;}")
         layout.addWidget(btns)
 
     def _qss(self):
         """对话框样式按主题渲染（组框/标签颜色都走 token）。"""
         t = THEMES.get(getattr(self, "_theme", "dark"), THEMES["dark"])
         return f"""
-            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}
+            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['rim']}; border-radius: 12px; }}
             QLabel {{ font-size: 13px; color: {t['text']}; }}
             QGroupBox {{
-                border: 1px solid {t['border']}; border-radius: 8px;
+                background-color: {t['glass']};
+                border: 1px solid {t['rim']}; border-radius: 10px;
                 margin-top: 12px; padding: 10px 10px 8px 10px;
                 font-size: 12px; font-weight: 700; color: {t['textMuted']};
             }}
@@ -1957,7 +2145,7 @@ class AddDialog(QDialog):
         """对话框样式按主题渲染。"""
         t = THEMES.get(getattr(self, "_theme", "dark"), THEMES["dark"])
         return f"""
-            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['border']}; border-radius: 10px; }}
+            QDialog {{ background-color: {t['surface']}; border: 1px solid {t['rim']}; border-radius: 12px; }}
             QLabel {{ font-size: 13px; color: {t['text']}; }}
         """
 
@@ -2062,7 +2250,7 @@ class TaskDetailDialog(QDialog):
         t = self._tokens
         return f"""
             QDialog {{ background-color: {t['surface']};
-                       border: 1px solid {t['border']}; border-radius: 10px; }}
+                       border: 1px solid {t['rim']}; border-radius: 12px; }}
             QLabel {{ font-size: 13px; color: {t['text']}; }}
             QLabel#detailTitle {{ font-size: 15px; font-weight: 700; color: {t['textStrong']}; }}
             QLabel#detailSection {{ font-size: 12px; font-weight: 700; color: {t['textMuted']}; }}
@@ -2119,10 +2307,10 @@ class TaskDetailDialog(QDialog):
             bar.setRange(0, 100)
             bar.setValue(min(max(pct, 0), 100))
             bar.setTextVisible(False)
-            bar.setFixedHeight(6)
+            bar.setFixedHeight(7)
             bar.setStyleSheet(
-                f"QProgressBar{{background:{t['input']};border:none;border-radius:3px;}}"
-                f"QProgressBar::chunk{{background:{t['accent']};border-radius:3px;}}")
+                f"QProgressBar{{background:{t['input']};border:none;border-radius:4px;}}"
+                f"QProgressBar::chunk{{background:{t['accent']};border-radius:4px;}}")
             text = QLabel(f"{format_size(done)} / {format_size(total)} · {pct}%")
             text.setObjectName("detailSegText")
             row_layout.addWidget(head)
@@ -2263,6 +2451,16 @@ class MainWindow(QMainWindow):
         # 初始加载
         self._refresh()
 
+    def paintEvent(self, event):
+        """窗口底色：与中央区背板同一条 Liquid Glass 渐变。
+
+        工具栏/状态栏都是半透明玻璃，透出的就是这一层；QSS 的
+        background-image 渐变在 Qt 上无效，只能用 QPainter 画。
+        """
+        super().paintEvent(event)
+        p = QPainter(self)
+        _paint_glass_backdrop(p, self.rect(), getattr(self, "_theme", "dark"))
+
     def _setup_shortcuts(self):
         """Global shortcuts: Ctrl+N new download, Ctrl+F focus the search box."""
         for _seq, _slot in (
@@ -2400,8 +2598,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.finish_btn)
 
     def _setup_central(self):
-        central = QWidget()
-        central.setObjectName("appCentral")  # 页面底色只铺中央区，标签/按钮盒保持透明
+        # 页面底色只铺中央区，标签/按钮盒保持透明；背板渐变由 _GlassBackdrop 画
+        central = _GlassBackdrop()
+        self._glass = central
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2430,7 +2629,7 @@ class MainWindow(QMainWindow):
         self.overall_bar.setRange(0, 100)
         self.overall_bar.setValue(0)
         self.overall_bar.setTextVisible(False)
-        self.overall_bar.setFixedHeight(6)
+        self.overall_bar.setFixedHeight(7)
         self.overall_bar.setFixedWidth(120)
         self.overall_bar.setAccessibleName("总下载进度")
         header_layout.addWidget(self.overall_bar)
@@ -2585,6 +2784,10 @@ class MainWindow(QMainWindow):
             theme = "dark"
         self._theme = theme
         self.setStyleSheet(_qss_for(theme))
+        # 中央区背板（Liquid Glass 底板）跟着主题重绘
+        glass = getattr(self, "_glass", None)
+        if glass is not None:
+            glass.apply_theme(theme)
         graph = getattr(self, "speed_graph", None)
         if graph is not None:
             graph.apply_theme(theme)

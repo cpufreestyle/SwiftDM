@@ -42,10 +42,16 @@ WEB_ONLY = frozenset({
     "amber", "amber-soft", "blue-strong", "blue-soft",
     "radius", "radius-sm", "shadow", "card",
 })
+# Liquid Glass 材质令牌只活在桌面端：半透明填充要靠背板渐变才透得出层次，
+# Web 端和扩展都没有可透的底板，所以这三份玻璃感不跨端同步，
+# 只在桌面 THEMES 里各自取值（令牌名走 camelCase，与桌面端既有约定一致）。
 DESKTOP_ONLY = frozenset({
     "input", "toolbar", "hover", "selected", "textStrong", "faint",
     "scroll", "scrollHandle", "scrollHover", "logBg", "logFg",
     "orangeSoft", "orangeHover", "redText",
+    "bgTop", "bgBottom", "glow",
+    "glass", "glassHover", "glassStrong", "field",
+    "rim", "rimStrong", "shade", "vibrancy",
 })
 
 # 扩展 popup 的调色板：变量名与 Web 端 :root 同名，

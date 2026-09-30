@@ -673,3 +673,66 @@ python test_norange.py             # 服务器不支持 Range 时，暂停/续�
 复现脚本和截图统一放在 `_browsercheck/`（整个目录已被 `.gitignore` 忽略），
 根目录下的 `_*.py` / `_*.txt` / `_*.bin` / `_*.out` / `_*.err` / `_*.png` / `_*.jpg` 是调试脚本与日志，同样忽略；
 交接后可随手删除，不影响构建。从 `_browsercheck/` 里跑脚本时脚本自带把仓库根目录插进 `sys.path` 的引导。
+---
+
+## 10. 桌面端 Liquid Glass 改造（按 macOS 27 风格，2026-10-01）
+
+**动机**：用户要求「按 macOS 27 风格」重做桌面 UI。原桌面端是 IDM 风格：实心深底 + 硬边框 + 直角表格，信息密度高但材质扁平。本轮只动桌面端（`main_window.py` + `tests/test_theme_tokens.py` 的桌面令牌登记），Web UI 与浏览器扩展**零改动**，三端一致性测试因此一行都没放松。
+
+**边界（先定死，避免反复）**
+- 共享令牌（Web / 扩展 / 桌面三端共用那些）**值一个都没动**；玻璃效果全部由新增的「桌面独占令牌」表达，新令牌必须登记进 `tests/test_theme_tokens.py` 的 `DESKTOP_ONLY`。
+- 任务卡片主体仍用不透明 `surface` 打底，玻璃感由 `paintEvent` 的高光与渐变叠出来。不透明底既保住文字对比度，也避免 QSS 半透明叠加导致的串色。
+- 悬浮横带（`QToolBar` / `appHeader` / 多选条 / `QStatusBar`）用半透明 `glassStrong`；`QMenu`、`QToolTip`、`QDialog` 必须保持不透明 `surface`，否则弹出层会透出底层内容。
+- 背景渐变**只能用 Python `paintEvent` 画**：QSS 的 `background-image` 在 Qt 样式表里对 `QMainWindow` 不生效（Qt 只支持该属性的极少数用法且不参与渐变计算），实测零效果。
+
+### 10.1 令牌层
+dark / light 各新增 11 个 Liquid Glass 令牌，键集完全一致（dark 在 `main_window.py:698` 起，light 在 `main_window.py:743` 起）：
+
+| 令牌 | dark | light | 用途 |
+| --- | --- | --- | --- |
+| `bgTop` / `bgBottom` | `#191922` / `#0a0a0f` | `#ffffff` / `#e8ebf3` | 窗口背板纵向渐变两端 |
+| `glow` | `rgba(108,92,231,0.16)` | `rgba(108,92,231,0.10)` | 背板径向辉光（accent 染色） |
+| `glass` / `glassHover` | `rgba(255,255,255,0.055)` / `0.09` | `rgba(255,255,255,0.66)` / `0.86` | 卡片普通态 / 悬浮态填充 |
+| `glassStrong` | `rgba(21,21,31,0.86)` | `rgba(255,255,255,0.80)` | 悬浮横带填充 |
+| `field` | `rgba(255,255,255,0.05)` | `rgba(255,255,255,0.90)` | 输入框内填充 |
+| `rim` / `rimStrong` | `rgba(255,255,255,0.13)` / `0.30` | `rgba(22,24,44,0.12)` / `rgba(255,255,255,0.95)` | 1px 发丝边 / 高亮边 |
+| `shade` | `rgba(0,0,0,0.28)` | `rgba(22,24,44,0.08)` | 卡片底部压暗 |
+| `vibrancy` | `rgba(108,92,231,0.20)` | `rgba(108,92,231,0.14)` | 选中 / 勾选态的活力色 |
+
+dark 的磨砂感靠「白色低透明度叠加」模拟，light 反过来靠「白色高透明度」把后景虚化；两套都是同一族语义，只是密度取向相反。
+
+### 10.2 QSS 层
+`QSS_TEMPLATE` 从 `main_window.py:757` 起重写（约 300 行）：
+- 悬浮横带（`QToolBar`、`QWidget#appHeader`、`QWidget#appStatusBar`、多选条）统一 `background-color: $glassStrong` + `border: 1px solid $rim` 发丝边。
+- `QMenu` / `QToolTip` / `QDialog` 用不透明 `$surface` + `1px solid $border`。
+- 几何统一：卡片圆角 14px、按钮与输入框 10px、菜单 12px、芯片胶囊 14px；进度条高 7px、圆角 4px（圆角再小会被抗锯齿吃掉，见 `#overallBar` 满值 chunk 覆盖测试）；`QToolBar` padding `8px 12px`、按钮 padding `7px 16px`。
+- **所有 `:focus` 规则逐字保留**，包括 `QLabel#kbdHint { font-size: 11px; color: $textMuted; }` 这一条（`tests/test_desktop_ui.py` 有逐字断言）。toolbar 按钮的 `:focus` 必须同时保留 `border-radius`——圆角参与抗锯齿，像素测试对边缘极敏感。
+- 禁 hex：`QSS_TEMPLATE.template` 里一个 hex 都不能出现，只放行 `#ffffff` / `#0d1117`（测试硬断言）。
+
+### 10.3 Python 侧材质
+- `_RGBA_RE` / `_qcolor` / `_rgba`（约 1064-1095 行）：QSS 里的 `rgba(r,g,b,a)` 不能直接喂给 `QColor`，这三个 helper 负责解析成带 alpha 的 `QColor`。
+- `_paint_glass_backdrop(p, rect, theme)`（约 1097 行）：画窗口背板——纵向 `QLinearGradient`（`bgTop` 到 `bgBottom`）叠加居中偏上的 `QRadialGradient` 辉光（`glow`）。
+- `class _GlassBackdrop(QWidget)`（约 1132 行，`SpeedGraph` 之前）：把背板铺成窗口级子控件，并置 `WA_TransparentForMouseEvents` 让点击穿透。
+- `TaskCard.paintEvent`（约 1380 行，`apply_theme` 之后）：卡片自上而下叠 玻璃填充 -> 顶部 rim 高光 -> 中段回到 surface -> 底部 shade 压暗；选中 / 勾选态把边框换成 `accent` / `accent2`，同时提高 `vibrancy` 填充。
+- 像素验收（`QT_QPA_PLATFORM=offscreen` + `grab()`）：卡片中心列 y=1 约 `97979b`（alpha 0.546，设计值 0.55）平滑降到 y=56 的 `272730`，中段回 surface，底部再压暗；暗色背板 `#191922` 到 `#0a0a0f`，紫色辉光左右对称、纵向平滑；亮色同构。选中 / 勾选态 vibrancy 生效、边框换色。
+
+### 10.4 本轮最大的坑：`paintEvent` 里的 NameError = 静默 abort
+- **现象**：冒烟脚本只打印一行日志就退出，退出码 `-1073740791`（`0xC0000409`，MSVC `__fastfail`），没有 traceback，也没有 Qt 崩溃对话框。
+- **根因**：`_GlassBackdrop.paintEvent` 里用了 `QRect`，而 `main_window.py:24` 的 `QtCore` 导入只有 `QRectF` 没有 `QRect`，于是 `NameError`。PyQt6 会把事件处理器里逃出来的未捕获异常转成 `qFatal`，直接 `__fastfail`，Python 侧栈整段丢失——所以看起来像「无声崩溃」而不是「写错了名字」。
+- **定位方法（可复用）**：
+  1. `QT_QPA_PLATFORM=offscreen` 二分：先只构造 `MainWindow` 再 `grab()`，再把卡片段单独拎出来画，逐步把范围缩到「首次绘制」。
+  2. 用**等价代码 monkeypatch 掉 `_GlassBackdrop.paintEvent` 居然不崩、原版必崩**，据此断定问题不在绘制算法，而在运行环境 / 命名空间。
+  3. `python -c "import main_window as mw; print(hasattr(mw, chr(81)+chr(82)+chr(101)+chr(99)+chr(116)))"` 直接确认模块命名空间缺名。
+  4. `python -m pyflakes main_window.py` 可静态抓出这类问题。当前剩余 9 条告警（未使用的 `QListWidget` / `QListWidgetItem` / `QSplitter` / `QHeaderView` / `QFont` / `QPalette`、3 个未使用局部变量）**全是改前既有的，与本次改动无关，不要顺手清**。
+- **教训**：PyQt 的 fastfail 先查未定义名，再查内存。遇到静默 abort，第一反应是跑 `pyflakes`，而不是去怀疑 Qt 版本或显卡驱动。
+
+### 10.5 验收数字
+- 改前基线：`458 passed, 1 skipped in 47.12s`。
+- 最终：`python -m pytest -q --deselect tests/test_resume_race.py::test_pause_then_immediate_resume_completes_intact` 得 `456 passed, 1 skipped, 2 deselected in 30.31s`，与基线逐条对齐。
+- **`tests/test_resume_race.py` 全量跑会在 `test_pause_then_immediate_resume_completes_intact[6]` 处崩溃。已用 `git worktree add` 把未改动的 HEAD 拉到仓库外单独跑，崩在同一位置，确认是本机既有环境抖动，与本次改动无关，不要为它改业务代码。** 该文件单独跑又是 7 passed 全绿。
+- `python -m py_compile main_window.py` 通过；`main_window.py` 行尾保持 `CRLF 3811, loneLF 0, loneCR 0, BOM False`。
+
+---
+
+**收尾提醒**：`smoke_render.py` 是本轮临时脚本，`git status` 里是未跟踪 `??`，验收完必须删除；其余 `_*.py` / `_*.txt` / `_*.png` / `*.log` 已被 `.gitignore` 覆盖。
+**推送状态（2026-10-01）**：本轮改动已落在本地 commit，但 `git push origin main` 失败——仓库配置的代理 `127.0.0.1:7897` 当前没有监听，直连 GitHub 的 TLS 又被 reset。等本地代理客户端恢复后直接 `git push origin main` 即可。
