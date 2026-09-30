@@ -161,6 +161,7 @@ class MediaTask:
         self._xlock = threading.RLock()
         self._start_token = 0  # 启动令牌：retry 申请，并发 cancel 使其失效
         self._gen = 0
+        self._quota_bytes = 0  # 已计入全局限速的字节（yt-dlp 汇总进度的累计值）
         self._info = None
         self._worker = None
 
@@ -390,6 +391,7 @@ class MediaTask:
         rate = get_rate()
         if rate > 0:
             opts["ratelimit"] = rate
+            # 每条连接的限速只能平滞单连接，总速率由 _spend_quota 接全局令牌桶卡住
         return opts
 
     def _build_opts(self, gen):
@@ -429,9 +431,35 @@ class MediaTask:
 
     # ---------------- 进度 ----------------
 
+    # ---------------- 全局限速配额 ----------------
+
+    def _spend_quota(self, d):
+        """把本次上报的新字节计入全局限速令牌桶。必须在任务锁之外调用：consume 会阻塞睡见额度。
+
+        yt-dlp 的 `ratelimit` 是**每条连接**的限速：HLS/DASH 一个分片一条连接，
+        `concurrent_fragment_downloads` 取几路，总速率上限就被抬到几倍（实测默认 8 段、限速
+        128KB/s 时跑出 3 倍以上），而 DownloadTask 的全局令牌桶没有这种放大。
+        进度钩子里的 `downloaded_bytes` 是 yt-dlp ProgressCalculator 的**全局累计**（按各连接
+        自己的计数器取增量后相加，线程安全），因此它与上次值的差就是这一次真正新下的总字节；
+        令牌桶卡住的也就是所有分片线程加起来的总速率。
+        """
+        from throttle import consume, get_rate
+        if get_rate() <= 0:
+            return                       # 未限速：零开销，不引入任何等待
+        done = int(d.get("downloaded_bytes") or 0)
+        with self._lock:
+            # 分片并发上报，锁内取增量再解锁；计数器回退（分片重下）时不计，不会把同一段字节花两遍
+            delta = done - self._quota_bytes
+            if delta <= 0:
+                return
+            self._quota_bytes = done
+        consume(delta)
+
     def _on_progress(self, d, gen):
         if self._gen != gen:
             raise _ytdlp().utils.DownloadCancelled("任务已暂停或取消")
+        # 限速配额要在取任务锁之前消耗：consume 会睡，持锁睡会把暂停/取消全堵死
+        self._spend_quota(d)
         status = d.get("status")
         if status == "downloading":
             done = int(d.get("downloaded_bytes") or 0)

@@ -145,6 +145,66 @@ def test_ratelimit_is_taken_from_global_throttle(tmp_path, fake_ytdlp):
         throttle.set_rate(0)
 
 
+def test_quota_spends_only_new_bytes(tmp_path, fake_ytdlp, monkeypatch):
+    """yt-dlp 的 ratelimit 只卡单条连接，总速率由全局令牌桶按「累计增量」卡住。"""
+    import throttle
+    spent = []
+    monkeypatch.setattr(throttle, "consume", lambda n: spent.append(n))
+    monkeypatch.setattr(throttle, "get_rate", lambda: 1024)
+    movie = os.path.join(str(tmp_path), "movie.mp4")
+    fake_ytdlp["events"] = [
+        ("downloading", {"downloaded_bytes": 1000, "total_bytes": 4000}),
+        ("downloading", {"downloaded_bytes": 3000, "total_bytes": 4000}),
+        ("downloading", {"downloaded_bytes": 3000, "total_bytes": 4000}),   # 同一帧重复上报
+        ("finished", {"downloaded_bytes": 4000, "total_bytes": 4000,
+                      "filename": movie}),
+    ]
+    t = _mk(tmp_path)
+    t.start()
+    assert _wait_done(t) == "completed", t.error
+    # 只花「这一帧真正新下的字节」：累计值重复上报不能花两遍
+    assert spent == [1000, 2000, 1000]
+
+
+def test_quota_is_skipped_when_the_rate_limit_is_off(tmp_path, fake_ytdlp, monkeypatch):
+    import throttle
+    spent = []
+    monkeypatch.setattr(throttle, "consume", lambda n: spent.append(n))
+    throttle.set_rate(0)
+    t = _mk(tmp_path)
+    t.start()
+    assert _wait_done(t) == "completed", t.error
+    assert spent == []                       # 未限速：零开销，也不引入任何等待
+
+
+def test_quota_sleeps_at_the_configured_rate(tmp_path, fake_ytdlp, monkeypatch):
+    """真令牌桶 + 假时钟：4000 字节 @1024 B/s 就是 3.906 秒，分段并发放大不了总时长。"""
+    import throttle
+    clock = [0.0]
+    slept = []
+
+    def fake_sleep(seconds):                 # 睡多久就把假时钟拨多久，等价于真的在睡
+        slept.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(throttle, "_monotonic", lambda: clock[0])
+    monkeypatch.setattr(throttle, "_sleep", fake_sleep)
+    throttle.set_rate(1024)
+    try:
+        fake_ytdlp["events"] = [
+            ("downloading", {"downloaded_bytes": 1000, "total_bytes": 4000}),
+            ("downloading", {"downloaded_bytes": 4000, "total_bytes": 4000}),
+            ("finished", {"downloaded_bytes": 4000, "total_bytes": 4000,
+                          "filename": os.path.join(str(tmp_path), "movie.mp4")}),
+        ]
+        t = _mk(tmp_path)
+        t.start()
+        assert _wait_done(t) == "completed", t.error
+        assert [round(s, 3) for s in slept] == [round(1000 / 1024, 3),
+                                               round(3000 / 1024, 3)]
+        assert abs(sum(slept) - 4000 / 1024) < 1e-6
+    finally:
+        throttle.set_rate(0)
 def test_pause_cancels_worker_and_resume_restarts(tmp_path, fake_ytdlp):
     fake_ytdlp["events"] = [("downloading", {"downloaded_bytes": 300, "total_bytes": 1000})]
     fake_ytdlp["hold"].clear()                       # 卡在「下载中」，让 pause 有确定性

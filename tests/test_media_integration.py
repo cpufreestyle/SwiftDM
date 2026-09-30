@@ -143,12 +143,23 @@ def test_global_rate_limit_applies_to_stream_download(hls_base, tmp_path):
     fast = _download(hls_base, tmp_path / "fast")
     assert fast["status"] == "completed", fast["error"]
     throttle.set_rate(128 * 1024)
-    # segments=1 是必需的：yt-dlp 的 ratelimit 按「每条连接」限速，
-    # 8 路并发分片会把总速率抬到 8 倍，那样时间断言毫无意义。
+    # 单连接时 yt-dlp 自己的 ratelimit 就能卡住；8 路并发的总速率见下一个用例。
     slow = _download(hls_base, tmp_path / "slow", segments=1)     # 256KB / 128KBps ⇒ ≥2 秒
     assert slow["status"] == "completed", slow["error"]
     assert slow["elapsed"] >= 1.5, (fast, slow)
     assert slow["elapsed"] > fast["elapsed"]
+
+
+def test_rate_limit_caps_every_fragment_thread_together(hls_base, tmp_path):
+    """默认 8 路并发分片也不能突破总限速：ratelimit 是每条连接的，总速率得靠全局令牌桶。"""
+    throttle.set_rate(128 * 1024)                   # 256KB 总量 / 128KBps ⇒ 自少 2 秒
+    try:
+        slow = _download(hls_base, tmp_path / "capped")       # 默认 segments=8
+        assert slow["status"] == "completed", slow["error"]
+        # 修复前 8 路并发只要约 0.6 秒（总速率被放大 3 倍以上）
+        assert slow["elapsed"] >= 1.9, slow
+    finally:
+        throttle.set_rate(0)
 
 
 def test_stream_payload_reports_media_progress(hls_base, tmp_path):
