@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `e7ea57b`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 32 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `3f8cb6b`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 33 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -371,7 +371,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 
 剩余候选：
 - （已关账）托盘失败数角标：16px 白点 + tooltip 「✗ N 个失败」随每次刷新更新，可读性由 tooltip 解决，角标改数字不可行。
-- 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）。
+- 扩展打包成 CRX（现代 Chrome 已禁止拖拽安装，收益存疑）——已查证并收敛，见第 33 项。
 - （已关账）桌面端批量选择：卡片勾选框 + Ctrl+点击 + Ctrl+A + Esc + 操作条（暂停/继续/重试/删除）已补齐，状态过滤与 Web 端同一张表。
 - （已关账）批量操作的键盘入口：Web 端 Ctrl+A 全选可见、Esc 先清多选、Ctrl+点击卡片切换勾选；桌面端 Ctrl+F 已从「聚焦链接框」改回「聚焦搜索框」（与 Web 端及通用约定一致）。
 - （已关账）基础样式被吞进 @media：高级面板默认收起、任务卡徽章有样式了，见第 22 项。
@@ -529,6 +529,27 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      名字不截断 / 机器词外泄 / 按钮接到日志 dock / 日志无上限 / `since()` 忽略序号 / 去重检查被删）。
    - 复现脚本：`_browsercheck/capture_panel_shot.py`（深/浅两主题渲染截图）。变异脚本照上一轮的做法先备份、后还原、
      再按 sha256 校验——上轮被机器负载拖死、`main_window.py` 留在变异态的教训不能忘。
+
+33. **扩展打包成 CRX（`3f8cb6b`）**：把「扩展打包成 CRX 免手动加载」查到底——结论比设想骨感，
+     但换来一条真能用的打包链路和一个真 bug 的修复：
+   - 两个实测结论推翻了原设想：拖拽安装 CRX 早被 Chrome 禁掉；`--load-extension` 也死了——
+     Chrome 154 + 临时 profile + 可见窗口，连一个只有 manifest.json 的极简扩展都不加载，
+     预置 `developer_mode` pref、`--disable-features=DisableLoadExtensionCommandLineSwitch` 都试过，无效。
+     所以本轮 CRX 不承诺「免手动加载」，用途是企业策略安装（ExtensionInstallForcelist + update_url）与分发。
+   - CRX3 格式已解剖清楚：`Cr24` + version 3 + header_len + protobuf
+     `key_proofs=[{public_key: DER SPKI, signature: RSA PKCS#1v1.5/SHA-256}]` + 尾部 SignedData{crx_id} + zip，
+     crx_id = sha256(公钥 DER)[:16]；但「签名覆盖哪些字节」是 Chrome 内部约定，
+     自己签不可能保证被接受——`build_crx.py` 直接调 `chrome --pack-extension`，
+     同 key 同内容逐字节可复现（有测试守着）。
+   - 顺手修的真 bug：`extension/icons/*.png` 文件头 12 字节是字面文本 `\x89PNG\r\n\x1a\n`（后面才是二进制）。
+     Chrome 能容忍，但包里不该有；现在图标由 `draw_app_icon()`（build_crx.py）统一绘制，
+     build_exe.py 的 icon.ico 也改用它，两处图标同源，build_exe 里「PNG 已损坏所以自己画」的旧说明已删。
+   - 打包链路：校验（manifest 引用 / HTML src-href / 图标真伪与尺寸）→ 重画图标 → 暂存整树并把时间戳归一
+     （git checkout 的时间每台机器不同，不归一化产物不可复现）→ 交给 Chrome 打包 →
+     自检（结构 / 签名块 / 私钥没进包 / zip 与扩展目录逐字节一致）。`--check` 只读，可当 CI 守卫。
+   - 测试：`tests/test_crx_pack.py` 17 组——图标回归 4、目录与引用 4、CRX 结构与打包 7、可复现性 1、CLI 只读 1；
+     全套 `pytest` 448 passed / 1 skipped（本轮之前 431）。
+   - 复现脚本：`_browsercheck/load_extension_probe.py`（Chrome 154 的开关失效结论，换版本可重测）。
 
 ---
 
