@@ -6,6 +6,9 @@
 """
 import threading
 import time
+import logging
+
+logger = logging.getLogger("SwiftDM")
 
 _BURST_SECONDS = 0.5          # 允许的最大突发（半秒额度），避免空闲后一次冲出去
 
@@ -16,6 +19,7 @@ _last = 0.0
 
 _monotonic = time.monotonic   # 测试注入假时钟
 _sleep = time.sleep
+_listeners = []               # 限速变更观察者（见 add_rate_listener）
 
 
 def set_rate(bytes_per_sec):
@@ -29,11 +33,39 @@ def set_rate(bytes_per_sec):
         _rate = value if value > 0 else 0
         _tokens = 0.0
         _last = 0.0
+    # 在锁外通知：下游引擎（BT 的共享 session）不该看到我们持锁
+    _notify_rate_listeners()
     return _rate
 
 
 def get_rate():
     return _rate
+
+
+def add_rate_listener(fn):
+    """注册限速变更观察者（字节/秒）。set_rate 后同步回调，注册时立刻收到当前值。
+
+    单独的引擎拿不到令牌桶里的线程（BT 的 libtorrent session 自带下载线程），
+    只能用 libtorrent 自己的 download_rate_limit；注册即回放当前值，是为了照顾
+    「session 懒创建」——先改限速、后建 session 的顺序下也不会漏掉限速。
+    """
+    with _lock:
+        _listeners.append(fn)
+    _safe_call(fn)
+    return fn
+
+
+def _notify_rate_listeners():
+    for fn in list(_listeners):
+        _safe_call(fn)
+
+
+def _safe_call(fn):
+    """调观察者：同步失败只记日志——下游引擎（BT）出问题不影响限速本身。"""
+    try:
+        fn(get_rate())
+    except Exception as e:
+        logger.warning("限速同步给下游引擎失败: %s", e)
 
 
 def write_granularity():

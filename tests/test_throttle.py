@@ -90,6 +90,27 @@ def test_settings_api_roundtrip_rate_limit():
     assert throttle.get_rate() == 0
 
 
+def test_add_rate_listener_replays_then_fires_on_change():
+    """注册即回放当前值：先改限速、后建 session 的顺序不会漏限速。"""
+    seen = []
+    keep = throttle.add_rate_listener(seen.append)
+    throttle.set_rate(2048)
+    assert seen == [0, 2048]
+    throttle.set_rate(0)
+    assert seen[-1] == 0
+    throttle._listeners.remove(keep)      # 摘掉，不影响别的用例
+
+
+def test_set_rate_survives_a_broken_listener():
+    """下游引擎同步失败不能把 set_rate 拖下水。"""
+    def boom(rate):
+        raise RuntimeError("BT 下线也要能改限速")
+
+    keep = throttle.add_rate_listener(boom)
+    throttle.set_rate(4096)
+    assert throttle.get_rate() == 4096
+    throttle._listeners.remove(keep)
+
 def test_write_granularity_is_half_second_budget():
     throttle.set_rate(65536)
     assert throttle.write_granularity() == 32768

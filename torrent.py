@@ -26,6 +26,8 @@ import logging
 import requests
 from urllib.parse import urlparse
 
+import throttle
+
 import libtorrent as lt
 
 logger = logging.getLogger("SwiftDM")
@@ -48,6 +50,9 @@ def _apply_session_settings(s):
         "active_downloads": -1,
         "active_seeds": -1,
         "active_limit": -1,
+        # 全局限速（字节/秒，0 = 不限速）：与下载引擎共用同一份设置。
+        # 只限下载不动上传——上传做种是 PT 合规的一部分，不能被限速设置打乱。
+        "download_rate_limit": _session_rate_limit(throttle.get_rate()),
     }
     # 可选：仅 Tracker announce 走代理（peer 仍直连）。格式如 http://127.0.0.1:7897
     proxy = os.environ.get("SWIFTDM_TORRENT_PROXY", "").strip()
@@ -77,6 +82,32 @@ def _get_session():
             _session = lt.session()
             _apply_session_settings(_session)
         return _session
+
+
+def _session_rate_limit(rate):
+    """libtorrent 的下载限速取值：0 = 不限速（负数/None 一样归零）。"""
+    try:
+        rate = int(rate or 0)
+    except (TypeError, ValueError):
+        return 0
+    return rate if rate > 0 else 0
+
+
+def _on_rate_limit_changed(rate):
+    """全局限速变化时同步到共享 session；还没建 session 时什么也不做——
+    创建时 `_apply_session_settings` 会读当前值（`throttle.get_rate()`）。
+    """
+    s = _session
+    if s is None:
+        return
+    try:
+        s.apply_settings({"download_rate_limit": _session_rate_limit(rate)})
+        logger.info("BT 下载限速已同步: %s B/s", _session_rate_limit(rate))
+    except Exception as e:
+        logger.warning("BT 下载限速同步失败: %s", e)
+
+
+throttle.add_rate_listener(_on_rate_limit_changed)
 
 
 def _is_local_torrent_path(url):
