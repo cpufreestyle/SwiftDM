@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `e0dc20a`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 30 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `39ea11f`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 31 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -504,6 +504,16 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
     - 测试：新增 2 组（setter 夹取 / `None` 当空串 / 正常长度原样返回；`_setup_tray` 确实构造带闸门的类）；
       变异测试 **2/2 全红**（去掉 clamp、换回裸 `QSystemTrayIcon` 各红一组）。
     - 验证：`pytest` 421 passed / 1 skipped（本轮之前是 419）。
+
+31. **托盘气泡也夹到栏位上限（`39ea11f`）**：上一轮的闸门只覆盖了 tooltip，气泡这边还空着；
+    NOTIFYICONDATA 给标题 64、正文 256 个宽字符栏位（含结尾 \0），超出的部分被 Windows 静默截尾，而消失的正是尾部那段：
+   - `_TrayIcon.showMessage` 覆写：标题与正文先过 `_clip_bubble(text, limit)` 再交给 Qt；
+     常量放在模块顶部（`TRAY_MSG_TITLE_MAX = 63` / `TRAY_MSG_BODY_MAX = 255`），与 `TRAY_TIP_MAX` 排在一起。
+   - `_clip_bubble` 被夹时补一个省略号（不是生硬截）：后缀被吃掉后用户能知道这段文案不全，而不会以为它本来就短。
+     空白与 `None` 统一当空串；较短文案原样返回，正常气泡不受影响。
+   - 测试：新增 2 组（上限数值 / 省略号 / 边界原样 / `None`；真实 `_TrayIcon.showMessage` 确实把长文案送进夹取再交给 Qt）。
+   - 验证：`pytest` 423 passed / 1 skipped（本轮之前 421）；变异测试 **4/4 全红**（去标题夹 / 去正文夹 / 夹取回退为恒等值 / 两个上限对调）。
+   - 复现脚本：`_browsercheck/`（上轮已收敛）；本轮只改 `main_window.py` 与 tests。
 
 ---
 
