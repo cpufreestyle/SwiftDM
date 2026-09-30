@@ -1,4 +1,4 @@
-# SwiftDM 交接文档（Handoff）
+﻿# SwiftDM 交接文档（Handoff）
 
 > 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-29。
 > 项目根目录：`D:\ai share\repo\SwiftDM\`（唯一主副本）
@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `3f8cb6b`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 33 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `c040493`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 34 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -551,6 +551,21 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
      全套 `pytest` 448 passed / 1 skipped（本轮之前 431）。
    - 复现脚本：`_browsercheck/load_extension_probe.py`（Chrome 154 的开关失效结论，换版本可重测）。
 
+34. **流媒体限速被 `segments` 倍放大（`c040493`）**：yt-dlp 的 `ratelimit` 是**每条连接**的限速，而 HLS/DASH
+     一个分片一条连接——`concurrent_fragment_downloads` 取 `segments`（默认 8），总速率上限就是 `limit × segments`
+     （本地合成 HLS 实测：128KB/s + 8 段，256KB 只用 0.60s，3 倍以上；`DownloadTask` 的全局令牌桶没有这种放大）。
+   - 修法：`media.py` 新增 `MediaTask._spend_quota()`，在进度钩子里取 yt-dlp `ProgressCalculator` 的
+     **全局累计** `downloaded_bytes` 增量，交给 `throttle.consume()`；`ratelimit` 保留（单连接时它自己就够，
+     多连接时当兜底），总速率由全局令牌桶卡住。
+   - 记账细节：`_quota_bytes` 只在任务锁内推进（分片并发上报，计数器回退不计，同一段字节不花两遍）；
+     未限速时 `get_rate() <= 0` 直接返回，零开销；`consume()` 在取任务锁**之前**调用——持锁睡会堵死暂停/取消。
+   - 测试：`tests/test_media_task.py` 三个单测（只花新字节、未限速不碰桶、假时钟下 4000B @1024B/s = 3.906s）；
+     `tests/test_media_integration.py::test_rate_limit_caps_every_fragment_thread_together`
+     （默认 8 段 + 128KB/s ⇒ ≥ 1.9s，修复前约 0.6s）。
+   - 验证：全套 `pytest` 452 passed / 1 skipped（本轮之前 448）。
+   - 顺带核对（**上一轮交接里的说法已过期**）：`finish_action` / `rate_limit` 其实早已落盘，
+     分别在 `6a0fef4`（限速持久化）/ `c3dae07`（定时），`main.py` 启动时恢复；第 7 节旧描述作废。
+
 ---
 
 ## 6. 关键文件速查
@@ -565,7 +580,7 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
 | `torrent.py` | libtorrent 封装（BT/PT）；`retry()` 锁内完成「重置 + 启动」，`start()` guard 收回锁内，`_tick()` 整段持 `_lock` 刷新 |
 | `media_service.py` | 嗅探缓存 `MediaRegistry`（60s TTL，按 tab 聚合媒体项） |
 | `media.py` | `MediaTask`：HLS/DASH/站点解析下载编排 + yt-dlp/ffmpeg 依赖探测；与 `DownloadTask` 同构的 `_xlock` 转换锁 + `_drain_worker`（worker 先 start 再发布） |
-| `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高） |
+| `throttle.py` | 限速令牌桶（写入粒度切片，修瞬时速度读数虚高）；`MediaTask` 进度钩子按累计增量 `consume` |
 | `scheduler.py` | 定时到点自启 + 完成动作（none/shutdown/suspend/beep）+ 可撤销倒计时 |
 | `extension/content.js` | DOM 侧嗅探（MSE/blob、video 元素），`runtime.sendMessage` 上报 |
 | `extension/sniff.js` | content/background 共用的嗅探规则 + Cookie→Netscape |
@@ -606,9 +621,9 @@ python test_norange.py             # 服务器不支持 Range 时，暂停/续�
 **已知限制：**
 - **不做 DRM 绕过**：受保护清单在 preflight / 提取期即判 `drm_protected`，返回 409，无绕过尝试、无任务残留。
 - **MSE / blob 只能降级为“解析本页”**：拿不到直链，改交 yt-dlp 解析页面地址。
-- **定时、`finish_action`、`rate_limit` 均不落盘**，重启即失效。
+- **定时 / `finish_action` / `rate_limit` 均已落盘**：`~/.swiftdm/config.json`（`c3dae07`、`6a0fef4`），`main.py` 启动时恢复，重启后仍生效。
 - **嗅探仅在扩展启用且页面确有网络请求时才有结果**；纯 TS 的 HLS 也能嗅到（靠分片流量摘要归为 `hls_segments`，只读展示项，不可直接下载）。
-- **流媒体限速是 yt-dlp 的“每条连接”限速**：`concurrent_fragment_downloads` 取 `segments`（默认 8），实际总速率上限约为 `limit × segments`（`DownloadTask` 的全局令牌桶没有这种放大）。
+- ~~流媒体限速被 `segments` 倍放大~~ **已修（`c040493`）**：`MediaTask._spend_quota` 按进度钩子的累计增量走全局令牌桶，8 路并发分片的总速率也不再超过设定值（回归见 `tests/test_media_integration.py`）。
 
 **端口事实：** Flask 5000 被占时依次回落 5002–5005；扩展按 `SWIFTDM_BASES` 依次探测，把首个可用端口持久化到 `chrome.storage.local.swiftBase`。
 
@@ -619,7 +634,8 @@ python test_norange.py             # 服务器不支持 Range 时，暂停/续�
 
 ## 8. 给下一个 agent 的建议 / 待办
 
-- **下一轮迭代已在设计**：流媒体嗅探 + HLS/DASH 下载（扩展 popup 媒体面板）、yt-dlp 网页视频解析、ffmpeg 混流、下载调度（定时/限速/完成动作）。已定方案：双引擎按 `kind` 分流——http 直链走现有分段引擎，流媒体走 yt-dlp Python API，任务统一注册进 `DownloadManager._tasks`。spec 将基于本副本核对挂点后撰写。
+- **流媒体方向已闭环**（见第 7 节）：嗅探 + HLS/DASH/网页视频下载 + 限速/定时/完成动作均已实现并验收；spec 与实施计划在 `docs/superpowers/`。
+- **BT 任务仍未接全局限速**（待确认，本轮只记录未动手）：`torrent.py::_apply_session_settings` 没有 `download_rate_limit`，设置里的限速对 BT 完全无效。接法是在 `throttle.set_rate()` 变化时对共享 session `apply_settings({"download_rate_limit": rate})`，保留「0 = 不限速」的语义。
 - 浏览器接管功能需要**真实 Chrome + 手动加载扩展**才能端到端验证（自动化测试覆盖不到扩展侧）。
 - 若用户要继续迭代：常见方向——扩展打包成 CRX 免手动加载、GUI 增加「浏览器捕获」实时面板、接管时支持更多浏览器（目前仅 Chrome MV3）。
 - 保持 `test_norange.py` 绿（暂停/继续完整性），改 `downloader.py` 后务必 `build_exe.py` 再测。
