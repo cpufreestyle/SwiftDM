@@ -883,7 +883,7 @@ def test_setup_tray_builds_the_clamped_icon():
 
 
 def test_clip_bubble_marks_truncation_with_an_ellipsis():
-    """气泡文案夹到栏位上限，被夹掉时补省略号；空档与 None 都当空串。"""
+    """气泡文案夹到栏位上限，被夹掉时补省略号；空白与 None 都当空串。"""
     import main_window as mw
 
     assert mw.TRAY_MSG_TITLE_MAX == 63
