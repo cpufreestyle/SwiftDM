@@ -11,6 +11,7 @@ from flask_cors import CORS
 from downloader import (manager, DownloadManager, get_proxy_mode, set_proxy_mode,
                        AUTO_RETRY_MAX)
 from media_service import media_registry
+from browser_monitor import capture_log
 from throttle import get_rate, set_rate
 from scheduler import scheduler
 from media import ffmpeg_status, ytdlp_available
@@ -619,11 +620,13 @@ def browser_capture():
     # 检查重复
     for t in manager.get_all_tasks():
         if t.url == url and t.status in ("downloading", "paused", "pending"):
+            capture_log.record(url, filename, "web", "duplicate")
             return jsonify({"success": True, "task": t.to_dict(), "duplicate": True})
 
     task = manager.create_task(
         url, config.get_download_dir(), filename, _default_segments())
     task.start()
+    capture_log.record(url, filename, "web", "added")
 
     resp = jsonify({"success": True, "task": task.to_dict()})
     resp.headers["Access-Control-Allow-Origin"] = "*"

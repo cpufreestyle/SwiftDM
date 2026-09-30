@@ -209,6 +209,110 @@ def test_monitor_auto_add_reads_the_segments_setting(tmp_path, monkeypatch, valu
         config.set("segments", saved)
 
 
+def test_capture_log_records_events_and_hands_out_only_new_ones():
+    """捕获流水要让 UI 只拿新事件，否则每个节拍都会把整份历史重画一遍。"""
+    from browser_monitor import CaptureLog
+
+    log = CaptureLog(limit=3)
+    first = log.record("https://c/v/a.bin", "a.bin", "extension", "added")
+    assert first["seq"] == 1
+    assert first["source"] == "extension" and first["outcome"] == "added"
+    assert first["url"] == "https://c/v/a.bin"
+    assert log.since(0) == [first]
+    second = log.record("https://c/v/b.bin", "", "clipboard", "duplicate")
+    assert [ev["seq"] for ev in log.since(first["seq"])] == [second["seq"]]
+    assert log.since(second["seq"]) == []
+
+
+def test_capture_log_is_bounded_and_never_hands_out_a_mutable_reference():
+    """有上限：一直在网页上抓下载时不能无限增长；快照必须是拷贝。"""
+    from browser_monitor import CaptureLog
+
+    log = CaptureLog(limit=2)
+    for i in range(5):
+        log.record(f"https://c/v/{i}.bin", f"{i}.bin", "extension", "added")
+    snapshot = log.since(0)
+    assert [ev["seq"] for ev in snapshot] == [4, 5]
+    snapshot[0]["outcome"] = "tampered"
+    assert log.since(0)[0]["outcome"] == "added"
+
+
+class _CaptureTask:
+    filename = "a.bin"
+    url = "https://c/v/a.bin"
+    status = "downloading"
+
+    def start(self):
+        pass
+
+
+class _CaptureManager:
+    """Manager stub for the capture paths: real create_task, records calls."""
+
+    def __init__(self, active=()):
+        self.created = []
+        self.active = list(active)
+
+    def get_all_tasks(self):
+        return self.active
+
+    def create_task(self, url, save_dir, filename, segments, *args, **kwargs):
+        self.created.append((url, save_dir, filename, segments))
+        return _CaptureTask()
+
+
+def test_add_capture_shares_the_dedupe_rule_and_records_the_outcome(monkeypatch):
+    """Three capture entry points must share one landing: dedupe rule plus log."""
+    import config
+    import browser_monitor
+    from browser_monitor import CaptureLog
+
+    log = CaptureLog()
+    monkeypatch.setattr(browser_monitor, "capture_log", log)
+    active = _CaptureTask()
+    manager = _CaptureManager(active=[active])
+
+    task, outcome = browser_monitor.add_capture(
+        "https://c/v/a.bin", "a.bin", "extension", manager=manager)
+    assert task is None and outcome == "duplicate"
+    assert manager.created == []
+    logged = log.since(0)
+    assert len(logged) == 1
+    assert logged[0]["source"] == "extension"
+    assert logged[0]["outcome"] == "duplicate"
+
+    task, outcome = browser_monitor.add_capture(
+        "https://c/v/b.bin", None, "clipboard", manager=manager)
+    assert isinstance(task, _CaptureTask) and outcome == "added"
+    assert manager.created == [("https://c/v/b.bin", manager.created[0][1], None,
+                                config.clamp_segments(
+                                    config.get("segments")))]
+    assert log.since(logged[-1]["seq"])[0]["outcome"] == "added"
+
+
+def test_extension_capture_lands_in_the_log(tmp_path, monkeypatch):
+    """The extension endpoint is the silent one on desktop; it must log anyway."""
+    import config
+    import browser_monitor
+    from browser_monitor import BrowserCaptureHandler, CaptureLog
+
+    log = CaptureLog()
+    monkeypatch.setattr(browser_monitor, "capture_log", log)
+    handler = BrowserCaptureHandler.__new__(BrowserCaptureHandler)
+    handler.manager = _CaptureManager()
+    monkeypatch.setattr(config, "get_download_dir", lambda: str(tmp_path))
+
+    handler._add_download("https://c/v/a.bin", "a.bin")
+    logged = log.since(0)
+    assert len(logged) == 1
+    assert logged[0]["source"] == "extension"
+    assert logged[0]["outcome"] == "added"
+    assert logged[0]["filename"] == "a.bin"
+
+    handler._add_download("https://c/v/a.bin", "a.bin")
+    assert log.since(logged[-1]["seq"])[0]["outcome"] == "added"
+
+
 def test_no_entry_point_hard_codes_the_thread_count():
     """No create_task call site may pass a literal thread count.
 

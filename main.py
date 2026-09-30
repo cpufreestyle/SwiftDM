@@ -209,18 +209,11 @@ def main():
     _ui_ref = {"window": None}   # 桌面窗口在下面才创建，回调通过它延迟取用
 
     def on_url_captured(url, filename):
-        """浏览器捕获到 URL 时的回调"""
-        import config
-        from downloader import manager
-        save_dir = config.get_download_dir()
-        os.makedirs(save_dir, exist_ok=True)
-        for t in manager.get_all_tasks():
-            if t.url == url and t.status in ("downloading", "paused", "pending"):
-                print(f"[Monitor] URL 已存在任务中，跳过: {url[:60]}...")
-                return
-        task = manager.create_task(
-            url, save_dir, filename, config.clamp_segments(config.get("segments")))
-        task.start()
+        """浏览器捕获到 URL 时的回调（剪贴板监听那一路）"""
+        from browser_monitor import add_capture
+        task, _outcome = add_capture(url, filename, "clipboard")
+        if task is None:
+            return
         print(f"[Monitor] 浏览器捕获下载: {task.filename}")
         _win = _ui_ref["window"]
         if _win is not None:

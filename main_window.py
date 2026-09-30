@@ -111,6 +111,25 @@ def _clip_bubble(text, limit):
     return text[:limit - 1] + "…"
 
 
+# 面板里的来源/结果标签：事件记的是机器词，给人看的应该是中文
+CAPTURE_SOURCE_LABELS = {"extension": "扩展", "clipboard": "剪贴板", "web": "网页"}
+CAPTURE_OUTCOME_LABELS = {"added": "已添加", "duplicate": "重复跳过", "invalid": "无效链接"}
+
+
+def _capture_line(event):
+    """把一条捕获事件压成面板里的一行：时间 · 来源 · 结果 · 名字。
+
+    磁力链接没有文件名，这时退回 URL 填空；
+    过长照托盘那边的老规矩截断，面板是等宽字体，一行放不下太长的东西。
+    """
+    name = (event.get("filename") or "").strip() or (event.get("url") or "?")
+    if len(name) > 40:
+        name = name[:39] + "…"
+    source = CAPTURE_SOURCE_LABELS.get(event.get("source") or "", "?")
+    outcome = CAPTURE_OUTCOME_LABELS.get(event.get("outcome") or "", "?")
+    return f"{event.get('time') or '--:--:--'} · {source} · {outcome} · {name}"
+
+
 def _sparkline(samples, width=SPARK_WIDTH):
     """把最近的速度采样压成一排方块字符，给托盘 tooltip 当迷你速率条用。
 
@@ -2218,6 +2237,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)  # 支持把链接/磁力拖入窗口即新建下载
 
         self._setup_log_panel()
+        self._setup_capture_panel()
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
@@ -2347,6 +2367,12 @@ class MainWindow(QMainWindow):
         self.btn_log.setCheckable(True)
         self.btn_log.toggled.connect(self.log_dock.setVisible)
         toolbar.addWidget(self.btn_log)
+
+        self.btn_capture = QPushButton("📡 捕获")
+        self.btn_capture.setCheckable(True)
+        self.btn_capture.setToolTip("浏览器捕获记录：从扩展、网页、剪贴板来的下载都记在这里")
+        self.btn_capture.toggled.connect(self.capture_dock.setVisible)
+        toolbar.addWidget(self.btn_capture)
 
         self.btn_settings = QPushButton("⚙ 设置")
         self.btn_settings.clicked.connect(self._show_settings)
@@ -2565,20 +2591,21 @@ class MainWindow(QMainWindow):
         t = THEMES[theme]
         for card in getattr(self, "_cards", {}).values():
             card.apply_theme(theme)
-        dock = getattr(self, "log_dock", None)
-        if dock is not None:
-            dock.setStyleSheet(
-                f"QDockWidget::title{{background:{t['toolbar']};"
-                f"color:{t['textMuted']};padding:4px 10px;}}")
+        for dock, text_edit in ((getattr(self, "log_dock", None), getattr(self, "log_edit", None)),
+                                (getattr(self, "capture_dock", None),
+                                 getattr(self, "capture_edit", None))):
+            if dock is not None:
+                dock.setStyleSheet(
+                    f"QDockWidget::title{{background:{t['toolbar']};"
+                    f"color:{t['textMuted']};padding:4px 10px;}}")
+            if text_edit is not None:
+                text_edit.setStyleSheet(
+                    f"QPlainTextEdit{{background:{t['logBg']};color:{t['logFg']};"
+                    f"font-family:'Consolas','Menlo','Courier New',monospace;"
+                    f"font-size:12px;border:none;}}")
         detail = getattr(self, "_detail_dialog", None)
         if detail is not None:
             detail.apply_theme(theme)
-        log_edit = getattr(self, "log_edit", None)
-        if log_edit is not None:
-            log_edit.setStyleSheet(
-                f"QPlainTextEdit{{background:{t['logBg']};color:{t['logFg']};"
-                f"font-family:'Consolas','Menlo','Courier New',monospace;"
-                f"font-size:12px;border:none;}}")
 
         if getattr(self, "tray", None) is not None:
             self._refresh_tray_icon()
@@ -2618,6 +2645,54 @@ class MainWindow(QMainWindow):
             if not self.log_dock.isVisible():
                 self.log_dock.show()
                 self.btn_log.setChecked(True)
+
+    def _setup_capture_panel(self):
+        """底部可展开的浏览器捕获面板：谁下载了什么、从哪来、是否被去重。
+
+        扩展端点和 Web 端那两条路以前在桌面端没有任何回显，任务就这样平空出现在列表里。
+        """
+        t = THEMES[self._theme]
+        self._capture_seen = 0  # 已渲染到哪一条（流水只增不减，按序号取新的）
+        self.capture_dock = QDockWidget("浏览器捕获", self)
+        self.capture_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea |
+                                           Qt.DockWidgetArea.RightDockWidgetArea)
+        self.capture_dock.setStyleSheet(
+            f"QDockWidget::title{{background:{t['toolbar']};"
+            f"color:{t['textMuted']};padding:4px 10px;}}")
+        self.capture_edit = QPlainTextEdit()
+        self.capture_edit.setReadOnly(True)
+        self.capture_edit.setPlaceholderText("还没有捕获记录")
+        self.capture_edit.setStyleSheet(
+            f"QPlainTextEdit{{background:{t['logBg']};color:{t['logFg']};"
+            f"font-family:'Consolas','Menlo','Courier New',monospace;"
+            f"font-size:12px;border:none;}}"
+        )
+        self.capture_dock.setWidget(self.capture_edit)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.capture_dock)
+        self.tabifyDockWidget(self.log_dock, self.capture_dock)
+        self.capture_dock.hide()
+
+    def _append_capture(self, text):
+        """把一条捕获追加到面板并自动滚到底部。"""
+        self.capture_edit.appendPlainText(text)
+        sb = self.capture_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _pump_capture_log(self):
+        """把捕获流水搬进面板；非剪贴板的那几路顺带在状态栏补一条提示。
+
+        剪贴板那一路早就弹托盘气泡，这里只给一直静默的扩展/网页端点补反馈。
+        """
+        import browser_monitor
+        events = browser_monitor.capture_log.since(getattr(self, "_capture_seen", 0))
+        if not events:
+            return
+        self._capture_seen = events[-1]["seq"]
+        for event in events:
+            self._append_capture(_capture_line(event))
+            if event.get("outcome") == "added" and event.get("source") != "clipboard":
+                name = event.get("filename") or (event.get("url") or "?")
+                self.status_bar.showMessage(f"🌐 浏览器捕获: {name}", 5000)
 
     def _setup_tray(self):
         self._tray_icon_state = None  # 当前托盘图标状态（缓存，避免每节拍重绘）
@@ -2754,6 +2829,7 @@ class MainWindow(QMainWindow):
                 stats.get("failed", 0), self._finish_countdown_text_now(),
                 _sparkline(self.speed_graph.samples()),
                 getattr(self, "_overall_pct", None)))
+            self._pump_capture_log()
             self._update_tray_icon(stats["active"], stats["failed"],
                                    getattr(self, "_overall_pct", None))
             self._update_finish_countdown()

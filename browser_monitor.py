@@ -39,6 +39,71 @@ DOWNLOAD_MIMES = {
 }
 
 
+class CaptureLog:
+    """浏览器捕获事件流水：监控线程写，桌面面板读。
+
+    以前只有剪贴板那一路会给提示，扩展端点加的活是静默的：
+    任务往往平空出现，用户不知道它从哪来、也不知道是否被去重。
+    流水只增不减（有上限），每条事件带序号；UI 记住自己渲染到第几条，
+    后面只拿新的那些，不需要让两个线程共享一份列表。
+    """
+
+    def __init__(self, limit=200):
+        self.limit = limit
+        self._events = []
+        self._seq = 0
+        self._lock = threading.Lock()
+
+    def record(self, url, filename, source, outcome):
+        """追加一条事件，返回它本身（UI 据此去重渲染）。"""
+        with self._lock:
+            self._seq += 1
+            event = {
+                "seq": self._seq,
+                "time": time.strftime("%H:%M:%S"),
+                "url": url or "",
+                "filename": filename or "",
+                "source": source,
+                "outcome": outcome,
+            }
+            self._events.append(event)
+            if len(self._events) > self.limit:
+                del self._events[:len(self._events) - self.limit]
+            return dict(event)
+
+    def since(self, seq):
+        """取序号之后的事件；被缓冲挤掉的早期事件补不回来。"""
+        with self._lock:
+            return [dict(ev) for ev in self._events if ev["seq"] > seq]
+
+
+capture_log = CaptureLog()
+
+
+def add_capture(url, filename=None, source="clipboard", manager=None):
+    """捕获落地：去重 → 建任务 → 启动 → 记流水。
+
+    扩展端点和剪贴板以前各写一遍去重 + 建任务，口径散在两处；
+    现在共用这一条路，顺带把事件写进 capture_log，桌面面板才有东西可看。
+    返回 (task, outcome)：同一 URL 已有活跃任务时 outcome 为 duplicate，不重建（面板里看得见「这次为什么没动静」）。
+    """
+    import os
+    import config
+    if manager is None:
+        from downloader import manager as manager
+    for task in manager.get_all_tasks():
+        if task.url == url and task.status in ("downloading", "paused", "pending"):
+            capture_log.record(url, filename, source, "duplicate")
+            return None, "duplicate"
+    save_dir = config.get_download_dir()
+    os.makedirs(save_dir, exist_ok=True)
+    task = manager.create_task(
+        url, save_dir, filename, config.clamp_segments(config.get("segments")))
+    task.start()
+    capture_log.record(url, filename, source, "added")
+    return task, "added"
+
+
 class BrowserCaptureHandler(BaseHTTPRequestHandler):
     """处理浏览器扩展发送的下载捕获请求"""
     manager = None  # 由外部设置
@@ -67,6 +132,7 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
                     self._add_download(url, filename or None)
                     resp = {"success": True, "message": "已捕获"}
                 else:
+                    capture_log.record(url, filename, "extension", "invalid")
                     resp = {"success": False, "message": "无效 URL"}
             except Exception as e:
                 resp = {"success": False, "message": str(e)}
@@ -81,21 +147,12 @@ class BrowserCaptureHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _add_download(self, url, filename):
-        import os
-        import config
         if self.manager is None:
             from downloader import manager as mgr
             self.__class__.manager = mgr
-        # 去重：同 URL 的活跃任务不重复添加（与 Flask /api/browser-capture 行为一致）
-        for t in self.manager.get_all_tasks():
-            if t.url == url and t.status in ("downloading", "paused", "pending"):
-                print(f"[Monitor] URL 已存在任务中，跳过: {url[:60]}...")
-                return
-        save_dir = config.get_download_dir()
-        os.makedirs(save_dir, exist_ok=True)
-        task = self.manager.create_task(
-            url, save_dir, filename, config.clamp_segments(config.get("segments")))
-        task.start()
+        # 去重 / 建任务 / 记流水都在 add_capture 里，与剪贴板和 Web 端同口径
+        _task, outcome = add_capture(url, filename, "extension", manager=self.manager)
+        print(f"[Monitor] 捕获 {url[:60]} -> {outcome}")
 
 
 class BrowserMonitor:
@@ -197,16 +254,7 @@ class BrowserMonitor:
         return False
 
     def _auto_add(self, url):
-        """自动添加下载"""
-        import os
-        import config
-        try:
-            from downloader import manager
-        except ImportError:
-            return
-        save_dir = config.get_download_dir()
-        os.makedirs(save_dir, exist_ok=True)
-        task = manager.create_task(
-            url, save_dir, None, config.clamp_segments(config.get("segments")))
-        task.start()
-        print(f"[Monitor] 自动添加下载: {task.filename}")
+        """自动添加下载（没有回调时由剪贴板监听直接走这条）"""
+        task, _outcome = add_capture(url, None, "clipboard")
+        if task is not None:
+            print(f"[Monitor] 自动添加下载: {task.filename}")

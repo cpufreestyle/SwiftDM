@@ -953,6 +953,124 @@ def test_overall_ratio_matches_the_header_math():
     assert mw._overall_ratio([SimpleNamespace(total_size=0, downloaded=0)]) == (0, 0, 0)
 
 
+def test_capture_line_labels_the_event_for_humans():
+    """面板里的一行要让人看懂：时间 · 来源 · 结果 · 名字；机器词和 URL 都不该直接露出。"""
+    import main_window as mw
+
+    line = mw._capture_line({"time": "10:20:30", "filename": "movie.mkv",
+                             "url": "https://c/v/movie.mkv", "source": "extension",
+                             "outcome": "added"})
+    assert line == "10:20:30 · 扩展 · 已添加 · movie.mkv"
+    assert mw._capture_line({"source": "clipboard", "outcome": "duplicate",
+                             "url": "https://c/v/x.bin"}) == "--:--:-- · 剪贴板 · 重复跳过 · https://c/v/x.bin"
+    assert mw._capture_line({"source": "web", "outcome": "invalid"}) == "--:--:-- · 网页 · 无效链接 · ?"
+    assert mw._capture_line({}) == "--:--:-- · ? · ? · ?"
+    long_name = "a" * 90
+    long_line = mw._capture_line({"filename": long_name, "time": "10:20:30",
+                                   "source": "extension", "outcome": "added"})
+    assert long_line == "10:20:30 · 扩展 · 已添加 · " + "a" * 39 + "…", long_line
+
+
+def test_main_window_pumps_the_capture_log_into_the_panel(qt_app, monkeypatch):
+    """真实主窗口：捕获流水进面板，且静默的那几路顺带在状态栏补一条提示。"""
+    from types import SimpleNamespace
+    import browser_monitor
+    import downloader
+    import main_window as mw
+
+    class _Manager:
+        def get_all_tasks(self):
+            return []
+
+        def get_stats(self):
+            return {"total_speed": 0.0, "active": 0, "completed": 0,
+                    "failed": 0, "paused": 0, "total": 0}
+
+    monkeypatch.setattr(downloader, "manager", _Manager())
+    log = browser_monitor.CaptureLog()
+    monkeypatch.setattr(browser_monitor, "capture_log", log)
+    was_quit = qt_app.quitOnLastWindowClosed()
+    qt_app.setQuitOnLastWindowClosed(False)
+    win = mw.MainWindow()
+    try:
+        log.record("https://c/v/movie.mkv", "movie.mkv", "extension", "added")
+        log.record("https://c/v/movie.mkv", "movie.mkv", "extension", "duplicate")
+        log.record("https://c/v/log.zip", "log.zip", "clipboard", "added")
+        win._pump_capture_log()
+        panel = win.capture_edit.toPlainText()
+        assert "扩展 · 已添加 · movie.mkv" in panel, panel
+        assert "扩展 · 重复跳过 · movie.mkv" in panel, panel
+        assert "剪贴板 · 已添加 · log.zip" in panel, panel
+        assert "浏览器捕获: movie.mkv" in win.status_bar.currentMessage()
+        # 剪贴板那一路自己弹气泡，状态栏留给静默的两路
+        assert "浏览器捕获: log.zip" not in win.status_bar.currentMessage()
+        # 重复拉取不会把同一条画两次
+        before = len(panel.splitlines())
+        log.record("https://c/v/old.zip", "", "web", "added")
+        monkeypatch.setattr(browser_monitor, "capture_log", log)
+        win._pump_capture_log()
+        after = win.capture_edit.toPlainText().splitlines()
+        assert len(after) == before + 1, after
+        assert after[-1].endswith("https://c/v/old.zip"), after[-1]
+        assert win._capture_seen == 4, win._capture_seen
+    finally:
+        win.close()
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+        qt_app.setQuitOnLastWindowClosed(was_quit)
+
+
+def test_capture_panel_is_wired_like_the_log_panel(qt_app):
+    """面板要真装上：按钮可展开、与日志面板同位（不会撑缩主区）、空时有占位文案。"""
+    import main_window as mw
+
+    win = mw.MainWindow()
+    try:
+        assert win.btn_capture.text().endswith("捕获"), win.btn_capture.text()
+        assert win.capture_dock.windowTitle() == "浏览器捕获"
+        assert win.capture_edit.placeholderText() == "还没有捕获记录"
+        assert win.capture_edit.isReadOnly()
+        # 主窗口本身没有 show()，因此看的是“在窗口里是否可见”
+        win.btn_capture.setChecked(True)
+        qt_app.processEvents()
+        assert win.capture_dock.isVisibleTo(win)
+        win.btn_capture.setChecked(False)
+        qt_app.processEvents()
+        assert not win.capture_dock.isVisibleTo(win)
+    finally:
+        win.close()
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+
+
+def test_capture_panel_follows_the_theme(qt_app):
+    """切主题时两个面板都要重绘；别把 text_edit 的样式丢到别的分支里。"""
+    import main_window as mw
+
+    win = mw.MainWindow()
+    try:
+        win._apply_theme("light")
+        light_bg = mw.THEMES["light"]["logBg"]
+        light_fg = mw.THEMES["light"]["logFg"]
+        for edit in (win.log_edit, win.capture_edit):
+            sheet = edit.styleSheet()
+            assert light_bg in sheet, sheet
+            assert light_fg in sheet, sheet
+        for dock in (win.log_dock, win.capture_dock):
+            assert mw.THEMES["light"]["toolbar"] in dock.styleSheet()
+        win._apply_theme("dark")
+        dark_bg = mw.THEMES["dark"]["logBg"]
+        for edit in (win.log_edit, win.capture_edit):
+            assert dark_bg in edit.styleSheet(), edit.styleSheet()
+    finally:
+        win.close()
+        win.logger.removeHandler(win._log_handler)
+        win.deleteLater()
+        qt_app.processEvents()
+
+
 def test_main_window_feeds_the_tray_a_sparkline(qt_app, monkeypatch):
     """真实主窗口跑一节拍：迷你条与总进度都来自同一轮刷新。"""
     from types import SimpleNamespace
@@ -2342,7 +2460,8 @@ def test_desktop_tab_order_walks_the_window_in_reading_order(qt_app, monkeypatch
         chain = [
             win.url_input, win.btn_add, win.btn_pause_all, win.btn_resume_all,
             win.btn_retry_failed, win.btn_clear, win.btn_open_dir,
-            win.btn_copy_links, win.btn_export, win.btn_log, win.btn_settings,
+            win.btn_copy_links, win.btn_export, win.btn_log, win.btn_capture,
+            win.btn_settings,
             win._filter_btns["all"], win._filter_btns["active"],
             win._filter_btns["completed"], win._filter_btns["failed"],
             win.sort_combo, win.compact_btn, win.search_input, win.scroll,
