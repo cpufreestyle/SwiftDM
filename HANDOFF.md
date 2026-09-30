@@ -579,6 +579,18 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 测试：`tests/test_throttle.py` 2 个（注册即回放 + 变更通知、下游同步失败不影响 `set_rate`）；
      `tests/test_torrent_rate_limit.py` 4 个（建 session 读当前值、脏值归一化、热改下发、真 session 端到端）。
      实机验证 1MB → 512KB → 不限速 三态都落到 session 上；全套 `pytest` 458 passed / 1 skipped（本轮之前 452）。
+36. **15 Task 实施计划逐项复核（docs）**：`docs/superpowers/plans/2026-09-23-media-sniffing.md` 是 4742 行的
+    15 Task 计划，但**实现期间一个 checkbox 都没勾过**（全文 95 个 `- [ ]` 全空），只看文档会误判成「0% 完成」。
+    本轮按每个 Task 的 `**Files**` / `**Interfaces**` 契约逐项对代码复核：**15 / 15 全部落地**，文件与接口符号
+    无一缺失（连 `noteFragment` 的 10s / 5 片阈值、`scheduler` 的「先忙过才武装」都还是原样）。
+  - 回归证据（本机重跑）：`python -m pytest -q` **458 passed, 1 skipped**（唯一 skip 属环境性）；
+    `tests/*.js` 14 个逐个 `node` 执行，全部 rc=0。
+  - 复核只改文档、不动代码。计划里两处「计划 vs 实现」写反了的地方已回填：Task 11 设计要点 5 要求
+    `finish_action` / `rate_limit` **不落盘**，实现是落盘并启动恢复（`6a0fef4` / `c3dae07`）；设计要点 6
+    要求定时任务**不跨重启**，实现是跨重启（`8b6975e`）。两条都补进了文末「与 spec 的差异说明」第 10、11 条，
+    原文处各加一条「2026-09-30 复核」批注，后来者不会再被原文误导。
+  - 计划新增「复核记录（2026-09-30）」小节：15 行 Task × 结论 × 证据表 + 回归数字，并声明其结论
+    优先于上面未勾选的 checkbox。
 
 ---
 

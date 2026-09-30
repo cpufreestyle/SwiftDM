@@ -3035,7 +3035,13 @@ git commit -m "feat: 扩展弹窗新增嗅探媒体列表与一键下载"
 3. 副作用（`task.start()` / 关机命令 / 提示音）一律在 `self._lock` 之外执行，避免持锁调用外部代码。
 4. 一次动作只服务一批任务：触发后 `_finish_action` 复位为 `none`，要再来一次必须重新勾选。
 5. `finish_action` 与 `rate_limit` 一样**不落盘**：重启即失效，避免上次会话遗留的关机计划把机器关掉。
+
+> **2026-09-30 复核：这条没按原样实现。** `rate_limit`（`6a0fef4`）与 `finish_action`（`c3dae07`）都写进
+> `~/.swiftdm/config.json`，`main.py` 启动时恢复，重启后仍生效。取舍见文末「与 spec 的差异说明」第 10 条。
 6. 定时任务不跨重启：历史加载时 `pending` 会被 `_reconstruct_task()` 改成 `cancelled`（`downloader.py:703` 起的既有行为），UI 侧无需特判。
+
+> **2026-09-30 复核：这条也已被推翻（`8b6975e`）。** 现在只把**未登记在** `config["scheduled"]` 里的 `pending`
+> 改成 `cancelled`；登记在册的定时任务重启后仍是 `pending`，到点由 `scan()` 拉起。见第 11 条。
 7. 倒计时已经武装后，只要列表里再出现任何忙任务（重试、新添加、还没到期的定时任务），本轮 `scan()` 立刻撤销倒计时（`disarmed=True`）—— 对应 spec §4「60 秒缓冲期内任何新任务取消动作」。
 8. Web-only 下没有系统托盘，完成后的通知退化为 SSE 字段：`_stream_payload()` 里带 `finish: {action, remaining}`，前端据此弹一次提示（Task 13 消费）。
 
@@ -4740,3 +4746,38 @@ git commit -m "docs: 补充流媒体嗅探打包配置与验收记录"
 7. **调度扫描间隔 5 秒**（spec 写 30 秒）。理由：30 秒意味着「定时 20:00 开始」最坏延后到 20:00:30，用户一定会当成 bug；一次扫描只是内存里遍历 `_tasks`，5 秒的代价可以忽略。
 8. **Web UI 不做「媒体嗅探」汇总页签**（spec §2 Web UI 行）。理由：媒体列表的入口在扩展 popup（设计阶段已确认），后端 `MediaRegistry` 是 60 秒 TTL 的易失缓存，Web 页签只在扩展刚上报过的一瞬间有内容；Web UI 用「类型 = HLS/DASH/网页视频解析 + 直链粘贴」覆盖同一诉求，Task 12 已实现。
 9. **完成后动作取值固定为 `none / shutdown / suspend / beep`**（spec §1 那句还列了「静音」）。理由：关机/睡眠前把系统静音对下载任务没有任何作用，而 `beep`（`winsound`）加上 Web-only 下的 SSE 提示已经覆盖了「通知」这一项。
+
+10. **`rate_limit` / `finish_action` 落盘，不是「重启即失效」**（Task 11 设计要点 5 原文要求不落盘）。限速与完成动作都是用户主动勾选的长期偏好，每次重启让用户重设一遍属于无谓的重复劳动；`finish_action` 的关机风险由两道闸门兜住——必须先观察到任务忙过一次才武装倒计时，以及 60 秒可撤销倒计时（默认值 `none`，见 `config.py`）。恢复逻辑在 `main.py` 启动段。
+11. **定时任务跨重启保留**（Task 11 设计要点 6 原文要求「`pending` 一律改 `cancelled`」）。`_reconstruct_task()` 现在只把**未登记在** `config["scheduled"]` 里的 `pending` 标成 `cancelled`；登记在册的定时任务重启后仍是 `pending`，到点由 `scan()` 拉起——否则定时下载会在重启后凭空消失，调度条目又被当失效条目清掉（`8b6975e`）。
+
+---
+
+## 复核记录（2026-09-30）：15 个 Task 全部落地
+
+这份计划按 TDD 的写法把每个 Task 拆成了 `- [ ]` 步骤，但**实现期间一个 checkbox 都没勾过**（全文 95 个 `- [ ]` 全部留空），
+只看文档会得到「0% 完成」的错误印象。2026-09-30 按每个 Task 的 `**Files**` 与 `**Interfaces**` 契约逐项对代码复核了一遍：
+**15 / 15 落地，行为由现有测试兜住。本节的结论优先于上面未勾选的 checkbox。**
+
+| Task | 复核结论 | 证据 |
+|------|----------|------|
+| 1 MediaRegistry | `media_service.py` 的 `normalize_media_url` / `MediaRegistry`（`record` / `list_for_tab` / `count`）与模块级单例齐备，item 九个字段全在；`tests/conftest.py` 负责 `sys.path` | `tests/test_media_registry.py` |
+| 2 嗅探 API | `POST /api/media/discover`、`GET /api/media/list` 都有 `OPTIONS` 预检与 CORS 头；浏览器监控关闭时短路返回 `{"ok":false,"reason":"disabled"}` | `tests/test_media_api.py` |
+| 3 kind 判定 | `KIND_AUTO/HTTP/HLS/DASH/VIDEO_PAGE`、`VALID_KINDS`、`classify_kind`、`MediaError` 家族、`ffmpeg_status` / `ytdlp_available` / `set_ytdlp_module` 全在；yt-dlp 已进 `requirements.txt` 与 `build_exe.py` | `tests/test_media_classify.py` |
+| 4 全局限速 | `throttle.set_rate/get_rate/consume` + 假时钟钩子；`downloader.py` 分段读循环走 `consume()`，`/api/settings` 暴露 `rate_limit` | `tests/test_throttle.py` |
+| 5 MediaTask | `preflight/start/pause/resume/cancel/retry/to_dict` 与约定的 opts 键清单（含 `ratelimit`、`concurrent_fragment_downloads`、`cookiefile`）一致 | `tests/test_media_task.py` |
+| 6 引擎分流 | `create_task` 按 kind 三引擎分流；`/api/add` 收齐扩展字段，400 走 `invalid_url` / `invalid_kind`，409 取 `e.reason`（即 `drm_protected` / `needs_ffmpeg`）且拒绝后清残骸 | `tests/test_dispatch.py` |
+| 7 sniff.js | 全局 `SwiftDMSniff` 五个导出齐备；分片阈值仍是 10s 窗口 / 5 个不同地址（`FRAGMENT_WINDOW=10000`、`FRAGMENT_THRESHOLD=5`），`hls_segments` 保持只读 | `tests/test_sniff.js` |
+| 8 background.js | `importScripts('sniff.js')`、`postJson` / `getJson`（`lastGoodBase` + `chrome.storage.local.swiftBase`）、`reportMedia`、`addMediaTask`，三个消息分支共用同一个 `onMessage` 监听器 | `tests/test_background_load.js` |
+| 9 content + manifest | `manifest.json` 的 `content_scripts` 先加载 `sniff.js` 再加载 `content.js`，`tabs` / `cookies` 权限在；DOM 侧发 `swiftdm-dom-media` | `node --check` + `tests/test_dom_ids.js` |
+| 10 popup 面板 | 媒体行带 kind 芯片与下载按钮；`is_mse` 与 `hls_segments` 两道判断把按钮改写成「解析本页」并转 `video_page` | `tests/test_popup_panels.js` |
+| 11 scheduler | `scan/start/status/countdown_remaining/cancel_finish_action/build_command` 与 `FINISH_ACTIONS` / `COUNTDOWN_SECONDS` / `SCAN_INTERVAL` 齐备；「先忙过才武装」「忙了就撤销」两条设计要点仍是原样；`/api/finish_action/cancel` 在 | `tests/test_scheduler.py`、`tests/test_scheduler_api.py` |
+| 12 添加面板 | `#advToggle` `#addAdv` `#kindSelect` `#resolutionSelect` `#startAtInput`、`.kind-badge` / `.sched-badge`、`escapeHtml` / `REASON_HINTS` 齐备 | `tests/test_web_ui.py` |
+| 13 设置面板 | `#settingsBtn` `#settingsModal` `#rateInput` `#rateUnlimited` `#applyRate` `#finishAction` `#finishStatus` `#cancelFinish` `#capFfmpeg` `#capYtdlp` 与 `openSettings/closeSettings/refreshSettings/KB2B/B2KB` 齐备 | `tests/test_settings_panel.py` |
+| 14 集成测试 | 合成 HLS 服务器端到端，缺 yt-dlp / ffmpeg 时用 `importorskip` 自跳过 | `tests/test_media_integration.py` |
+| 15 打包与验收 | `build_exe.py` hidden-import 补齐，`dist/SwiftDM.exe` 存在，验收记录 A 节自动化 + B 节 10 项手工全过 | `2026-09-23-media-sniffing-acceptance.md` |
+
+**回归证据（2026-09-30 本机重跑）**：`python -m pytest -q` → 458 passed, 1 skipped（唯一 skip 属环境性）；
+`tests/*.js` 14 个文件逐个 `node` 执行，全部 rc=0。
+
+**复核中改掉的只有文档**：Task 11 设计要点 5 与 6 各补一条批注，文末「与 spec 的差异说明」补第 10、11 条
+（`rate_limit` / `finish_action` 落盘、定时任务跨重启——实现与原文写反了，理由见那两条）。
