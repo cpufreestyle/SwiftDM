@@ -20,6 +20,7 @@ import platform
 import shutil
 import sys
 
+from build_crx import draw_app_icon
 from PyInstaller.__main__ import run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,8 +52,8 @@ def _target_meta(target):
 def build_icon():
     """生成图标（下载风格）。
 
-    项目自带的 extension/icons/*.png 已损坏（内容为文本转义而非真实 PNG），
-    因此这里用 PIL 直接绘制一个简洁的下载箭头图标。
+    图标绘制废除 build_crx.py 里的 draw_app_icon（扩展图标也用它），
+    两处图标从此同源，不再各画一张。
     Windows 用 .ico；macOS 用 .icns（由 .png 转）；Linux 用 .png。
     无 PIL 或无法转换时返回 None，由 PyInstaller 使用默认图标。
     """
@@ -62,24 +63,7 @@ def build_icon():
         print(">>> 未安装 Pillow，跳过图标生成（使用默认图标）", file=sys.stderr)
         return None
 
-    S = 256
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    # 圆角背景
-    bg = (45, 120, 245, 255)
-    d.rounded_rectangle([16, 16, S - 16, S - 16], radius=48, fill=bg)
-
-    # 白色下载箭头：竖直杆 + 三角箭头 + 底部托盘
-    white = (255, 255, 255, 255)
-    cx = S // 2
-    # 杆
-    d.rectangle([cx - 14, 70, cx + 14, 150], fill=white)
-    # 箭头三角
-    d.polygon([(cx, 196), (cx - 52, 132), (cx + 52, 132)], fill=white)
-    # 底部托盘
-    d.rounded_rectangle([cx - 64, 206, cx + 64, 226], radius=10, fill=white)
-
+    img = draw_app_icon(256)
     target = _detect_target()
     if target == "win":
         out = os.path.join(HERE, "icon.ico")
