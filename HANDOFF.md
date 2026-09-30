@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `39ea11f`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 31 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `e7ea57b`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 32 个 commit 的验证状态见第 5 节。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -514,6 +514,21 @@ SWIFTDM_PORT=5100 SWIFTDM_MONITOR_PORT=5101 dist\SwiftDM.exe --web-only
    - 测试：新增 2 组（上限数值 / 省略号 / 边界原样 / `None`；真实 `_TrayIcon.showMessage` 确实把长文案送进夹取再交给 Qt）。
    - 验证：`pytest` 423 passed / 1 skipped（本轮之前 421）；变异测试 **4/4 全红**（去标题夹 / 去正文夹 / 夹取回退为恒等值 / 两个上限对调）。
    - 复现脚本：`_browsercheck/`（上轮已收敛）；本轮只改 `main_window.py` 与 tests。
+
+32. **浏览器捕获实时面板（`e7ea57b`）**：扩展端点、剪贴板监听、网页表单三条路径此前各写一遍「去重 → 建任务 → 启动」，
+     桌面端却零回显——任务平空出现在列表里，同 URL 被去重时也无声无息，扩展端点更是连托盘气泡都不弹的那一路：
+   - `add_capture()`（`browser_monitor.py`）收编为三条路径共用的落地函数；`CaptureLog` 是带上限的线程安全事件流水
+     （事件带 `seq/time/url/filename/source/outcome`），`since(seq)` 只发 UI 没看过的——监控线程写、面板读，不必共享一份列表。
+   - 面板是底部 dock，与日志面板 `tabifyDockWidget` 叠放，不挤压中间任务列表；工具栏「📡 捕获」按钮展开，
+     `_apply_theme` 改为遍历两个 dock/edit，与日志共用同一套主题样式。
+   - `_capture_line` 把机器词翻成中文（扩展/剪贴板/网页、已添加/重复跳过/无效链接），磁力链接没文件名时退回 URL，
+     过长照托盘 tooltip 的老规矩截断补 `…`；状态栏提示只留给非剪贴板的 added——剪贴板那路早有托盘气泡，不重复打扰。
+   - 测试：`tests/test_dispatch.py` 新增 4 组（流水契约 / 有上限且给拷贝 / 共用去重口径 / 真实扩展端点落流水）；
+     `tests/test_desktop_ui.py` 新增 4 组（行格式含截断与未知值 / 真实主窗口拉取 / 面板接线 / 主题跟随），并改 Tab 序期望。
+   - 验证：`pytest` 431 passed / 1 skipped（本轮之前是 423）；变异测试 **8/8 全红**（序号不前进 / 静默路也弹状态栏 /
+     名字不截断 / 机器词外泄 / 按钮接到日志 dock / 日志无上限 / `since()` 忽略序号 / 去重检查被删）。
+   - 复现脚本：`_browsercheck/capture_panel_shot.py`（深/浅两主题渲染截图）。变异脚本照上一轮的做法先备份、后还原、
+     再按 sha256 校验——上轮被机器负载拖死、`main_window.py` 留在变异态的教训不能忘。
 
 ---
 
