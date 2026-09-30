@@ -882,6 +882,48 @@ def test_setup_tray_builds_the_clamped_icon():
     assert "self.tray = _TrayIcon(self)" in src
 
 
+def test_clip_bubble_marks_truncation_with_an_ellipsis():
+    """气泡文案夹到栏位上限，被夹掉时补省略号；空档与 None 都当空串。"""
+    import main_window as mw
+
+    assert mw.TRAY_MSG_TITLE_MAX == 63
+    assert mw.TRAY_MSG_BODY_MAX == 255
+    assert mw._clip_bubble(None, 10) == ""
+    assert mw._clip_bubble("  hi  ", 10) == "hi"
+    assert mw._clip_bubble("abc", 3) == "abc"
+    assert mw._clip_bubble("abcdefghij", 4) == "abc" + "…"
+    for limit in (mw.TRAY_MSG_TITLE_MAX, mw.TRAY_MSG_BODY_MAX):
+        long_text = "文" * 999
+        clipped = mw._clip_bubble(long_text, limit)
+        assert len(clipped) == limit
+        assert clipped.endswith("…")
+        assert clipped.startswith("文")
+
+
+def test_tray_bubbles_are_clamped_before_qt_sees_them(qt_app, monkeypatch):
+    """长气泡的标题与正文先过闸门再交给 Qt；否则 Windows 静默截尾。"""
+    import main_window as mw
+
+    seen = []
+    real = mw._clip_bubble
+
+    def spy(text, limit):
+        seen.append((text, limit))
+        return real(text, limit)
+
+    monkeypatch.setattr(mw, "_clip_bubble", spy)
+    tray = mw._TrayIcon()
+    tray.showMessage("t" * 300, "b" * 900,
+                     mw.QSystemTrayIcon.MessageIcon.Information, 1)
+
+    assert [limit for _, limit in seen] == [mw.TRAY_MSG_TITLE_MAX, mw.TRAY_MSG_BODY_MAX]
+    assert seen[0][0] == "t" * 300 and seen[1][0] == "b" * 900
+    short = mw._tray_tip(3, 4096, 8, spark=mw._sparkline([1, 2, 4]))
+    tray.setToolTip(short)
+    assert tray.toolTip() == short
+
+
+
 def test_speed_graph_samples_expose_the_recent_window():
     """曲线采样窗口对外开放，迷你条不再维护第二份历史。"""
     import main_window as mw

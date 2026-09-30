@@ -93,6 +93,24 @@ SPARK_WIDTH = 12
 TRAY_TIP_MAX = 127  # 托盘气泡容纳的字符数上限
 
 
+# 托盘气泡（NOTIFYICONDATA）给标题 64、正文 256 个宽字符栏位（含结尾 \0），
+# 也就是标题 63 / 正文 255；超出的部分不会换行也不会自动加省略号，直接被静默吃掉。
+TRAY_MSG_TITLE_MAX = 63
+TRAY_MSG_BODY_MAX = 255
+
+
+def _clip_bubble(text, limit):
+    """把气泡文案夹到 Windows 的栏位上限，被夹掉时补一个省略号。
+
+    夹掉的常常正是尾部最该看见的东西（失败原因后半段、长文件名的后缀），
+    所以留个省略号，让用户知道这条文案不全而不是它本来就短。
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit - 1] + "…"
+
+
 def _sparkline(samples, width=SPARK_WIDTH):
     """把最近的速度采样压成一排方块字符，给托盘 tooltip 当迷你速率条用。
 
@@ -285,17 +303,23 @@ def _tray_icon(icon_state, tokens=None, progress=None):
 
 
 class _TrayIcon(QSystemTrayIcon):
-    """托盘图标：tooltip 的统一长度闸门。
+    """托盘图标：tooltip 与气泡的统一长度闸门。
 
     Windows 托盘气泡（NOTIFYICONDATA.szInfo）只容纳 127 字符，超长会被静默截尾，
     而被吃掉的往往正是末尾最该看见的信息（关机倒计时、失败数）。`_tray_tip` 已经
     会主动牺牲迷你条来腾长度，但那是「调用方自觉」；只要以后有人再往托盘写一次
     tooltip，这个口子就重新开了。闸门放在 setter 这一层，新写入点便无需各自惦记。
+    气泡这一路同样：标题栏位 64、正文栏位 256（含结尾 \0）。
     """
 
     def setToolTip(self, text):
         # 超长直接截尾，保住 NOTIFYICONDATA 的字符上限
         super().setToolTip((text or "")[:TRAY_TIP_MAX])
+
+    def showMessage(self, title, text, icon, msecs):
+        # 气泡超长同样被 Windows 静默截尾，这里先夹到闸门内
+        super().showMessage(_clip_bubble(title, TRAY_MSG_TITLE_MAX),
+                            _clip_bubble(text, TRAY_MSG_BODY_MAX), icon, msecs)
 
 
 def _tray_bubble(owner, title, text, icon, msecs, kind="info"):
