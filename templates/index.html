@@ -1270,19 +1270,34 @@ function updateSelectBar() {
   });
 }
 
+// 删除任务的第二步确认：要不要连磁盘文件一起删（不可恢复）
+function confirmRemoveFiles(count) {
+  return confirm(`同时删除这 ${count} 个任务的磁盘文件吗？磁盘文件不可恢复，` +
+                 `点“取消”则只删除任务、文件保留在磁盘。`);
+}
+
 async function batchAction(action) {
   const targets = batchTargets(action);
   if (!targets.length) return;
-  if (action === "remove" && !confirm(`确定删除选中的 ${targets.length} 个任务吗？`)) return;
+  let deleteFiles = false;
+  if (action === "remove") {
+    if (!confirm(`确定删除选中的 ${targets.length} 个任务吗？`)) return;
+    deleteFiles = confirmRemoveFiles(targets.length);
+  }
+  const isRemove = action === "remove";
   let ok = 0;
   for (const id of targets) {
-    const isRemove = action === "remove";
-    const res = await api(isRemove ? `/api/remove/${id}` : `/api/${action}/${id}`,
-                          { method: isRemove ? "DELETE" : "POST" });
+    const url = isRemove && deleteFiles ? `/api/remove/${id}?delete_files=1`
+               : isRemove ? `/api/remove/${id}` : `/api/${action}/${id}`;
+    const res = await api(url, { method: isRemove ? "DELETE" : "POST" });
     if (res && res.success !== false) ok++;
   }
-  const label = { pause: "暂停", resume: "继续", retry: "重试", remove: "删除" }[action] || action;
-  showToast(`已${label} ${ok} 个任务`);
+  if (isRemove) {
+    showToast(`已删除 ${ok} 个任务（${deleteFiles ? "含磁盘文件" : "文件保留在磁盘"}）`);
+  } else {
+    const label = { pause: "暂停", resume: "继续", retry: "重试", remove: "删除" }[action] || action;
+    showToast(`已${label} ${ok} 个任务`);
+  }
   clearSelection();
   const res = await api("/api/tasks");   // SSE 有延迟，主动拉一次保除即反馈
   if (res && res.tasks) renderTasks(res.tasks);
@@ -1353,7 +1368,13 @@ async function openFile(id) {
 }
 
 async function removeTask(id) {
-  await api(`/api/remove/${id}`, { method: "DELETE" });
+  if (!confirm("确定删除该任务吗？")) return;
+  const deleteFiles = confirmRemoveFiles(1);
+  await api(deleteFiles ? `/api/remove/${id}?delete_files=1` : `/api/remove/${id}`,
+            { method: "DELETE" });
+  showToast(deleteFiles ? "已删除任务（含磁盘文件）" : "已删除任务（文件保留在磁盘）");
+  const res = await api("/api/tasks");
+  if (res && res.tasks) renderTasks(res.tasks);
 }
 
 async function pauseAll() {

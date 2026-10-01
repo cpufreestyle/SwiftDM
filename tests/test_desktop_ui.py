@@ -2609,6 +2609,7 @@ class _FakeBatchManager:
     def __init__(self, tasks):
         self.tasks = list(tasks)
         self.removed = []
+        self.delete_files_calls = []
         self.saved = 0
 
     def get_all_tasks(self):
@@ -2617,8 +2618,9 @@ class _FakeBatchManager:
     def get_task(self, tid):
         return next((t for t in self.tasks if t.task_id == tid), None)
 
-    def remove_task(self, tid):
+    def remove_task(self, tid, delete_files=False):
         self.removed.append(tid)
+        self.delete_files_calls.append(delete_files)
         self.tasks = [t for t in self.tasks if t.task_id != tid]
 
     def save_history(self):
@@ -2779,19 +2781,163 @@ def test_batch_bar_drives_checked_tasks_like_the_web_panel(qt_app, monkeypatch):
         assert not win.select_bar.isVisible()
 
         # 删除走确认框；勾失败 + 完成两项，确认后只删勾了的
-        monkeypatch.setattr(
-            mw.QMessageBox, "question",
-            staticmethod(lambda *a, **k: mw.QMessageBox.StandardButton.Yes))
+        monkeypatch.setattr(win, "_ask_remove_confirm", lambda n: (True, False))
         win._toggle_selection("fl", True)
         win._toggle_selection("ok", True)
         win._batch_action("remove")
         assert mgr.removed == ["fl", "ok"]
+        assert mgr.delete_files_calls == [False, False], "不勾框就不许删文件"
 
+        # 勾了「连文件一起删」要一路传到 manager
+        mgr.tasks = [_fake_batch_task("fl", "failed")]
+        monkeypatch.setattr(win, "_ask_remove_confirm", lambda n: (True, True))
+        win._toggle_selection("fl", True)
+        win._batch_action("remove")
+        assert mgr.removed == ["fl", "ok", "fl"]
+        assert mgr.delete_files_calls[-1] is True
+
+        # 用户在确认框上点「否」，一条都不许删
+        mgr.tasks = [_fake_batch_task("fl", "failed")]
+        monkeypatch.setattr(win, "_ask_remove_confirm", lambda n: (False, True))
+        win._toggle_selection("fl", True)
+        win._batch_action("remove")
         # 任务被外部清掉后，勾选集要跟着收刈，操作条不能再出現
         mgr.tasks.clear()
         win._refresh()
         assert win._selected_ids == set()
         assert not win.select_bar.isVisible()
+
+
+def test_build_remove_confirm_defaults_to_keeping_the_file(qt_app):
+    """删除确认框：默认不删文件（保住已下载的成果），且默认按钮是「否」。"""
+    import main_window as mw
+
+    box, cb = mw.build_remove_confirm(None, 3)
+    assert box.windowTitle() == "确认删除"
+    assert "3" in box.text()
+    assert not cb.isChecked(), "连文件一起删必须用户自己勾，不能默认开"
+    assert box.checkBox() is cb
+
+
+def test_delete_files_removes_the_file_and_the_parts_dir(tmp_path):
+    """DownloadTask.delete_files：成品文件 + .filename.parts 分片目录都要删干净。"""
+    import downloader
+
+    save = tmp_path / "dl"
+    save.mkdir()
+    task = downloader.DownloadTask("d1", "http://127.0.0.1/a.bin", str(save), "a.bin", 1)
+    with open(task.filepath, "wb") as f:
+        f.write(b"x" * 16)
+    os.makedirs(task._tmp_dir, exist_ok=True)
+    with open(os.path.join(task._tmp_dir, "part_0000"), "wb") as f:
+        f.write(b"y" * 8)
+    # 分片目录旁边再放一个前缀相近的目录，证明只删自己那一个
+    bystander = str(save / ("." + task.filename + ".parts.bak"))
+    os.makedirs(bystander, exist_ok=True)
+
+    removed = task.delete_files()
+
+    assert not os.path.exists(task.filepath), "成品文件要删掉"
+    assert not os.path.exists(task._tmp_dir), "分片目录要删掉"
+    assert os.path.isdir(bystander), "不许顺手删别人的东西"
+    assert set(removed) == {task.filepath, task._tmp_dir}
+
+    # 文件本来就不在时返回空列表，且不炸
+    assert task.delete_files() == []
+
+
+def test_delete_files_refuses_to_delete_a_directory(tmp_path):
+    """filepath 被指成目录时不许动它：只删普通文件，绝不给目录开刀。"""
+    import downloader
+
+    save = tmp_path / "dl2"
+    save.mkdir()
+    task = downloader.DownloadTask("d2", "http://127.0.0.1/b.bin", str(save), "b.bin", 1)
+    victim = str(save / "keep")
+    os.makedirs(victim, exist_ok=True)
+    task.filepath = victim
+
+    assert task.delete_files() == []
+    assert os.path.isdir(victim), "绝不能把目录当成品文件删掉"
+
+
+def test_remove_task_only_deletes_files_when_asked(tmp_path, monkeypatch):
+    """manager.remove_task 默认只摘登记；delete_files=True 才真的动磁盘。"""
+    import threading
+
+    import downloader
+
+    save = tmp_path / "mgr"
+    save.mkdir()
+    task = downloader.DownloadTask("d3", "http://127.0.0.1/c.bin", str(save), "c.bin", 1)
+    with open(task.filepath, "wb") as f:
+        f.write(b"z" * 4)
+
+    import scheduler
+
+    monkeypatch.setattr(
+        scheduler, "scheduler",
+        type("S", (), {"unschedule": lambda self, t: None})())
+    mgr = object.__new__(downloader.DownloadManager)
+    mgr._tasks = {"d3": task}
+    mgr._lock = threading.Lock()
+    mgr._auto_retry_lock = threading.Lock()
+    mgr._auto_retry_state = {}
+    mgr.save_history = lambda: None
+
+    mgr.remove_task("d3")
+    assert "d3" not in mgr._tasks, "登记照样要摘掉"
+    assert os.path.exists(task.filepath), "没让删文件就不许删"
+
+    mgr._tasks["d3"] = task
+    mgr.remove_task("d3", delete_files=True)
+    assert not os.path.exists(task.filepath), "delete_files=True 才删文件"
+
+
+def test_card_delete_button_asks_before_removing(qt_app, monkeypatch):
+    """卡片上的「删除」不能再一点就没了：先过确认框，取消就什么都不做。"""
+    import main_window as mw
+
+    asked = []
+    removed = []
+
+    class _Mgr:
+        def get_task(self, tid):
+            return _fake_batch_task("t1", "completed")
+
+        def remove_task(self, tid, delete_files=False):
+            removed.append((tid, delete_files))
+
+        def save_history(self):
+            pass
+
+    class _Bar:
+        def showMessage(self, text, timeout=0):
+            pass
+
+    class _Host:
+        def __init__(self):
+            self._mgr = _Mgr()
+            self.status_bar = _Bar()
+
+        def _get_manager(self):
+            return self._mgr
+
+        def _ask_remove_confirm(self, n):
+            asked.append(n)
+            return (False, False)
+
+    mw.MainWindow._on_card_action(_Host(), "remove", "t1")
+    assert asked == [1], "单条删除也要确认，且计数是 1"
+    assert removed == [], "点了「否」就不许删"
+
+    # 非删除动作不该被确认框拦住
+    host2 = _Host()
+    host2.calls = []
+    host2._handle_action = (lambda action, tid, **kw:
+                            host2.calls.append(action))
+    mw.MainWindow._on_card_action(host2, "pause", "t1")
+    assert host2.calls == ["pause"]
 
 
 def test_ctrl_a_and_escape_drive_the_batch_selection(qt_app, monkeypatch):
@@ -2905,8 +3051,9 @@ def test_cancel_action_unschedules_before_cancelling(qt_app):
         def get_task(self, tid):
             return _Task()
 
-        def remove_task(self, tid):
+        def remove_task(self, tid, delete_files=False):
             self.removed.append(tid)
+            self.delete_files_calls.append(delete_files)
 
         def save_history(self):
             self.saved += 1

@@ -1,6 +1,7 @@
 // Web 端多选批量操作测试：从 templates/index.html 抽出批量逻辑段，
 // 在 vm 里配最小 DOM/网络桩执行，覆盖：按状态过滤、选择显隐、删除确认、
-// 逐个调用对应端点、完成后清空选择并主动拉取一次任务。
+// 两步删除确认（是否连同磁盘文件）、逐个调用对应端点、完成后清空选择
+// 并主动拉取一次任务。
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -37,11 +38,18 @@ function makeSandbox(tasks, opts = {}) {
     _tasksById: {},
     _lastTasks: tasks,
     _confirm: opts.confirm !== false,
+    _confirmFiles: opts.confirmFiles !== false,
     document: {
       getElementById: (id) => els[id] || (els[id] = makeEl()),
       querySelectorAll: () => [],
     },
-    confirm: () => sandbox._confirm,
+    confirm: (msg) => {
+      // 两步确认：先问删不删任务，再问要不要连磁盘文件一起删
+      const stage = /磁盘文件/.test(msg) ? "files" : "tasks";
+      const yes = stage === "files" ? sandbox._confirmFiles : sandbox._confirm;
+      calls.push({ confirm: stage, yes });
+      return yes;
+    },
     api: async (p, o) => {
       calls.push({ path: p, method: (o || {}).method });
       if (p === "/api/tasks") return { success: true, tasks: tasks };
@@ -130,14 +138,30 @@ const TASKS = [
     ]);
     assert.strictEqual(sandbox._selected.size, 0);   // 完成后清空选择
   }
-  // remove 要先确认；确认后逐个 DELETE
+  // remove 走两步确认；两级都确认 → 带 ?delete_files=1 逐个 DELETE
   {
     const { api, calls } = makeSandbox(TASKS, { selected: ["f1", "k1"] });
     await api.batchAction("remove");
     assert.deepStrictEqual(calls, [
+      { confirm: "tasks", yes: true },
+      { confirm: "files", yes: true },
+      { path: "/api/remove/f1?delete_files=1", method: "DELETE" },
+      { path: "/api/remove/k1?delete_files=1", method: "DELETE" },
+      { toast: "已删除 2 个任务（含磁盘文件）" },
+      { path: "/api/tasks", method: undefined },
+      { render: 5 },
+    ]);
+  }
+  // 第二级拒绝连删磁盘文件：URL 不带 query，toast 说明文件保留
+  {
+    const { api, calls } = makeSandbox(TASKS, { selected: ["f1", "k1"], confirmFiles: false });
+    await api.batchAction("remove");
+    assert.deepStrictEqual(calls, [
+      { confirm: "tasks", yes: true },
+      { confirm: "files", yes: false },
       { path: "/api/remove/f1", method: "DELETE" },
       { path: "/api/remove/k1", method: "DELETE" },
-      { toast: "已删除 2 个任务" },
+      { toast: "已删除 2 个任务（文件保留在磁盘）" },
       { path: "/api/tasks", method: undefined },
       { render: 5 },
     ]);
@@ -146,7 +170,7 @@ const TASKS = [
   {
     const { api, calls } = makeSandbox(TASKS, { selected: ["f1"], confirm: false });
     await api.batchAction("remove");
-    assert.deepStrictEqual(calls, []);
+    assert.deepStrictEqual(calls, [{ confirm: "tasks", yes: false }]);
   }
   // retry 只打失败/取消
   {

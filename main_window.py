@@ -176,6 +176,27 @@ def _clear_confirm_text(n):
     return f"将清除 {n} 个任务（已完成/已失败/已取消），此操作不可恢复。确定继续吗？"
 
 
+def build_remove_confirm(parent, count):
+    """删除确认框：说清删几条 + 可选「连磁盘文件一起删」。
+
+    返回 (box, delete_files_checkbox)。默认不勾选——删除默认只摘任务登记，
+    保住用户已经下完的文件；要连文件一起删必须自己勾。
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle("确认删除")
+    box.setText(f"将删除 {count} 个任务。")
+    box.setInformativeText("删除后任务记录不可恢复。勾选下方选项可额外删除磁盘上的"
+                          "已下载文件与未合并的分片。")
+    cb = QCheckBox(f"同时删除这 {count} 个任务的磁盘文件（不可恢复）")
+    cb.setChecked(False)
+    box.setCheckBox(cb)
+    box.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    return box, cb
+
+
 FINISH_ACTIONS = ("none", "shutdown", "suspend", "beep")
 FINISH_ACTION_LABELS = {"none": "无动作", "shutdown": "关机",
                         "suspend": "睡眠", "beep": "提示音"}
@@ -3103,7 +3124,7 @@ class MainWindow(QMainWindow):
                 else:
                     card = TaskCard(data, theme=self._theme)
                     card.set_compact(self._compact)
-                    card.action_triggered.connect(self._handle_action)
+                    card.action_triggered.connect(self._on_card_action)
                     card.selected.connect(lambda tid: self._select_task(tid))
                     card.toggled.connect(lambda tid, on: self._toggle_selection(tid, on))
                     card.activated.connect(lambda tid: self._show_task_detail(tid))
@@ -3227,7 +3248,31 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(f"添加失败: {e}", 8000)
                 QMessageBox.warning(self, "错误", f"添加失败: {e}")
 
-    def _handle_action(self, action, task_id):
+    def _ask_remove_confirm(self, count):
+        """弹出删除确认框。返回 (用户确认了吗, 要不要连磁盘文件一起删)。"""
+        box, cb = build_remove_confirm(self, count)
+        ok = box.exec() == int(QMessageBox.StandardButton.Yes)
+        return ok, cb.isChecked()
+
+    def _on_card_action(self, action, task_id):
+        """卡片按钮与右键菜单的统一入口。
+
+        删除不可逆，且用户此前点一下就没了、一点反应都没有：这里补上确认框，
+        并把「连文件一起删」的选择权交出去。
+        """
+        if action != "remove":
+            self._handle_action(action, task_id)
+            return
+        task = self._get_manager().get_task(task_id)
+        if not task:
+            return
+        confirmed, delete_files = self._ask_remove_confirm(1)
+        if not confirmed:
+            return
+        self._handle_action("remove", task_id, delete_files=delete_files)
+        self.status_bar.showMessage(f"已删除: {task.filename}", 3000)
+
+    def _handle_action(self, action, task_id, delete_files=False):
         mgr = self._get_manager()
         task = mgr.get_task(task_id)
         if not task:
@@ -3252,7 +3297,7 @@ class MainWindow(QMainWindow):
                 pass
             task.cancel()
         elif action == "remove":
-            mgr.remove_task(task_id)
+            mgr.remove_task(task_id, delete_files=delete_files)
         elif action == "open":
             filepath = task.filepath
             if os.path.exists(filepath):
@@ -3478,18 +3523,24 @@ class MainWindow(QMainWindow):
         if not targets:
             self.status_bar.showMessage("勾选的任务都不支持该操作", 3000)
             return
+        delete_files = False
         if action == "remove":
-            reply = QMessageBox.question(
-                self, "确认删除", _clear_confirm_text(len(targets)),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+            confirmed, delete_files = self._ask_remove_confirm(len(targets))
+            if not confirmed:
                 return
         for tid in targets:
-            self._handle_action(action, tid)
+            self._handle_action(action, tid, delete_files=delete_files)
         self.status_bar.showMessage(
-            f"已{BATCH_LABELS[action]} {len(targets)} 个任务", 4000)
+            self._batch_done_text(action, len(targets), delete_files), 4000)
         self._clear_selection()
+
+    @staticmethod
+    def _batch_done_text(action, count, delete_files):
+        """批量动作完成后的状态栏文案；删除时要说清文件到底有没有一起删。"""
+        if action != "remove":
+            return f"已{BATCH_LABELS[action]} {count} 个任务"
+        return (f"已删除 {count} 个任务（含磁盘文件）" if delete_files
+                else f"已删除 {count} 个任务（保留磁盘文件）")
 
     @staticmethod
     def _match_search(data, query):

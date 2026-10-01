@@ -823,6 +823,32 @@ class DownloadTask:
             if os.path.exists(self._tmp_dir):
                 shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
+    def delete_files(self):
+        """删除该任务的磁盘产物：成品文件 + `.filename.parts` 分片目录。
+
+        返回真正删掉的路径（文件本来就不存在时为空）。只动自己那两个路径，
+        且成品文件必须是**普通文件**才动手——宁可漏删，也绝不把目录当文件删。
+        """
+        removed = []
+        target = getattr(self, "filepath", "")
+        if target and os.path.isfile(target):
+            try:
+                os.remove(target)
+                removed.append(target)
+            except OSError as e:
+                logger.warning("删除文件失败 %s: %s", target, e)
+        tmp_dir = getattr(self, "_tmp_dir", "")
+        if tmp_dir and os.path.isdir(tmp_dir):
+            # cancel() 只做一次 rmtree，被唤醒的分段线程可能又把分片写回来；
+            # 这里是删除，补刀几次，删干净为止
+            for _ in range(3):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                if not os.path.isdir(tmp_dir):
+                    removed.append(tmp_dir)
+                    break
+                time.sleep(0.05)
+        return removed
+
     def retry(self):
         """重试失败/已取消的任务。
 
@@ -973,7 +999,12 @@ class DownloadManager:
         with self._lock:
             return list(self._tasks.values())
 
-    def remove_task(self, task_id):
+    def remove_task(self, task_id, delete_files=False):
+        """移除任务登记；delete_files=True 时连该任务的磁盘产物一起删。
+
+        顺序固定为「停线程 → 摘登记 → 删文件」：先把分段线程掐掉再动文件，
+        否则还在收尾的线程会把刚删掉的分片又写回来。
+        """
         with self._lock:
             task = self._tasks.get(task_id)
             if task and task.status in ("downloading", "paused"):
@@ -988,6 +1019,10 @@ class DownloadManager:
             _sched.unschedule(task_id)
         except Exception:
             pass
+        if delete_files and task is not None:
+            removed = task.delete_files()
+            if removed:
+                logger.info("已删除任务 %s 的磁盘文件: %s", task_id, ", ".join(removed))
 
     def clear_completed(self):
         """清除已完成/已失败/已取消的任务，返回清除数量。"""

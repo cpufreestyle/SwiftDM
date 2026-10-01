@@ -279,9 +279,11 @@ def open_folder(task_id):
 
 @app.route("/api/remove/<task_id>", methods=["DELETE"])
 def remove_task(task_id):
+    # ?delete_files=1 时连磁盘产物一起删；默认只摘任务登记，保住已下载的文件
+    delete_files = request.args.get("delete_files", "").lower() in ("1", "true", "yes")
     scheduler.unschedule(task_id)
-    manager.remove_task(task_id)
-    return jsonify({"success": True})
+    manager.remove_task(task_id, delete_files=delete_files)
+    return jsonify({"success": True, "delete_files": delete_files})
 
 
 @app.route("/api/clear_completed", methods=["POST"])
