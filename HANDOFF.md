@@ -1,6 +1,6 @@
 ﻿# SwiftDM 交接文档（Handoff）
 
-> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-09-29。
+> 本文档供接手 SwiftDM 项目的下一个 agent 阅读。最后更新：2026-10-01。
 > 项目根目录：`D:\ai share\repo\SwiftDM\`（唯一主副本）
 > （git 仓库，远程 `cpufreestyle/SwiftDM`，GitHub）
 > 交付物/构建产物位于 `dist/SwiftDM.exe`。
@@ -23,7 +23,7 @@ IDM 风格的多线程下载管理器：
 
 ## 2. ✅ 当前状态：改动已提交，重复副本已归档
 
-- 状态（截至 commit `0a2e0e5`）：工作区干净，与 `origin/main` 完全同步（0/0）；本轮 36 个 commit 的验证状态见第 5 节。
+- 状态（截至 commit `f444387`）：工作区干净，与 `origin/main` 完全同步（0/0）；第 5 / 10 / 11 节分别记录 2026-09-27、Liquid Glass、批量删除三轮的验证状态。
 - 曾存在同仓库的旧工作副本 `D:\ai sheare\repo\download_manager\download_manager\`（HEAD 落后 7 个提交，其未提交内容经逐项函数比对为本仓库的严格子集），已改名归档为 `download_manager_old_backup`，确认无误后可删除。
 - 注意：**未经用户明确要求不要主动 commit / push / 发布**——但用户已对动作确认并说「继续」即视为授权。
 
@@ -735,4 +735,34 @@ dark 的磨砂感靠「白色低透明度叠加」模拟，light 反过来靠「
 ---
 
 **收尾提醒**：`smoke_render.py` 是本轮临时脚本，`git status` 里是未跟踪 `??`，验收完必须删除；其余 `_*.py` / `_*.txt` / `_*.png` / `*.log` 已被 `.gitignore` 覆盖。
-**推送状态（2026-10-01）**：本轮改动已落在本地 commit，但 `git push origin main` 失败——仓库配置的代理 `127.0.0.1:7897` 当前没有监听，直连 GitHub 的 TLS 又被 reset。等本地代理客户端恢复后直接 `git push origin main` 即可。
+**推送状态（2026-10-01，已更新）**：Liquid Glass 与批量删除两轮已一并推送成功（`b7369b9..f444387`）。推送时代理 `127.0.0.1:7897` 仍不可用，靠 `git -c http.proxy= -c https.proxy= push origin main` 绕过代理直连成功；下次推送失败先试这条。
+
+---
+
+## 11. 列表批量删除与「连文件一起删」（2026-10-01，已推送）
+
+**动机**：删除任务此前零确认——桌面端卡片按钮与右键菜单点一下任务就没了，Web 端点一下也没了；且删除只摘任务登记，已下完的文件留在磁盘上，用户没有「连文件一起删」的入口。本轮把桌面（卡片按钮 / 右键菜单 / 批量栏）与 Web（批量 / 单删）全部补上确认，并给出可选的连文件删除。
+
+**边界（先定死）**
+- 默认只删任务登记，**不动磁盘文件**；连文件一起删必须用户显式确认（桌面勾选复选框，Web 第二级 confirm）。
+- 删文件绝不把目录当文件删：成品文件 `os.path.isfile()` 才 `os.remove`；分片目录 `os.path.isdir()` 才 `rmtree`。
+- 顺序固定「停线程 → 摘登记 → 删文件」：先把分段线程掐掉再动文件，否则还在收尾的线程会把刚删掉的分片又写回来（分片目录 `rmtree` 补刀 3 次、间隔 0.05s）。
+
+**实现**
+- `downloader.py`：`DownloadTask.delete_files()`（826 行起）删 `filepath` 与 `._tmp_dir`（`.filename.parts` 分片目录），返回真正删掉的路径；`DownloadManager.remove_task(task_id, delete_files=False)`（1002 行）按上述固定顺序执行。
+- `app.py`：`/api/remove/<task_id>?delete_files=1`（282 行），`delete_files` 取 `1/true/yes`，响应体回带该字段。
+- 桌面 `main_window.py`：模块级 `build_remove_confirm(parent, count)`（179 行）返回 `(QMessageBox, 默认不勾的 QCheckBox)`；`MainWindow._ask_remove_confirm(n)` 返回 `(确认, 要不要删文件)`。卡片按钮与右键菜单统一改走 `_on_card_action`（此前直连 `_handle_action`，零确认）；详情对话框只发 pause / cancel / resume / retry / open / open_folder / copy_link，不发 remove，无遗漏。批量栏的 `remove` 走同一个确认框，完成后 `_batch_done_text` 在状态栏说清文件到底有没有一起删。
+- Web `templates/index.html`：模块级 `confirmRemoveFiles(count)` 做第二级确认（文案含「磁盘文件」，测试据此分流）；`batchAction` 与 `removeTask` 都是两步确认，URL 带 `?delete_files=1`，toast 区分「含磁盘文件」/「文件保留在磁盘」；单删完主动拉一次 `/api/tasks` 刷新列表。
+
+**测试**
+- `tests/test_desktop_ui.py` 新增 5 个：确认框默认不勾、`delete_files` 真删文件与分片目录、拒绝把目录当文件删、`remove_task` 只在要求时删、卡片删除按钮先问过再删。
+- `tests/test_web_batch.js`：`confirm` 桩按消息内容分流两级（匹配「磁盘文件」走 `_confirmFiles`），每次确认都记进 `calls`；覆盖「两级都确认 → URL 带 query」「只删任务 → URL 不带 query」「第一级取消 → 一条请求都不发」。
+- 全量：`python -m pytest -q --deselect tests/test_resume_race.py::test_pause_then_immediate_resume_completes_intact` 得 `461 passed, 1 skipped, 2 deselected`（Liquid Glass 轮基线 456，+5 即本轮新增）；14 个 node 测试文件全绿；`pyflakes main_window.py` 仍只有既有的 9 条告警。
+
+**踩坑记录**
+- `tests/test_api_contract.js` 会静态提取 `api(` 之后紧跟的模板字面量，并用 `.split("?")[0]` 剥 query：若模板里出现 `${q}` 这类变量插值，归一化后会多出一个 `<id>`，误报「调用了不存在的后端路由」。正解是把 `?delete_files=1` 直接写进字面量、两个三元分支各自完整；这种写法合同测试本就不收集（与 `api(isRemove ? ... : ...)` 的既有式样一致）。
+- `apply_patch` 会把文件行尾归一成 LF：改 `templates/index.html` / `tests/test_web_batch.js` 后，工作区从纯 CRLF 变成 mixed / lf。复原用 3 步 replace（CRLF→LF、CR→LF、LF→CRLF）。git 索引里两个文件都是 `i/lf`，提交内容不受影响，但工作区惯例是 CRLF，混着会让 `git ls-files --eol` 报 mixed。
+- `apply_patch` 还会剥掉补丁内容里 `"` 的反斜杠：想用 Python 脚本改文件时，字符串里不能出现转义引号，也不能出现 Windows 路径的反斜杠（`\a` `\r` 会被当成转义符）。改仓库文件优先直接打补丁，行尾 / BOM 事后再用字节级脚本修。
+- PowerShell 单引号命令里不能再出现单引号：commit message 含英文撇号时整条命令被截断，提交信息一律写文件后 `git commit -F`。
+
+**桌面快捷（用户单独要求，已完成）**：`D:\Users\OneDrive\Desktop\SwiftDM.lnk` 已建并经 COM 校验——Target 为 `D:\Program Files\Python311\pythonw.exe`，Arguments 为带引号的 `main.py` 全路径（路径含空格，不带引号会被截断），WorkingDirectory 仓库根，Icon 为 `icon.ico,0`，WindowStyle 1，Description 为「SwiftDM - 高速下载管理器（支持批量删除任务）」。⚠️ 用 PowerShell 写 `.lnk` 的 `.ps1` 必须是 UTF-8 **with BOM**，否则 5.1 按 GBK 读，中文全变乱码写进快捷方式。
