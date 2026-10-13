@@ -3,9 +3,16 @@ SwiftDM 日志工具 —— 统一日志配置（文件 + 控制台），并提�
 """
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "swiftdm.log")
 LOG_FORMAT = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+
+# 单文件上限 5 MB，保留 3 个历史备份（swiftdm.log.1 ~ .3）。
+# 长跑不清理会让日志无限增长：下载重试与每个分段的进度日志量很大，
+# 几天就能堆到几十 MB，且全量重写会拖慢 I/O。轮转后体积恒定可预期。
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 _configured = False
 
@@ -28,7 +35,12 @@ def setup_logging(level=logging.INFO):
 
     # 文件
     try:
-        fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        fh = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
         fh.setFormatter(LOG_FORMAT)
         logger.addHandler(fh)
     except Exception:
