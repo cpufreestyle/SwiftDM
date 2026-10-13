@@ -28,6 +28,28 @@ for _k in ("no_proxy", "NO_PROXY"):
 from log_helper import setup_logging
 setup_logging()
 
+# ---- 单实例：已有实例在跑就提示并退出，避免两个进程抢同一批分片文件 ----
+from single_instance import already_running
+
+_ALLOW_MULTI = os.environ.get("SWIFTDM_ALLOW_MULTI", "").strip().lower() in ("1", "true", "yes")
+
+if already_running():
+    print("SwiftDM 已经在运行中。")
+    if _ALLOW_MULTI:
+        print("已设置 SWIFTDM_ALLOW_MULTI，允许多实例继续启动。")
+    else:
+        print("（如需同时运行多个实例，请设置环境变量 SWIFTDM_ALLOW_MULTI=1）")
+        # 把已有实例的窗口带到前台，用户立刻知道该去哪操作。
+        # 用非阻塞方式：MessageBoxW 是模态框，在无桌面会话/后台启动时会永久挂起
+        # 进程，反而让「第二个实例」卡死成僵尸进程，比不提示更糟。
+        try:
+            import ctypes
+            ctypes.windll.user32.SetForegroundWindow(
+                ctypes.windll.user32.FindWindowW(None, "SwiftDM"))
+        except Exception:
+            pass
+        sys.exit(0)
+
 # 服务监听配置（host 默认 0.0.0.0 以便预览代理/局域网可达；访问 URL 仍用 127.0.0.1）
 SWIFTDM_HOST = os.environ.get("SWIFTDM_HOST", "0.0.0.0")
 SWIFTDM_PORT = int(os.environ.get("SWIFTDM_PORT", "5000"))
