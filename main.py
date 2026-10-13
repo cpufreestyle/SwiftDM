@@ -269,8 +269,12 @@ def main():
     flask_thread.start()
     print(f"  Web UI: http://127.0.0.1:{web_port}")
 
-    # 5. 自动打开浏览器（禁用代理，规避 502）
-    if not web_only:
+    # 5. 默认只跳桌面窗口：桌面版本身是完整客户端（直接调 downloader.manager），
+    #    再自动开浏览器会同时冒出两个界面指向同一个服务。仍想自动开网页时
+    #    设 SWIFTDM_OPEN_WEB=1；--web-only 模式本来就只有网页这一个界面。
+    _open_web = os.environ.get("SWIFTDM_OPEN_WEB", "").strip().lower() in ("1", "true", "yes")
+    if web_only or _open_web:
+        # 禁用代理的独立浏览器实例，规避 502
         threading.Timer(1.5, open_browser, args=[f"http://127.0.0.1:{web_port}/"]).start()
 
     print(f"  浏览器监控端口: {monitor_port}")
