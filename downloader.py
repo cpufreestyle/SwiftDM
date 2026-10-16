@@ -22,6 +22,10 @@ logger = logging.getLogger("SwiftDM")
 AUTO_RETRY_BACKOFF = (30.0, 60.0, 120.0, 300.0)
 AUTO_RETRY_MAX = 5  # 设置项允许的上限（0 = 关闭）
 
+# 下载中文件的后缀。见 DownloadTask._partial_path：下载期间落盘的是
+# <filename>.part，完成后才改成正式文件名，避免用户误把半成品当成品。
+PART_SUFFIX = ".part"
+
 
 def auto_retry_delay(attempt):
     """第 attempt 次失败后的自动重试等待秒数（attempt 从 0 开始计）。"""
@@ -306,6 +310,16 @@ class DownloadTask:
             name = f"download_{int(time.time())}"
         return name
 
+    def _partial_path(self):
+        """下载中文件的落盘路径：正式文件名加 .part 后缀。
+
+        对齐 qBittorrent 的 UseIncompleteExtension：下载中的文件从资源管理器里
+        一眼可辨，避免用户把只下了一半的文件当成成品打开、移动或删除。
+        分片下载同样受益，合并完成前成品文件并不存在，用户看到的是 .part，
+        而不是一个体积恒为 0 的占位文件。
+        """
+        return self.filepath + PART_SUFFIX
+
     def _fetch_info(self):
         """获取文件大小和最终文件名。
 
@@ -533,13 +547,26 @@ class DownloadTask:
             resp.close()
 
     def _assemble_file(self):
-        """合并分段文件"""
-        with open(self.filepath, "wb") as out:
+        """合并分段文件，落到 .part 后原子改名成正式文件。
+
+        先写 .part 再 rename：合并耗时可能与文件大小同量级，期间用户/杀毒软件
+        看到的是一个完整的 .part 而不是半截成品；rename 在同一目录内是原子操作，
+        不存在「文件出现了但内容还没写完」的窗口。
+        """
+        partial = self._partial_path()
+        with open(partial, "wb") as out:
             for idx in range(self.segments):
                 seg_file = os.path.join(self._tmp_dir, f"part_{idx:04d}")
                 if os.path.exists(seg_file):
                     with open(seg_file, "rb") as inf:
                         shutil.copyfileobj(inf, out, length=4 * 1024 * 1024)
+
+
+        # 合并完立刻改名：失败要抛出去，让调用方按合并失败处理，
+        # 绝不能留一个写完了却还叫 .part 的成品。
+        # 必须等 with 退出、写句柄关闭后才能 rename：Windows 上句柄未释放时
+        # os.replace 会抛 WinError 32（另一个程序正在使用此文件）。
+        os.replace(partial, self.filepath)
 
         # 清理临时文件
         if os.path.exists(self._tmp_dir):
@@ -837,6 +864,15 @@ class DownloadTask:
                 removed.append(target)
             except OSError as e:
                 logger.warning("删除文件失败 %s: %s", target, e)
+        # 下载中被用户删任务：.part 是还没合并的半成品，一并清掉，
+        # 否则它会以 .part 的形式永远留在下载目录里。
+        partial = self._partial_path()
+        if partial and os.path.isfile(partial):
+            try:
+                os.remove(partial)
+                removed.append(partial)
+            except OSError as e:
+                logger.warning("删除文件失败 %s: %s", partial, e)
         tmp_dir = getattr(self, "_tmp_dir", "")
         if tmp_dir and os.path.isdir(tmp_dir):
             # cancel() 只做一次 rmtree，被唤醒的分段线程可能又把分片写回来；
