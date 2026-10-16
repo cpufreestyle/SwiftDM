@@ -6,7 +6,16 @@ import time
 import threading
 import json
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+
+# path 末段命中这些词才算下载动作。用集合而非子串匹配：
+# 子串会把 /downloads/page/2、/blog/how-to-download-files 全算成下载。
+# 只收 download/dl 这类语义明确的词：get、attachment 太通用，
+# /get?id=123 这样的 API 端点会被误判成下载。
+_DOWNLOAD_ACTION_WORDS = {
+    "download", "dl", "downloadfile", "filedownload",
+}
 
 
 # URL 正则
@@ -243,14 +252,40 @@ class BrowserMonitor:
             time.sleep(1)
 
     def _is_download_url(self, url):
-        """判断 URL 是否为下载链接"""
+        """判断 URL 是否为下载链接。
+
+        旧规则「路径里出现 download 子串就算」误判极多：复制一个
+        https://example.com/downloads 这样的普通页面分享链接，剪贴板监听
+        就会凭空建出一个下载任务。而真实下载站大量使用无扩展名直链和
+        query 带文件名的形式，旧规则又漏掉。
+
+        现在按三条依次判断，任一命中即算下载：
+        1. path 末段带已知下载扩展名；
+        2. query 的 file/filename 等参数带已知下载扩展名；
+        3. path 末段本身是 download 类动作词，且不带页面扩展名。
+           末段判定避免把 /downloads/page/2 这类导航路径当成下载。
+        """
         parsed = urlparse(url)
         path = parsed.path.lower()
+        last_segment = path.rstrip("/").rsplit("/", 1)[-1]
+
+        # 1. path 末段带下载扩展名
         if any(path.endswith(ext) for ext in DOWNLOAD_EXTENSIONS):
             return True
-        # 包含 download 关键词
-        if "download" in path:
-            return True
+
+        # 2. query 里的文件名参数带下载扩展名（?file=report.pdf 这类）
+        query = parse_qs(parsed.query.lower())
+        for key in ("file", "filename", "name", "attachment", "download"):
+            for value in query.get(key, []):
+                if any(value.endswith(ext) for ext in DOWNLOAD_EXTENSIONS):
+                    return True
+
+        # 3. path 末段是下载动作词，且不像页面
+        page_exts = (".html", ".htm", ".php", ".asp", ".aspx", ".jsp", ".shtml")
+        if last_segment and not last_segment.endswith(page_exts):
+            stem = last_segment.rsplit(".", 1)[0]
+            if stem in _DOWNLOAD_ACTION_WORDS:
+                return True
         return False
 
     def _auto_add(self, url):
