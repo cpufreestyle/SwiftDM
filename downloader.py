@@ -70,7 +70,50 @@ _PROXY_MODE = os.environ.get("SWIFTDM_USE_PROXY", "env").strip().lower()
 
 # 全局 Session（所有下载共用，便于连接复用；连接池加大以支持多线程分段并发）
 _SESSION = requests.Session()
-_POOL = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+
+# 连接池容量按「并发任务数 x 单任务分段数」测算：pool_connections 是主机数
+# 上限，pool_maxsize 才是单主机连接上限。一个 32 分段任务就要占 32 个连接，
+# 两个并发任务就要 64 个，原值 32 会让多余分段每次请求都重新做 TCP/TLS 握手。
+# 256 个连接足以覆盖 SEGMENTS_MAX(32) 乘 8 个并发任务。
+_POOL_CONNECTIONS = 64
+_POOL_MAXSIZE = 256
+
+
+def _tcp_keepalive_options():
+    """TCP keep-alive 的 socket 选项，喂给 urllib3 的 connection pool。
+
+    Windows 默认 TCP keep-alive 要 2 小时才发第一个探测包，长连接早就被中间
+    NAT/防火墙静默丢弃了——表现为下载中途卡住不报错，等到系统级超时才断。
+    这里改成 60 秒后开始探测、每 20 秒一次、3 次无响应判定断开，
+    让死连接被及时发现并重连，而不是让分段线程无限期挂起。
+    """
+    import socket
+
+    if not hasattr(socket, "TCP_KEEPIDLE"):
+        # TCP_KEEPIDLE / TCP_KEEPINTVL / TCP_KEEPCNT 是 Linux/macOS 的名字；
+        # Windows 用 WSAIoctl 的 SIO_KEEPALIVE_VALS，urllib3 不直接支持，
+        # 没有对应常量时返回空列表，退化成系统默认行为。
+        return []
+    return [
+        (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 20),
+        (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
+    ]
+
+
+class _KeepAliveAdapter(HTTPAdapter):
+    """带 TCP keep-alive 的连接池适配器。"""
+
+    def init_poolmanager(self, connections, maxsize, block=False, **kwargs):
+        kwargs["socket_options"] = _tcp_keepalive_options()
+        super().init_poolmanager(connections, maxsize, block=block, **kwargs)
+
+
+_POOL = _KeepAliveAdapter(
+    pool_connections=_POOL_CONNECTIONS,
+    pool_maxsize=_POOL_MAXSIZE,
+    max_retries=0,
+)
 _SESSION.mount("http://", _POOL)
 _SESSION.mount("https://", _POOL)
 
